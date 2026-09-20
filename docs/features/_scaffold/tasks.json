@@ -1,0 +1,95 @@
+{
+  "slug": "_scaffold",
+  "source": "docs/architecture-map.md (mode: greenfield-bootstrap, reflects 16bba53)",
+  "tasks": [
+    {
+      "id": "S1",
+      "title": "Create the solution and the four server projects with the reference direction enforced",
+      "layer": "scaffold",
+      "deps": [],
+      "acs": [],
+      "dod": "dotnet build Uniqua.Projector.sln succeeds; Domain references no other project; Application references only Domain; Infrastructure references Application; Api references Application and Infrastructure; the target framework actually installed is recorded back into docs/architecture-map.md",
+      "files_hint": [
+        "Uniqua.Projector.sln",
+        "src/Uniqua.Projector.Domain/",
+        "src/Uniqua.Projector.Application/",
+        "src/Uniqua.Projector.Infrastructure/",
+        "src/Uniqua.Projector.Api/",
+        "Directory.Build.props"
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "Wire the composition root, ProblemDetails error handling and a health endpoint",
+      "layer": "scaffold",
+      "deps": ["S1"],
+      "acs": [],
+      "dod": "the API boots; GET /health returns 200; an unhandled exception is rendered as an RFC 9457 ProblemDetails body by a single handler; each layer is registered through its own AddXxx extension called from Program.cs",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Program.cs",
+        "src/Uniqua.Projector.Api/ProblemDetailsSetup.cs",
+        "src/Uniqua.Projector.Application/DependencyInjection.cs",
+        "src/Uniqua.Projector.Infrastructure/DependencyInjection.cs"
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "Set up EF Core, the SQL Server provider and an initial migration",
+      "layer": "scaffold",
+      "deps": ["S1"],
+      "acs": [],
+      "dod": "the EF Core tooling generates and applies an initial migration against a local SQL Server, and reverts it cleanly; AppDbContext lives in Infrastructure and is not reachable from Domain or Api; GUID version 7 is the configured id strategy",
+      "files_hint": [
+        "src/Uniqua.Projector.Infrastructure/AppDbContext.cs",
+        "src/Uniqua.Projector.Infrastructure/Migrations/",
+        "src/Uniqua.Projector.Domain/Ids.cs"
+      ]
+    },
+    {
+      "id": "S4",
+      "title": "Wire the test harness: Domain unit tests plus a container-backed integration harness",
+      "layer": "scaffold",
+      "deps": ["S2", "S3"],
+      "acs": [],
+      "dod": "dotnet test runs green; the integration project boots the API through WebApplicationFactory against a SQL Server container started for the run and torn down after, and one smoke test asserts GET /health returns 200 through that harness",
+      "files_hint": [
+        "tests/Uniqua.Projector.Domain.Tests/",
+        "tests/Uniqua.Projector.Api.IntegrationTests/",
+        "tests/Uniqua.Projector.Api.IntegrationTests/ApiFactory.cs"
+      ]
+    },
+    {
+      "id": "S5",
+      "title": "Create the React client and have the API serve its build output on one origin",
+      "layer": "scaffold",
+      "deps": ["S2"],
+      "acs": [],
+      "dod": "npm run build produces static output that the running API serves at the site root; Tailwind is configured and one vendored shadcn/ui Button renders; TanStack Query and dnd-kit are installed; the dev proxy forwards API calls so local development also runs on one origin; npm run lint passes",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/",
+        "src/Uniqua.Projector.Web/vite.config.ts",
+        "src/Uniqua.Projector.Web/tailwind.config.ts",
+        "src/Uniqua.Projector.Web/src/components/ui/button.tsx",
+        "src/Uniqua.Projector.Web/src/index.css"
+      ]
+    },
+    {
+      "id": "S6",
+      "title": "Add the CI workflow running build, test, lint and format on every push",
+      "layer": "scaffold",
+      "deps": ["S4", "S5"],
+      "acs": [],
+      "dod": "the workflow file is valid and its commands match the map's machine keys exactly (dotnet build, dotnet test, dotnet format --verify-no-changes, npm run build, npm run lint); the SQL Server container the integration tests need is available to the job",
+      "files_hint": [".github/workflows/ci.yml"]
+    },
+    {
+      "id": "S7",
+      "title": "Write CLAUDE.md from the foundation conventions",
+      "layer": "scaffold",
+      "deps": ["S1"],
+      "acs": [],
+      "dod": "CLAUDE.md states the reference direction, that domain rules live in Domain, the ProblemDetails error shape, the GUID v7 id rule, the EF Core migration convention, the test floor, the single Tailwind styling rule and the permissive-license-only rule — each matching docs/architecture-map.md rather than restating it loosely",
+      "files_hint": ["CLAUDE.md"]
+    }
+  ]
+}
