@@ -20,7 +20,7 @@ Declaring a `web-frontend` surface (ADR 0006) forces a follow-on choice about ho
 ## Decision drivers
 
 - `architecture-map.md` §Stack: React 19 + Vite + TanStack Query, with the API serving the build output — the foundation already describes a SPA.
-- `architecture-map.md` §Conventions: exactly one styling and rendering approach; a second one is «a review finding, not a preference».
+- `architecture-map.md` §Conventions: exactly one **styling** mechanism — a second one (CSS modules, styled-components, inline style objects) is «a review finding, not a preference». The map states no rendering rule.
 - ADR 0004: the board carries live updates and drag-and-drop, so substantial client-side state exists regardless of what this feature does.
 - ADR 0003 (negative consequence): cookie authentication needs correct same-site attributes and cross-site request protection on state-changing endpoints.
 
@@ -31,7 +31,7 @@ Declaring a `web-frontend` surface (ADR 0006) forces a follow-on choice about ho
 
 ## Decision outcome
 
-**Chosen:** Option 1. Option 2's real advantage is inherited forgery protection and a first screen that works without JavaScript, but it introduces a second way to build a screen and a second way to render a validation error, in a repository whose stated conventions forbid exactly that. The forgery protection it would have given for free is instead made an explicit §8 row, which suits a project whose wedge is that its access-control rules are written down.
+**Chosen:** Option 1. The decisive driver is §Stack: the foundation already provisions React 19 + Vite + TanStack Query with the API serving the build output, and ADR 0004 puts substantial client state on the board screen regardless — so the SPA exists either way, and option 2 adds a second delivery path beside it rather than replacing it. Option 2's real advantages are genuine: inherited forgery protection and a first screen that works without JavaScript. They are outweighed by keeping one way to build a screen and one way to render a validation error. Note the map's «review finding, not a preference» rule is about a second **styling** mechanism specifically; applying the same reasoning to rendering is this decision's own judgement, not a quotation. The forgery protection option 2 would have given for free becomes an explicit §8 row instead, which suits a project whose wedge is that its access-control rules are written down.
 
 ## Consequences
 

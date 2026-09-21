@@ -116,7 +116,7 @@ C4Context
 **Top strategic choices (the seeds for ADRs):**
 
 1. **Build two surfaces — a backend service and a web front-end** (ADR 0006). The spec's first goal is that a stranger reaches a signed-in state *from the public link*, which is unreachable without registration and sign-in screens; the API owns the contract and also serves the built client from one origin, as ADR 0003 requires. `target_surfaces: [backend-service, web-frontend]` is recorded in this document's frontmatter and is read — never re-derived — by `api`, `sequences`, `tasks`, `screens`, `plan-tests` and `review`.
-2. **Deliver the web surface as a client-side SPA** (ADR 0007). React 19 + Vite + TanStack Query is the foundation's client, and the board screen the next feature builds needs substantial client state (drag-and-drop, live updates) anyway; a second rendering mechanism for two forms would be a second way of doing the same thing, which `architecture-map.md` calls a review finding rather than a preference. The cost is that cross-site request-forgery protection is configured deliberately rather than inherited — §8 carries that row.
+2. **Deliver the web surface as a client-side SPA** (ADR 0007). React 19 + Vite + TanStack Query is the foundation's client, and the board screen the next feature builds needs substantial client state (drag-and-drop, live updates) anyway; a second rendering mechanism for two forms would be a second way of doing the same thing. (The map forbids a second *styling* mechanism in those words; extending the same reasoning to rendering is this SAD's judgement, not a quotation from it.). The cost is that cross-site request-forgery protection is configured deliberately rather than inherited — §8 carries that row.
 3. **Hold sessions as server-side records rather than self-contained cookie tickets** (ADR 0008). The framework's default cookie authentication encrypts the whole ticket into the cookie and reads no store to accept it, so signing out can only delete the browser's copy — which makes AC-10 («refuses … regardless of what their browser still holds») false and AC-09 (silencing an already-open live-update connection) unimplementable. Spec §6 already budgets ≤ 30 ms to «recognise a session on an ordinary read», which is the budget for exactly this lookup.
 4. **Keep the cookie-protecting key material in the database, outside the application instance** (ADR 0009). Spec §6 and KPI 3 commit to 100% of unexpired sessions surviving a redeploy; the framework's default regenerates the key ring per instance, which would silently break that. Putting the key ring in the store that already exists means a container replacement or a move to another virtual machine carries it along, and the database backup covers it with no second thing to remember.
 
@@ -127,6 +127,8 @@ Each tactical decision in later sections should trace to one of these seeds. Tac
 The style is the **clean / layered split the foundation already fixes**: `Api → Application → Domain` and `Infrastructure → Application → Domain`, with Domain referencing nothing and Api referencing Infrastructure only to register implementations at startup. This feature introduces no new layering — it is the first real capability to travel through the existing one, so it sets the precedent every later feature is measured against. Two of the six containers below are this feature's declared **target surfaces** (the HTTP API and the web client); the rest are the layers behind them and the store.
 
 The one placement that is not simply inherited is **session recognition**. It runs on every authenticated request, so it belongs in the request pipeline in `Api` — but it must read a session record, which only `Infrastructure` may do. It is therefore an Api-level authentication handler that calls an **Application port** (`ISessionReader`), implemented in Infrastructure. The rule that a session is expired — 14 days idle or 90 days old — lives on the **Session entity in Domain**, not in the handler, so that the handler asks the entity rather than re-deriving the arithmetic.
+
+The same shape applies in the other direction. Signing out has to reach the live-update connections that session holds, but the hub lives in **Api**, and §2 fixes the reference direction as `Api → Application` — so a use case may not call the hub. `SignOut` therefore depends on an Application-declared port, `ISessionRevocationNotifier`, whose implementation sits in Api next to the hub and is registered at startup. This is the identical pattern Infrastructure already uses for the session and account ports: the use case never knows who fulfils them.
 
 **Internal decomposition:**
 
@@ -139,8 +141,9 @@ src/Uniqua.Projector.Domain/Accounts/
 src/Uniqua.Projector.Application/Accounts/
 ├── RegisterAccount.cs      # use case: create + open a session in one step (AC-01)
 ├── SignIn.cs               # use case: verify, apply the progressive delay, open a session
-├── SignOut.cs              # use case: revoke this session, notify the hub
-└── Ports/                  # ISessionStore, ISessionReader, IAccountStore, IClock
+├── SignOut.cs              # use case: revoke this session, then announce it through a port
+└── Ports/                  # ISessionStore, ISessionReader, IAccountStore, IClock,
+                           # ISessionRevocationNotifier - declared here, implemented in Api
 
 src/Uniqua.Projector.Infrastructure/Accounts/
 ├── SessionStore.cs         # EF Core implementation of the session ports
@@ -149,7 +152,8 @@ src/Uniqua.Projector.Infrastructure/Accounts/
 
 src/Uniqua.Projector.Api/Accounts/
 ├── AccountEndpoints.cs     # register, sign in, sign out
-└── SessionAuthenticationHandler.cs  # recognises a session per request via ISessionReader
+├── SessionAuthenticationHandler.cs  # recognises a session per request via ISessionReader
+└── HubSessionRevocationNotifier.cs  # implements ISessionRevocationNotifier beside the hub
 
 src/Uniqua.Projector.Web/src/features/auth/
 ├── RegisterScreen.tsx      # composed from the vendored shadcn/ui primitives
@@ -182,6 +186,7 @@ C4Container
     Rel(spa, hub, "Holds a live-update connection, authorised by the same cookie", "HTTPS, persistent")
     Rel(api, app, "Invokes use cases")
     Rel(hub, app, "Checks the session is still live")
+    Rel(app, hub, "Announces a revoked session through a port implemented in Api", "in-process")
     Rel(app, domain, "Uses entities and invariants")
     Rel(infra, app, "Implements the ports declared here")
     Rel(infra, db, "Reads and writes", "EF Core")
@@ -246,8 +251,8 @@ sequenceDiagram
     App->>Infra: Mark that one session revoked
     Infra->>Db: Update the session record
     Db-->>Infra: Updated
-    App->>Hub: This session has ended
-    Note over App,Hub: How sign-out reaches an already-open connection is still open - spec section 8, question 1
+    App->>Hub: This session has ended (through ISessionRevocationNotifier)
+    Note over App,Hub: The port exists - what it does to an already-open connection is still open, spec section 8 question 1
     Hub->>Hub: Drops the connections held by that session
     Hub-->>Spa: Live updates stop
     App-->>Api: Session ended
@@ -265,7 +270,7 @@ Sessions the same account holds on other devices are untouched — sign-out is p
 
 One instance on the owner's self-hosted host, behind a **reverse proxy** that terminates TLS for the registered domain and forwards the originating client address — that forwarded address is the **request source** the registration rate limit keys on (spec §6.1), and it is trusted only when the request arrives from the proxy itself. **SQL Server** runs alongside on the same host and holds all three of this feature's concerns: accounts, session records, and the data-protection key ring (ADR 0009). A single replica; because both the session store and the key ring are shared state in the database, a second replica would work without code change, but nothing calls for one.
 
-**Expired-session cleanup.** A hosted background service inside the API process removes rows that can no longer be live — older than 90 days, or revoked more than 14 days ago — once a day and once at startup. The startup run matters because an idle instance may be suspended by the host (a consequence ADR 0004 already records), in which case the daily timer does not fire. Cleanup is **hygiene, not enforcement**: an expired row is refused at recognition time regardless, because the `Session` entity itself decides it is dead. It exists because a session row records when a named person signed in, and spec §3 rules out any data-deletion path — without cleanup the table is a permanent visit log.
+**Expired-session cleanup.** A hosted background service inside the API process removes rows that can no longer be live — older than 90 days, or revoked more than 14 days ago — once a day and once at startup. The startup run matters because the daily timer does not survive a restart: a redeploy, a reboot of the host or a crash all reset it, and on a manually-operated instance those are the common case rather than the exception. Cleanup is **hygiene, not enforcement**: an expired row is refused at recognition time regardless, because the `Session` entity itself decides it is dead. It exists because a session row records when a named person signed in, and spec §3 rules out any data-deletion path — without cleanup the table is a permanent visit log.
 
 **Monitoring:**
 - Sign-in and registration p95, and session-recognition p95 on ordinary reads — the three spec §6 latency budgets.
@@ -289,7 +294,7 @@ One instance on the owner's self-hosted host, behind a **reverse proxy** that te
 
 ## 8. Crosscutting concepts
 
-Nine of the rows below are inherited verbatim from `architecture-map.md` §Conventions. Three are added by this feature because spec §6.1 requires them: cross-site request-forgery protection, the registration rate limit, and the logging rule.
+Three of the rows below are inherited from `architecture-map.md` §Conventions verbatim — error handling, the ID strategy, and the structured-logging baseline. The rest are established by this feature or by its ADRs, because the map's own §Conventions bullets (module wiring, persistence, migrations, domain rules, tests, inter-module communication, UI styling) are project-wide rules this feature simply follows rather than crosscutting concerns it defines. Three rows are new obligations spec §6.1 imposes: cross-site request-forgery protection, the registration rate limit, and the logging rule about never recording an address on a failed sign-in.
 
 | Concept | Convention | Where defined |
 |---|---|---|
@@ -343,8 +348,10 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 ## 11. Risks and technical debt
 
 <!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows carried from
-     an unresolved architectural decision (here: the three spec §8 questions still open after this
-     pass - the other two were closed by ADR 0009 and ADR 0010). -->
+     an unresolved architectural decision. spec §8 carries four questions; ADR 0010 closed the fourth
+     (the divergence from ADR 0003's lockout consequence), and the remaining three are the rows below.
+     A fifth question - where the cookie-protecting key material lives - was closed during `clarify`
+     and its row removed from the spec then, so it is not counted here. -->
 
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
@@ -355,9 +362,10 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 | A 30-second guessing delay holds the request open, occupying a connection for its duration | Low | Harmless at invited-reviewer scale; revisit if the §6 delay curve is ever raised | Alex Korneiko |
 | The SPA shows a blank page until its bundle loads, and spec §1's primary reader gives the link about one minute | Low | Keep the bundle small. The spec sets no number for first render, so this is watched rather than measured — it is a risk, not an NFR | Alex Korneiko |
 | `ux-flows` was skipped, so `screens` will derive screen states from acceptance criteria and contract error responses rather than from a screen inventory | Low | Run `/sdd:ux-flows accounts-and-sessions` before `screens` if the error-state coverage looks thin | Alex Korneiko |
+| The declared size **M** is tight and was classified before this design existed — two surfaces (ADR 0006 says so in its own consequences), a custom authentication handler, a background cleanup service, and three migrations rather than one | Medium | Judge it on real numbers rather than by eye: if `/sdd:tasks` emits more than roughly 12 tasks or more than about 3 days of work, re-run `/sdd:classify-size accounts-and-sessions`, which re-syncs `.size`, `.route` and the `feature_size` mirrors in both spec.md and sad.md | Alex Korneiko |
 | Open architectural decision: how signing out reaches an already-open live-update connection | Open question | Resolve before roadmap step 8. ADR 0008 makes it possible — the session is server-side state the hub can consult — but does not implement the notification; spec §8 question 1 | Alex Korneiko |
-| Open architectural decision: whether traffic on a live-update connection counts as activity for the 14-day sliding window | Open question | Resolve before roadmap step 8; the standing default is that it does not, so only a deliberate action renews a session; spec §8 question 3 | Alex Korneiko |
-| Open architectural decision: what normalisation applies to an email address at registration versus at sign-in | Open question | Resolve before `/sdd:data-model`, which has to pick the column collation and the unique index; the standing default is identical normalisation before comparison; spec §8 question 4 | Alex Korneiko |
+| Open architectural decision: whether traffic on a live-update connection counts as activity for the 14-day sliding window | Open question | Resolve before roadmap step 8; the standing default is that it does not, so only a deliberate action renews a session; spec §8 question 2 | Alex Korneiko |
+| Open architectural decision: what normalisation applies to an email address at registration versus at sign-in | Open question | Resolve before `/sdd:data-model`, which has to pick the column collation and the unique index; the standing default is identical normalisation before comparison; spec §8 question 3 | Alex Korneiko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
 - **The key ring shares the database with the accounts it protects** (ADR 0009). One database compromise yields both. Accepted because on a single self-hosted host whoever can read a key volume can usually read the database files beside it; the certificate-encrypted variant is additive later and costs one deployment.
