@@ -43,30 +43,39 @@ When these three conflict, security wins: this feature is the one the fifteen-mi
 
 ## 2. Constraints
 
-<!-- 🎯 Why: §4 strategy only works when §2 has fixed WHAT IS ALREADY FIXED — stack, versions,
-     deadline, regulatory. This is an input, not an output.
-     📋 Write: four blocks — Technical / Organisational / Conventions / Regulatory.
-     📌 Pin versions («<datastore> 18», not «<datastore>»); «Q3 deadline — hard», not «ideally».
-     Never N/A — every feature inherits at least Conventions + Technical. -->
-
 **Technical.**
-- <Language + version>
-- <Framework(s) + version>
-- <Datastore(s) + version>
-- <Architecture convention — e.g. the layering style from the project convention file>
+- C# on **.NET 10 (LTS)** — the target framework of the foundation. Unverified at this commit; see the §11 row, which carries the fallback to .NET 8 (LTS).
+- **ASP.NET Core 10** — HTTP API, and it also serves the built client (one origin, per ADR 0003).
+- **ASP.NET Core Identity** — the account store, password hashing and sign-in primitives.
+- **ASP.NET Core SignalR** — the live-update connection (ADR 0004); authorised by the same cookie.
+- **Entity Framework Core 10** — the only persistence mechanism; `DbContext` never reaches Api or Domain.
+- **SQL Server** — the single relational store (ADR 0002).
+- **TypeScript 5 / React 19** with Vite, Tailwind CSS, shadcn/ui (vendored as source) and TanStack Query.
+- **Four-project layering:** `Api → Application → Domain` and `Infrastructure → Application → Domain`; Domain references nothing. Api references Infrastructure only to register implementations at startup.
+- **One origin for client and API** (ADR 0003) — splitting them across two hosts is off the table, which also constrains §7.
 
 **Organisational.**
-- <Effort budget — e.g. 3 person-weeks>
-- <Deadline — e.g. 2026-Q3 hard>
-- <Team composition>
+- One developer (the owner); no second reviewer is available in-team.
+- First public deployment is fixed at **week 2**; the overall schedule is 8–10 weeks (ADR 0004).
+- This feature is sized **M**; it is the first feature after the skeleton and blocks every later one.
+- A **security review is required** before it ships (spec §6.1) — it introduces the product's only authentication boundary and its first personal data.
 
 **Conventions.**
-- <Link to the project's convention file>
-- <Naming, ID strategy, error-handling pattern>
+- `docs/architecture-map.md` §Conventions is the convention file until `/sdd:scaffold` turns its target paths into real anchors.
+- **IDs:** application-generated GUID version 7 (`Guid.CreateVersion7()`) — time-ordered, and it does not leak record counts.
+- **Errors:** every failure response is an RFC 9457 `ProblemDetails` from one exception handler; endpoints never build an ad-hoc error shape.
+- **Migrations:** EF Core migrations generated from the model, one per schema change, reviewed as SQL before they are applied.
+- **Domain rules live in Domain** — an invariant is enforced by the entity, not by a use case or an endpoint.
+- **Tests:** integration through `WebApplicationFactory` against a SQL Server container, plus unit tests on Domain invariants.
+- **ADR numbering is one sequence across the whole repository.** This feature's ADRs live in `docs/features/accounts-and-sessions/adr/` but continue the numbering of `docs/adr/0001`–`0005`, starting at **0006**. This deliberately departs from the per-feature-from-0001 default, because the spec already cites «ADR 0003» and a second document with that number would make every bare reference ambiguous. Later features and `decide-adr` follow the same rule.
+- **Licensing:** every dependency must be permissively licensed (MIT / Apache-2.0 / BSD-style). No copyleft (GPL / LGPL / AGPL) component is part of this foundation, and none may be introduced without replacing it.
 
 **Regulatory / external.**
-- <e.g. data-retention / deletion behaviour per ADR-NNNN>
-- <e.g. applicable compliance controls, or N/A with a reason>
+- **Data classification: confidential** — credentials plus the real email addresses of real people (spec §6.1).
+- **Email address retained indefinitely** — spec §3 rules out an account-removal path, so there is no deletion route by design; recorded as accepted debt in §11.
+- **Password never stored in a recoverable form**; **display name** is deliberately visible to other board members.
+- **No password recovery, no address verification, no third-party identity** (spec §3; ADR 0003 rejected delegating identity).
+- No formal compliance regime applies — the audience is a small set of invited reviewers rather than a user base, and deletion-on-request is deliberately out of scope rather than overlooked.
 
 ## 3. Context and scope
 
