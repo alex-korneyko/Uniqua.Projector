@@ -79,37 +79,36 @@ When these three conflict, security wins: this feature is the one the fifteen-mi
 
 ## 3. Context and scope
 
-<!-- 🎯 Why: draws the SYSTEM BOUNDARY — who talks to it from outside, where the trust zone ends.
-     Without §3, §5 and §8 (authorization) blur — unclear what's «inside» vs «outside».
-     📋 Write: 2–3 sentences of business context + an external-systems table + a C4Context block.
-     📌 «External: none (deliberate, no third-party in v1)» is itself a decision worth stating.
-     Trust boundary — the line past which you don't trust data without checking it.
-     Never N/A — greenfield still draws the planned actors + external systems. -->
+This feature is the product's front door and its only authentication boundary. A person arrives at the public link as a **visitor**, becomes an **account** by registering unaided, and is recognised again on later visits and on other devices; every later capability — board membership, invitations, the live-update connection — resolves authorisation against the identity established here rather than inventing a second one. The trust boundary is the application process: everything the browser sends (the session cookie included) is untrusted input until the request has been authenticated, and the cookie is unreadable by page scripts so that a cross-site scripting hole does not hand over a session.
 
-<Business context in 2–3 sentences. What the system does for whom.>
-
-<!-- brownfield: <one-line scan summary> (or «N/A — greenfield repo» if no source existed) -->
+<!-- brownfield: N/A — greenfield repo (no source at this commit; the foundation is the target
+     described in docs/architecture-map.md, mode greenfield-bootstrap). -->
 
 **External systems (in / out):**
 
 | Actor or system | Type | Interaction |
 |---|---|---|
-| <author role> | Person | <what they do> |
-| <external service> | System (internal/external) | <interaction> |
-| <identity provider> | System (external) | <provides auth tokens> |
+| visitor | Person | Registers an account from the public link; signs in on return |
+| account | Person (a registered identity) | Is recognised across days and devices; signs out; holds live-update connections |
+| board member | Person | Downstream consumer — acts on a board under the identity established here; no board exists yet at this feature's close |
+| — none — | System (external) | **Deliberate.** No identity provider (ADR 0003 rejected delegating identity), no mail service (spec §3 rules out password recovery and address verification, both of which would require one), no third-party of any kind. The feature has no outbound integration at all. |
 
-**C4 Context (L1):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. -->
+**C4 Context (L1):**
 
 ```mermaid
 C4Context
-    title <feature> — System Context
+    title accounts-and-sessions - System Context
 
-    Person(actor, "<Actor role>", "<intent>")
-    System(app, "<Our system>", "<one-sentence description>")
-    System_Ext(ext, "<External system>", "<one-sentence description>")
+    Person(visitor, "Visitor", "Uses the application with no active session; may already own an account")
+    Person(account, "Account", "A registered identity, signed in on one or more devices")
+    Person(member, "Board member", "An account granted access to a board; every membership check resolves against the identity created here")
 
-    Rel(actor, app, "<interaction>", "<protocol>")
-    Rel(app, ext, "<interaction>", "<protocol>")
+    System(projector, "Uniqua.Projector", "Kanban boards for invited reviewers. This feature establishes its only authentication boundary.")
+
+    Rel(visitor, projector, "Registers an account, signs in", "HTTPS")
+    Rel(account, projector, "Is recognised on return; signs out", "HTTPS")
+    Rel(account, projector, "Holds a live-update connection to a board", "HTTPS, persistent")
+    Rel(member, projector, "Acts on a board under this identity", "HTTPS")
 ```
 
 ## 4. Solution strategy
