@@ -263,25 +263,29 @@ Sessions the same account holds on other devices are untouched — sign-out is p
 
 ## 7. Deployment view
 
-<!-- 🎯 Why: the TOPOLOGY DevOps must know without reading the deploy charts — how many replicas,
-     where the background worker lives, AT WHAT NUMBERS we scale.
-     📋 Write: 2–3 sentences on topology + monitoring + concrete threshold numbers.
-     📌 e.g. «500 authors → partition by quarter» (not «we'll think about scale later»).
-     🎯 N/A allowed for XS/S that reuses an existing deployment unit with no change.
-     Deployment-diagram scaffold → templates/deployment.md. -->
+One instance on the owner's self-hosted host, behind a **reverse proxy** that terminates TLS for the registered domain and forwards the originating client address — that forwarded address is the **request source** the registration rate limit keys on (spec §6.1), and it is trusted only when the request arrives from the proxy itself. **SQL Server** runs alongside on the same host and holds all three of this feature's concerns: accounts, session records, and the data-protection key ring (ADR 0009). A single replica; because both the session store and the key ring are shared state in the database, a second replica would work without code change, but nothing calls for one.
 
-<Topology in 2–3 sentences. Where it runs, replicas, scaling thresholds.>
+**Expired-session cleanup.** A hosted background service inside the API process removes rows that can no longer be live — older than 90 days, or revoked more than 14 days ago — once a day and once at startup. The startup run matters because an idle instance may be suspended by the host (a consequence ADR 0004 already records), in which case the daily timer does not fire. Cleanup is **hygiene, not enforcement**: an expired row is refused at recognition time regardless, because the `Session` entity itself decides it is dead. It exists because a session row records when a named person signed in, and spec §3 rules out any data-deletion path — without cleanup the table is a permanent visit log.
 
 **Monitoring:**
-- <Metrics — e.g. `<metric_name>`>
-- <Alerts — e.g. «worker lag > 10 min → page on-call»>
-- <Tracing — e.g. spans on the request boundary>
+- Sign-in and registration p95, and session-recognition p95 on ordinary reads — the three spec §6 latency budgets.
+- Count of live session records; count of rows removed by the last cleanup run, and when it last succeeded.
+- Failed sign-in attempts per account per hour (the AC-12 progressive delay in action).
+- Registrations refused by the rate limit, and the request source that triggered it.
+
+**Alerts:**
+- Session-recognition p95 above 30 ms sustained — the budget ADR 0008's per-request lookup spends.
+- Live session count drops to zero immediately after a deployment — that is KPI 3 failing and means the key ring did not survive.
+- Cleanup has not succeeded for more than 48 hours.
 
 **Scaling thresholds:**
-- <e.g. comfortable in one table up to N rows/year>
-- <e.g. partition by quarter above N rows/year>
+- Session rows grow with sign-ins rather than with time; at invited-reviewer scale the table stays in the low thousands.
+- Above roughly 100k live rows, re-measure the per-request lookup against the 30 ms budget before assuming it still holds.
 
-<!-- For XS/S with no deployment change: <!-- N/A: reuses existing deployment unit, no infra change --> -->
+<!-- Hosting divergence: architecture-map.md still records hosting as undecided and names a managed
+     SQL offer as the thing to verify before week 2. This SAD assumes the owner's self-hosted host,
+     which is what makes ADR 0009's key ring and this cleanup service straightforward. Carried as a
+     §11 row rather than silently resolved here; `survey` should refresh the map once it is settled. -->
 
 ## 8. Crosscutting concepts
 
