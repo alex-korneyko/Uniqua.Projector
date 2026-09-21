@@ -308,43 +308,37 @@ Nine of the rows below are inherited verbatim from `architecture-map.md` §Conve
 
 ## 9. Architecture decisions
 
-<!-- 🎯 Why: the REVERSE INDEX onto the adr/ folder. `ls adr/` gives the files; §9 gives the
-     semantics — why they exist, which SAD section they attach to, what status.
-     📋 Write: a 4-column table, one row per ADR. Mixed status is fine.
-     📌 e.g. «0001 | Store content as a table of typed blocks | Accepted | §4». -->
-
 | # | Title | Status | Section |
 |---|---|---|---|
-| <NNNN> | <imperative — e.g. "Use a sliding-window counter for rate limiting"> | Accepted | §<N> |
-| <NNNN> | <imperative — e.g. "Co-locate the worker in the API process"> | Accepted | §<N> |
+| 0006 | Build this feature as a backend service and a web front-end | Accepted | §4 |
+| 0007 | Deliver the web surface as a client-side SPA | Accepted | §4 |
+| 0008 | Store sessions as server-side records rather than self-contained cookie tickets | Accepted | §4 |
+| 0009 | Keep the data-protection key ring in the database | Accepted | §4 |
+| 0010 | Replace account lockout with a progressive per-account delay | Accepted | §8 |
 
-ADR files live under `docs/features/<slug>/adr/NNNN-<title>.md`.
+ADR files live under `docs/features/accounts-and-sessions/adr/NNNN-<title>.md`. Numbering continues the repository-wide sequence that `docs/adr/0001`–`0005` started, per the §2 convention — there is no second «ADR 0003» in this project.
 
 ## 10. Quality requirements
 
-<!-- 🎯 Why: the QUALITY TREE — take a goal from §1 and break it into concrete leaves: tests,
-     metrics, configs, drills. ⭐ Without §10, §1 is a manifesto. With §10 each declaration maps
-     to something PROVABLE.
-     📋 Write: per §1 goal — When / Then / How-verify. Numbers from spec §6 NFR VERBATIM (don't
-     round ≤250ms to ≤300ms — that's a critic F6 hit).
-     📌 e.g. «p95 ≤ 500 ms on a block update, verified by a 100 req/s load test». -->
+Each of the three §1 goals expanded into a scenario. **Every number is copied verbatim from spec §6** — none is invented and none is rounded.
 
-Each top-3 goal from §1 expanded into a full scenario:
+**QG-1. Security of the single authentication boundary**
+- **When:** someone submits wrong passwords against one account repeatedly, or probes the sign-in form with addresses that own no account.
+- **Then:** the 6th consecutive failure is delayed ≥ 2 s and the 10th ≥ 30 s; a correct password is never delayed; the failure count returns to zero after 15 min with no attempt; one password verification costs ≥ 100 ms per attempt; an address no account was registered with is refused in the same words and in a comparable time as a wrong password.
+- **How verify:** integration test against a controllable clock for the delay curve and the reset; a unit test over the hashing parameters for the ≥ 100 ms floor; a timing-comparison test for AC-05b; **and a regression test asserting that an account with many recent failures still accepts the correct password immediately** — that is the test which catches someone re-enabling the framework lockout ADR 0010 deliberately switched off.
 
-**QG-1. <quality attribute>**
-- **When:** <trigger condition>
-- **Then:** <expected behaviour with numbers from spec §6 NFR>
-- **How verify:** <test / chaos drill / load test / metric>
+**QG-2. Session continuity with a bounded lifetime**
+- **When:** a session goes unused for 14 days; a session reaches 90 days old however actively it is used; the instance is redeployed.
+- **Then:** the session ends within 14 days plus at most 1 hour after the last activity; no session is recognised more than 90 days after it was opened; 100% of unexpired sessions survive a redeploy of the instance.
+- **How verify:** integration tests against a controllable clock for the sliding window and the absolute ceiling; a post-deployment check for redeploy survival — **first verifiable at roadmap step 4**, when a real deployment exists. `plan-tests` records that third item as deferred, not as covered.
 
-**QG-2. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+**QG-3. Unattended reachability within the latency budget**
+- **When:** a visitor registers, signs in on return, or makes any ordinary authenticated read.
+- **Then:** p95 ≤ 800 ms for registration; p95 ≤ 600 ms for sign-in, counting successful sign-ins only — attempts delayed by the guessing protection are excluded, since that delay is deliberate; p95 ≤ 30 ms to recognise a session on an ordinary read; ≥ 10 sign-ins/s.
+- **How verify:** server-side timing sampled in the smoke run for the three p95 figures; throughput measured on the reference machine — a 2-vCPU virtual machine on the self-hosted host — with the same smoke test in CI counting only as a regression check, since the runner is not the reference machine.
 
-**QG-3. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+<!-- AC-09 (sign-out silencing an already-open live-update connection) is a binding commitment that
+     cannot be exercised until the channel arrives at roadmap step 8; spec §5 carries the same note. -->
 
 ## 11. Risks and technical debt
 
