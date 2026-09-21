@@ -342,32 +342,48 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 
 ## 11. Risks and technical debt
 
-<!-- 🎯 Why: ⭐ collects EVERYTHING that can break — not only the technical. Without §11 risks get
-     discussed at standups and lost; debt lives only in the head of whoever accepted it.
-     📋 Write: a risk/debt table — severity — mitigation — owner. Accepted debt in its own block.
-     📌 The first risk is often a product risk, not a technical one. That's normal. -->
-
-<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows created by
-     a Save-as-OQ resolution during the Socratic walk (see references/socratic.md). -->
+<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows carried from
+     an unresolved architectural decision (here: the three spec §8 questions still open after this
+     pass - the other two were closed by ADR 0009 and ADR 0010). -->
 
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
-| <e.g. Worker lag may reach hours during a downstream outage> | Medium | <alert >10 min, on-call playbook, retry backoff> | <DevOps> |
-| <e.g. No event-schema versioning in v1> | Medium | <ADR-NNNN planned for v2, tolerate unknown fields> | <Backend> |
-| Open architectural decision: <decision-headline> | Open question | Resolve before <stage trigger or YYYY-MM-DD>; <inline rationale from the Save-as-OQ> | <owner> |
+| The .NET 10 target is unverified — no SDK check has happened, because no skeleton exists yet | Medium | Confirm the installed SDK at scaffold; fall back to .NET 8 (LTS) and update `architecture-map.md`. No decision in this SAD depends on the difference — Identity, Data Protection and SignalR exist in both | Alex Korneiko |
+| Hosting divergence — `architecture-map.md` still records hosting as undecided and names a managed SQL offer to verify, while this SAD assumes the owner's self-hosted host | Medium | Settle hosting in week 1 and refresh the map with `survey`. ADR 0009's key-ring table works on any host; only §6's reference machine and §7's topology would change | Alex Korneiko |
+| One indexed session lookup on every authenticated request, against the ≤ 30 ms budget (ADR 0008's cost) | Medium | The lookup is by primary key; alert on sustained p95 above 30 ms; re-measure above roughly 100k live rows | Alex Korneiko |
+| The framework's account lockout could be re-enabled by someone who assumes it is the safe default, silently breaking AC-12 | Medium | The QG-1 regression test asserts that an account with many recent failures still accepts the correct password immediately | Alex Korneiko |
+| A 30-second guessing delay holds the request open, occupying a connection for its duration | Low | Harmless at invited-reviewer scale; revisit if the §6 delay curve is ever raised | Alex Korneiko |
+| The SPA shows a blank page until its bundle loads, and spec §1's primary reader gives the link about one minute | Low | Keep the bundle small. The spec sets no number for first render, so this is watched rather than measured — it is a risk, not an NFR | Alex Korneiko |
+| `ux-flows` was skipped, so `screens` will derive screen states from acceptance criteria and contract error responses rather than from a screen inventory | Low | Run `/sdd:ux-flows accounts-and-sessions` before `screens` if the error-state coverage looks thin | Alex Korneiko |
+| Open architectural decision: how signing out reaches an already-open live-update connection | Open question | Resolve before roadmap step 8. ADR 0008 makes it possible — the session is server-side state the hub can consult — but does not implement the notification; spec §8 question 1 | Alex Korneiko |
+| Open architectural decision: whether traffic on a live-update connection counts as activity for the 14-day sliding window | Open question | Resolve before roadmap step 8; the standing default is that it does not, so only a deliberate action renews a session; spec §8 question 3 | Alex Korneiko |
+| Open architectural decision: what normalisation applies to an email address at registration versus at sign-in | Open question | Resolve before `/sdd:data-model`, which has to pick the column collation and the unique index; the standing default is identical normalisation before comparison; spec §8 question 4 | Alex Korneiko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
-- <e.g. the entity is immutable / unversioned — OK for v1, may need audit versioning in v2>
+- **The key ring shares the database with the accounts it protects** (ADR 0009). One database compromise yields both. Accepted because on a single self-hosted host whoever can read a key volume can usually read the database files beside it; the certificate-encrypted variant is additive later and costs one deployment.
+- **Email addresses are retained indefinitely with no deletion path** (spec §3). Deliberate rather than overlooked — the audience is a small set of invited reviewers — but it means there is no way to honour an erasure request without a manual database edit.
+- **A session row records when a named person signed in.** The §7 cleanup bounds how long that history lives, but there is no per-person erasure, for the same reason as above.
+- **Account enumeration through the registration form is deliberate** (AC-03, AC-11b). The display-name uniqueness chosen during clarify widened it: the form now also reveals which display names are in use.
+- **An unknown address at sign-in still costs a full password verification** (AC-05b), which makes the sign-in form a cheap way to consume processor time. The §6.1 rate limit covers registration only.
 
 ## 12. Glossary
 
-<!-- 🎯 Why: ⭐ the DOMAIN GLOSSARY that ends arguments a year later («checkpoint — weekly or
-     biweekly? quarter — calendar or fiscal?»).
-     📋 Write: a term / meaning table. Business + technical terms mixed.
-     📌 e.g. «Lesson | a unit inside a course made of blocks (text, video)». -->
+Terms marked **[CONTEXT]** are canonical in the repository-root `CONTEXT.md` and are repeated here only for a reader of this document; the definitions there win on any conflict.
 
 | Term | Meaning |
 |---|---|
-| <e.g. domain object A> | <its meaning in this domain> |
-| <e.g. domain object B> | <its meaning> |
-| <e.g. domain invariant name> | <the rule, in plain language> |
+| account **[CONTEXT]** | A registered identity with an email, a password and a display name, which a person signs in as |
+| visitor **[CONTEXT]** | A person using the application with no active session; may already own an account and simply not be signed in |
+| session **[CONTEXT]** | The period during which a browser is recognised as a specific account, carried by a cookie that page scripts cannot read |
+| board member **[CONTEXT]** | An account granted access to one board; the downstream consumer of the identity this feature establishes |
+| display name **[CONTEXT]** | The label other board members see next to an account's actions. Unique across accounts as of this feature (AC-11, AC-11b) |
+| live-update connection **[CONTEXT]** | The connection a board member's browser holds open to one board so that changes made by other members arrive without a reload |
+| session record | The server-side row that *is* the session (ADR 0008): its identifier, the account, when it was opened, when it was last seen, and whether it has been revoked. The cookie carries only an opaque reference to it |
+| request source | The client address as reported by this instance's reverse proxy, trusted only when the request arrives from the proxy. It is the key the registration rate limit counts against (spec §6.1) |
+| key ring | The set of keys ASP.NET Core Data Protection uses to sign and encrypt the session cookie. Kept in the database so a redeploy does not end every session (ADR 0009) |
+| reference machine | The machine the §6 throughput and hashing-cost figures are measured on — a 2-vCPU virtual machine on the self-hosted host. CI is not the reference machine |
+| progressive delay | The growing refusal delay applied after repeated wrong passwords on one account, in place of locking the account (ADR 0010) |
+
+<!-- Candidates for /sdd:glossary if they recur outside this feature: `session record`,
+     `request source`, `reference machine`. They are feature-local for now, so they live here
+     rather than in CONTEXT.md - the two-level contract says a term lives in exactly one place. -->
