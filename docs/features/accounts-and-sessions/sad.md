@@ -153,7 +153,8 @@ src/Uniqua.Projector.Infrastructure/Accounts/
 src/Uniqua.Projector.Api/Accounts/
 ├── AccountEndpoints.cs     # register, sign in, sign out
 ├── SessionAuthenticationHandler.cs  # recognises a session per request via ISessionReader
-└── HubSessionRevocationNotifier.cs  # implements ISessionRevocationNotifier beside the hub
+├── HubSessionRevocationNotifier.cs  # implements ISessionRevocationNotifier beside the hub
+└── ExpiredSessionCleanupService.cs  # hosted service: the §7 sweep, at startup and once a day
 
 src/Uniqua.Projector.Web/src/features/auth/
 ├── RegisterScreen.tsx      # composed from the vendored shadcn/ui primitives
@@ -265,6 +266,237 @@ Sessions the same account holds on other devices are untouched — sign-out is p
 <!-- Further flows - sign in on return, recognise a session on an ordinary read, the progressive
      delay under guessing, expiry at 14 days idle and 90 days absolute - are covered by
      /sdd:sequences against the full AC list. -->
+
+**Critical flow 3: registration refused before an account exists (AC-01b, AC-02, AC-02b)**
+
+```mermaid
+sequenceDiagram
+    actor Visitor
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+
+    Note over Visitor,Api: Precondition: a visitor with no account, on the public link
+    Visitor->>Spa: Fills in address, password and display name
+    Spa->>Api: Submits the registration
+    Api->>Api: Identify the request source from the client address the reverse proxy reports, trusted only because the request arrived from the proxy
+    alt Five registrations already came from this source within the past minute
+        Api-->>Spa: Refused - registration is temporarily limited, and when it may be tried again
+        Spa-->>Visitor: Shows the limit and the time, keeping what was typed
+    else Within the limit
+        Api->>App: Register this account
+        App->>Domain: Check the submitted values against the account invariants
+        Domain-->>App: Verdict
+        alt Password shorter than 8 or longer than 128 characters
+            App-->>Api: Refused - a password must be at least 8 characters long
+            Api-->>Spa: Refusal in plain language
+            Spa-->>Visitor: Shows the reason, everything else stays in place
+        else The address cannot be an email address
+            App-->>Api: Refused - the address is not usable
+            Api-->>Spa: Refusal in plain language
+            Spa-->>Visitor: Shows the reason, everything else stays in place
+        else Everything is well formed
+            Note over App,Api: Continues into flow 1 - uniqueness of the address and the display name, then the account and its session
+        end
+    end
+    Note over Visitor,Domain: Postcondition: nothing is written unless the submission survives every check above - no account, no session, no counter
+```
+
+**Critical flow 4: sign in on return (AC-04, AC-05, AC-05b)**
+
+```mermaid
+sequenceDiagram
+    actor Visitor
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Visitor,Db: Precondition: the visitor owns an account and holds no active session
+    Visitor->>Spa: Fills in the address and the password
+    Spa->>Api: Submits the sign-in
+    Api->>App: Sign in with these credentials
+    App->>Infra: Find the account for this address, normalised the same way registration normalised it
+    Infra->>Db: Look the address up
+    Db-->>Infra: The account, or nothing
+    Infra-->>App: The account, or nothing
+    alt No account was ever registered with that address
+        App->>Infra: Verify the password against a dummy credential so the attempt costs the same time
+        Infra-->>App: Rejected
+        App-->>Api: Refused - the address or the password is incorrect
+        Api-->>Spa: The same wording and a comparable wait as a wrong password
+        Spa-->>Visitor: Shows one message that names neither of the two
+    else The account exists and the password is wrong
+        App->>Infra: Verify the password
+        Infra-->>App: Rejected
+        App->>Infra: Record one more consecutive failure against the account
+        Note over Infra,Db: persists the consecutive-failure count and the time of this attempt on the account - see flow 6
+        Infra->>Db: Update the account
+        Db-->>Infra: Updated
+        App-->>Api: Refused - the address or the password is incorrect
+        Api-->>Spa: Refusal
+        Spa-->>Visitor: Shows the same message, word for word
+    else The account exists and the password is correct
+        App->>Infra: Verify the password
+        Infra-->>App: Accepted
+        App->>Infra: Return the consecutive-failure count to zero and open a session
+        Note over Infra,Db: persists a session record - the account it belongs to, when it was opened, when it was last seen
+        Infra->>Db: Write the session record and the cleared counter
+        Db-->>Infra: Written
+        Infra-->>App: Session reference
+        App-->>Api: Session opened
+        Api-->>Spa: Signed in, session cookie set
+        Spa-->>Visitor: Shows their own display name
+    end
+    Note over Visitor,Db: Postcondition: either a session exists and the failure count is zero, or nothing about the account changed except its failure count
+```
+
+**Critical flow 5: recognising a session on an ordinary read (AC-06, AC-07, AC-07b, AC-10)**
+
+```mermaid
+sequenceDiagram
+    actor Account
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Account,Db: Precondition: the browser was closed entirely and reopened, and still holds the session cookie
+    Account->>Spa: Opens the link again
+    Spa->>Api: Requests something reserved for a signed-in account, and the browser attaches the cookie on its own
+    Api->>Api: The authentication handler reads the opaque session reference out of the cookie
+    Api->>Infra: Read the session record for this reference, through the session-reader port
+    Infra->>Db: Look the session up
+    Db-->>Infra: The session record, or nothing
+    Infra-->>Api: The session record, or nothing
+    alt No such record, or the record says the session was revoked
+        Api-->>Spa: Not recognised, whatever the browser still holds
+        Spa-->>Account: Presents the sign-in form
+    else A record was found
+        Api->>Domain: Is this session expired as of now
+        Domain-->>Domain: Apply the two rules the Session entity owns - 14 days without a request, and 90 days since it was opened
+        Domain-->>Api: Verdict
+        alt Expired - idle for 14 days, or opened 90 days ago however actively it was used
+            Api-->>Spa: Not recognised
+            Spa-->>Account: Presents the sign-in form
+        else Still live
+            Api->>Infra: Stamp this request as activity on the session
+            Note over Infra,Db: persists last-seen-at on the session - written at most once an hour, which is the 1 hour of slack spec section 6 allows on expiry accuracy
+            Infra->>Db: Update last-seen-at
+            Db-->>Infra: Updated
+            Api-->>Spa: Recognised, the request proceeds
+            Spa-->>Account: Shows their own display name
+        end
+    end
+    Note over Account,Db: Postcondition: recognition cost one indexed read of the session record - the 30 ms spec section 6 budgets for an ordinary read
+```
+
+**Critical flow 6: the progressive delay under password guessing (AC-12)**
+
+```mermaid
+sequenceDiagram
+    actor Guesser as Someone guessing
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Guesser,Db: Precondition: five consecutive sign-in attempts against this account have already failed
+    Guesser->>Spa: Submits the address with another wrong password
+    Spa->>Api: Submits the sign-in
+    Api->>App: Sign in with these credentials
+    App->>Infra: Read the account with its consecutive-failure count and the time of the last attempt
+    Infra->>Db: Read the account
+    Db-->>Infra: Account, count and last-attempt time
+    Infra-->>App: Account, count and last-attempt time
+    App->>Domain: How long must this attempt be held back
+    Domain-->>App: A delay grown from the count - at least 2 seconds at the sixth failure, at least 30 seconds at the tenth
+    App->>Infra: Verify the password
+    Infra-->>App: Rejected
+    App->>App: Hold the answer for the computed delay before replying
+    App->>Infra: Record one more consecutive failure and the time of this attempt
+    Note over Infra,Db: persists the consecutive-failure count and the last-attempt time on the account - both read on the next attempt
+    Infra->>Db: Update the account
+    Db-->>Infra: Updated
+    App-->>Api: Refused - the address or the password is incorrect
+    Api-->>Spa: The same refusal as any other, only later
+    Spa-->>Guesser: Shows the same message, with no hint that a delay was applied
+    Note over App,Db: The count returns to zero two ways, and the account never becomes unusable to its owner
+    alt The owner supplies the correct password
+        App-->>Api: Accepted with no delay at all, and a session opened as in flow 4
+        App->>Infra: Return the count to zero
+    else Fifteen minutes pass in which no attempt is made at all
+        Note over App,Infra: The reset is derived from the last-attempt time on the next read, not kept alive by a timer - so a restart cannot lose it
+    end
+    Note over Guesser,Db: Postcondition: guessing is progressively futile, the owner is never locked out, and nothing about the refusal reveals that this account is under attack
+```
+
+**Cross-cutting flow 7: expired-session cleanup (no acceptance criterion - hygiene, from section 7)**
+
+```mermaid
+sequenceDiagram
+    participant Cleanup as Expired-session cleanup
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+    participant Ops as Operator
+
+    Note over Cleanup,Db: Trigger: once when the instance starts, and once a day after that - the daily timer does not survive a restart, and on a manually-operated instance a restart is the common case
+    Cleanup->>Cleanup: Skip this run if the previous one is still in progress - the idempotency guard, since the work has no key of its own
+    Cleanup->>Infra: Remove the session rows that can no longer be live
+    Infra->>Db: Delete sessions opened more than 90 days ago, or revoked more than 14 days ago
+    Note over Infra,Db: reads sessions by opened-at and by revoked-at - the two columns this sweep filters on, which is why they want indexes
+    Db-->>Infra: Rows removed
+    Infra-->>Cleanup: Rows removed
+    Cleanup->>Cleanup: Record the count and the time this run succeeded, for the section 7 monitoring
+    Note over Cleanup,Infra: A failed run is not retried immediately - it is simply attempted again at the next start or the next day, because the sweep is idempotent and a missed run costs nothing but table size
+    alt No run has succeeded for more than 48 hours
+        Cleanup->>Ops: Raise the section 7 alert
+        Note over Cleanup,Ops: There is no dead-letter queue and nothing to replay - the operator is the escalation path, and the rows stay until a run succeeds
+    end
+    Note over Cleanup,Db: Postcondition: cleanup is hygiene, never enforcement - an expired session is refused at recognition time regardless, because the Session entity itself decides it is dead (flow 5)
+```
+
+**Coverage of the spec by the flows above.** Every §4 user story has at least one flow, and every §5 acceptance criterion is shown by a flow, by a branch inside one, or is recorded here as non-runtime.
+
+| Spec | Shown by |
+|---|---|
+| US-01 register unaided | flow 1 (created) + flow 3 (refused) |
+| US-02 sign in on return | flow 4 |
+| US-03 stay signed in across days | flow 5 |
+| US-04 end my session deliberately | flow 2 |
+| US-05 be seen as a person | flow 1 |
+| US-06 be protected from password guessing | flow 6 |
+| US-07 keep what I create | flow 1 — the identity is allocated once, when the account is created |
+| AC-01 | flow 1, happy path |
+| AC-01b registration rate limit | flow 3, first branch |
+| AC-02 password too short | flow 3, inner branch |
+| AC-02b unusable address | flow 3, inner branch |
+| AC-03 address already registered | flow 1, first branch |
+| AC-04 | flow 4, third branch |
+| AC-05 wrong password | flow 4, second branch |
+| AC-05b unknown address | flow 4, first branch — same wording, comparable wait |
+| AC-06 survives a browser close | flow 5, live branch |
+| AC-07 14 days idle | flow 5, expired branch |
+| AC-07b 90 days absolute | flow 5, expired branch |
+| AC-08 sign-out ends only this session | flow 2 |
+| AC-09 sign-out reaches the open connection | flow 2 |
+| AC-10 an ended session reaches nothing | flow 5, first branch — and flow 2 for the sign-out case |
+| AC-11 display name is what others see | flow 1 |
+| AC-11b display name already taken | flow 1, first branch |
+| AC-12 progressive delay | flow 6 |
+| AC-13 one stable identity per account | **not a runtime path** — it is a property of how identifiers are allocated (§8, `Guid.CreateVersion7()`: never reused, never reassigned), enforced at the single write in flow 1 rather than by any sequence of messages |
+
+**Flagged for the stages that follow — flags only, nothing was decided here.**
+
+- **The hourly activity stamp (flow 5) is a real trade-off with no decision record.** Writing `last-seen-at` at most once an hour is what keeps an ordinary read inside the 30 ms budget, and it spends exactly the 1 hour of slack spec §6 allows on expiry accuracy. It was confirmed during this pass but is not written down anywhere as a decision — a candidate for `/sdd:decide-adr`, alongside ADR 0008 whose per-request lookup it protects.
+- **`Operator` (flow 7) is a participant §5 does not declare.** It stands for whoever answers the §7 alert; the feature has no on-call role and none is invented here. The cleanup hosted service, the other participant flow 7 introduced, was added to the §5 Api decomposition during this pass.
+- **Participant naming diverges from the `sequences` default.** These flows name the real containers from §5 — «Web client», «HTTP API» and the rest — rather than the generic `<ui>` / `<service>` / `<data-store>` placeholders the stage normally uses, because the two flows already in this section set that convention and design has already named every container. Recorded so the divergence is a choice rather than an oversight.
+- **Two spec §8 open questions are visible in these flows but not closed by them.** Flow 2 already carries the first — how sign-out reaches an already-open live-update connection. Flow 5 touches the second: it counts an ordinary read as activity, and says nothing about traffic on a live-update connection, which §8's default treats as the one exception. Both are due before roadmap step 8.
 
 ## 7. Deployment view
 
