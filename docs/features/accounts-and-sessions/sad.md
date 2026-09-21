@@ -289,21 +289,22 @@ One instance on the owner's self-hosted host, behind a **reverse proxy** that te
 
 ## 8. Crosscutting concepts
 
-<!-- 🎯 Why: CROSS-CUTTING PATTERNS spanning several modules: logging, errors, authorization, ID
-     strategy, events, caching. ⭐ The second-densest section. A pattern inside one module is NOT
-     here; a project-wide convention belongs in the convention file.
-     📋 Write: a table — concept / convention / where defined. One row per concept.
-     📌 e.g. «sortable time-based IDs generated in the app layer» as a default from the convention file. -->
+Nine of the rows below are inherited verbatim from `architecture-map.md` §Conventions. Three are added by this feature because spec §6.1 requires them: cross-site request-forgery protection, the registration rate limit, and the logging rule.
 
 | Concept | Convention | Where defined |
 |---|---|---|
-| Logging | <e.g. structured, fields `module=<name>`> | <convention file §X or here> |
-| Authentication | <e.g. token-based via middleware> | <convention file §X> |
-| Error handling | <e.g. domain sentinel → ports error mapping → JSON> | <convention file §X> |
-| ID strategy | <e.g. sortable time-based ID in the app layer> | <convention file §X> |
-| Internationalisation | <e.g. N/A, single language> | — |
-| Observability | <e.g. tracing on the request boundary> | — |
-| Events | <module-specific patterns, if any> | <here> |
+| Logging | Structured, `module=accounts`. **Never log an email address on a sign-in failure**, and never log the cookie, the session reference or any credential — otherwise the log becomes the account-enumeration oracle that AC-05b exists to close | architecture-map §Conventions + here |
+| Authentication | Session cookie — httpOnly, secure, same-site — carrying an opaque reference, recognised on every request by an Api authentication handler against a session record | ADR 0003, ADR 0008, §5 |
+| Authorization | None added by this feature. Membership belongs to a board, not to the account; there is no account-level role | spec §3, §6.1 |
+| Cross-site request forgery | An antiforgery token is required on every state-changing request. The cookie alone is never sufficient proof of intent, because the browser attaches it automatically | ADR 0003 (negative consequence), ADR 0007 |
+| Error handling | RFC 9457 `ProblemDetails` from one exception handler. A refusal carries exactly the plain-language reason its acceptance criterion specifies — no more (AC-05 must not reveal which of address or password was wrong) | architecture-map §Conventions |
+| ID strategy | `Guid.CreateVersion7()` for account and session identifiers — time-ordered, and it leaks no record counts | architecture-map §Conventions |
+| Password hashing | The Identity hasher, with parameters tuned so one verification costs ≥ 100 ms on the §6 reference machine; guarded by a unit test over the parameters | spec §6 |
+| Guessing protection | A progressive per-account delay computed from Identity's consecutive-failure counter, with the framework's own lockout switched off | ADR 0010 |
+| Rate limiting | No more than 5 registrations per minute per request source — the client address as reported by the reverse proxy, trusted only when the request arrives from the proxy | spec §6.1, §7 |
+| Internationalisation | N/A — single language | — |
+| Observability | The §7 metrics; server-side timing on the sign-in, registration and session-recognition paths | §7 |
+| Secrets | The data-protection key ring lives in the database; this project has no secret manager, which is why the certificate-encrypted variant was rejected | ADR 0009, §11 |
 
 ## 9. Architecture decisions
 
