@@ -1,0 +1,447 @@
+# DERIVED — do not hand-edit. Sources:
+#   fields + constraints  ← data-model.md (AspNetUsers, Sessions)
+#   error responses       ← sad.md §6 flows 1-6 alt-branches
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Recorded deviations from the api-skill defaults (see contracts/api-sync-report.md §C):
+#   - RFC 9457 ProblemDetails replaces the {code,message,details?} envelope
+#     (architecture-map §Conventions + sad.md §8 "Error handling"). The neutral
+#     `accounts.error_name` code is preserved as a ProblemDetails extension member.
+#   - Session cookie replaces BearerAuth (ADR 0003, ADR 0008).
+#   - No cursor page wrapper: this feature exposes no collection.
+openapi: 3.1.0
+
+info:
+  title: Accounts and Sessions API
+  version: 0.1.0
+  contact:
+    name: "Alex Korneiko — Backend Lead"
+  description: |
+    The product's single authentication boundary. A stranger who opens the public link creates an
+    account unaided, is signed in immediately, and is recognised again across days and devices — so
+    that every later feature (boards, membership, invitations, the live-update connection) resolves
+    against exactly one notion of who someone is. The rules that govern a session are stated here and
+    observable from outside the application, because this API's primary reader probes authentication
+    and access control first.
+
+    A session is a server-side record (ADR 0008) referenced by an opaque, httpOnly cookie (ADR 0003).
+    The session reference is never present in a request or response body: page scripts cannot read it,
+    and this contract deliberately offers no way for them to.
+
+servers:
+  - url: https://projector.example.com
+    description: Self-hosted instance
+  - url: http://localhost:5000
+    description: Local
+
+# Global default — every operation requires a recognised session cookie unless it declares `security: []`.
+security:
+  - SessionCookie: []
+
+tags:
+  - name: accounts
+    description: Registration and the signed-in account's own view of itself.
+  - name: sessions
+    description: Opening and ending the period during which a browser is recognised as an account.
+
+paths:
+  /api/v1/accounts:
+    post:
+      tags: [accounts]
+      summary: Register an account and arrive signed in
+      description: |
+        US-01 / AC-01. Creates the account and opens a session in the same call, so the visitor is never
+        asked to sign in again immediately after registering. On success the session cookie is set.
+
+        Enumeration is deliberate here and only here: `accounts.email_taken` and
+        `accounts.display_name_taken` name which field collided (spec §6.1 — an ambiguous form defeats
+        unattended registration, which is load-bearing). The sign-in endpoint adds no second oracle.
+      operationId: registerAccount
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RegisterAccountRequest" }
+            example:
+              email: "new-visitor@example.test"
+              password: "correct horse battery"
+              display_name: "Test User"
+      responses:
+        "201":
+          description: |
+            Account created and a session opened (AC-01). The response body carries the display name the
+            visitor is shown back; the session itself is carried only by the cookie.
+          headers:
+            Set-Cookie:
+              description: |
+                The session cookie — httpOnly, secure, same-site (sad.md §8). Its value is the opaque
+                `Sessions.Id` reference; it is never readable by page scripts and never appears in a body.
+              schema: { type: string }
+              example: "projector_session=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+              example:
+                id: "018f3a2b-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                email: "new-visitor@example.test"
+                display_name: "Test User"
+        "400":
+          description: |
+            The submission is malformed (sad.md §6 flow 3, inner branches). `accounts.password_invalid`
+            for AC-02 (shorter than 8 or longer than 128 characters); `accounts.email_invalid` for AC-02b
+            (the address cannot be an email address). Nothing is written — no account, no session, no
+            counter (flow 3 postcondition).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                password_invalid:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/password-invalid"
+                    title: "The password is not usable"
+                    status: 400
+                    detail: "A password must be at least 8 characters long."
+                    code: "accounts.password_invalid"
+                email_invalid:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/email-invalid"
+                    title: "The address is not usable"
+                    status: 400
+                    detail: "That is not an email address we can use."
+                    code: "accounts.email_invalid"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "409":
+          description: |
+            A uniqueness invariant refused the registration (sad.md §6 flow 1, first branch).
+            `accounts.email_taken` for AC-03; `accounts.display_name_taken` for AC-11b. The refusal names
+            which of the two collided, by design.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                email_taken:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/email-taken"
+                    title: "That address is already registered"
+                    status: 409
+                    detail: "An email address identifies exactly one account."
+                    code: "accounts.email_taken"
+                display_name_taken:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/display-name-taken"
+                    title: "That display name is taken"
+                    status: 409
+                    detail: "A display name identifies exactly one account to the people who see it."
+                    code: "accounts.display_name_taken"
+        "429":
+          description: |
+            AC-01b — more than 5 registrations came from this request source within the past minute
+            (sad.md §6 flow 3, first branch). The request source is the client address as reported by
+            this instance's own reverse proxy, trusted only when the request arrived from the proxy
+            (spec §6.1). The response states when a further attempt may be made.
+          headers:
+            Retry-After:
+              description: seconds until a further registration from this source is accepted
+              schema: { type: integer, minimum: 1 }
+              example: 37
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/accounts/registration-rate-limited"
+                title: "Registration is temporarily limited"
+                status: 429
+                detail: "Too many accounts have been created from here in the past minute. Try again in 37 seconds."
+                code: "accounts.registration_rate_limited"
+                retry_after_seconds: 37
+
+  /api/v1/accounts/me:
+    get:
+      tags: [accounts]
+      summary: The account this request is recognised as
+      description: |
+        US-03 / AC-06. The canonical request "reserved for a signed-in account" of sad.md §6 flow 5 —
+        the client calls it on load to decide whether to show the account or the sign-in form. Recognition
+        is one primary-key read of the session record, inside the ≤ 30 ms budget of spec §6; the request
+        also stamps activity on the session (written at most once an hour).
+
+        A session that is absent, revoked (AC-08/AC-10), idle for 14 days (AC-07) or opened more than
+        90 days ago (AC-07b) is refused here with one and the same code — the client presents the sign-in
+        form regardless of what the browser still holds.
+      operationId: getCurrentAccount
+      responses:
+        "200":
+          description: Recognised (AC-06). The display name is what the client shows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+              example:
+                id: "018f3a2b-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                email: "admin@example.test"
+                display_name: "Test User"
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+
+  /api/v1/sessions:
+    post:
+      tags: [sessions]
+      summary: Sign in — open a session
+      description: |
+        US-02 / AC-04 (sad.md §6 flow 4). On success the session cookie is set and the consecutive-failure
+        count returns to zero.
+
+        Two refusals are deliberately indistinguishable: a wrong password (AC-05) and an address no account
+        was registered with (AC-05b) return the identical `accounts.credentials_invalid` code, the identical
+        wording, and take a comparable time — the unknown-address branch verifies against a dummy credential
+        for exactly that reason. AC-12's progressive delay is applied *before* this same refusal and is not
+        signalled in the response at all: a delayed attempt is indistinguishable from an ordinary one, so
+        nothing reveals that the account is under attack. A correct password is never delayed.
+      operationId: createSession
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSessionRequest" }
+            example:
+              email: "admin@example.test"
+              password: "correct horse battery"
+      responses:
+        "201":
+          description: Session opened (AC-04).
+          headers:
+            Set-Cookie:
+              description: The session cookie — httpOnly, secure, same-site (sad.md §8).
+              schema: { type: string }
+              example: "projector_session=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+              example:
+                id: "018f3a2b-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                email: "admin@example.test"
+                display_name: "Test User"
+        "401":
+          description: |
+            AC-05 / AC-05b / AC-12 — one code, one wording, for a wrong password, for an address that was
+            never registered, and for an attempt held back by the progressive delay. The response names
+            neither of the two and carries no `details`: any structured hint would be the enumeration
+            oracle these criteria exist to close.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/accounts/credentials-invalid"
+                title: "The address or the password is incorrect"
+                status: 401
+                detail: "The address or the password is incorrect."
+                code: "accounts.credentials_invalid"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+
+  /api/v1/sessions/current:
+    delete:
+      tags: [sessions]
+      summary: Sign out — end the session this request arrived on
+      description: |
+        US-04 / AC-08 (sad.md §6 flow 2). Ends exactly the session the sign-out travelled on; sessions the
+        same account holds on other devices are untouched. The session record is marked revoked rather than
+        deleted, so a later request carrying the same cookie is refused by a record rather than by an
+        absence (AC-10); the cleanup sweep removes the row 14 days later.
+
+        AC-09: revocation is announced to the realtime hub in the same call, so an already-open live-update
+        connection stops delivering board updates — the end of a session withdraws access over every channel
+        at once, not only over the one the sign-out travelled on. How that reaches an already-open connection
+        is spec §8 open question 1, due before roadmap step 8; this contract states the outcome, not the
+        mechanism.
+      operationId: deleteCurrentSession
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      responses:
+        "204":
+          description: |
+            Session ended and the cookie cleared. The client presents the view a visitor sees.
+          headers:
+            Set-Cookie:
+              description: the session cookie, expired
+              schema: { type: string }
+              example: "projector_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+
+components:
+  securitySchemes:
+    # NOT BearerAuth — deviation by ADR 0003 + ADR 0008. The cookie is set by the server, attached by the
+    # browser on its own, and unreadable by page scripts; there is no token for a client to hold.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: projector_session
+      description: |
+        Opaque reference to a server-side session record (`Sessions.Id`). httpOnly, secure, same-site.
+        Because the browser attaches it automatically, it is never sufficient proof of intent on a
+        state-changing request — those additionally require the antiforgery token below (sad.md §8).
+
+  parameters:
+    AntiforgeryToken:
+      in: header
+      name: X-XSRF-TOKEN
+      required: true   # unresolved — OQ-API-1 (acquisition undrawn; owner: sequences)
+      description: |
+        Antiforgery token, required on every state-changing request (sad.md §8, ADR 0003 negative
+        consequence, ADR 0007). How the client obtains it is an open question this contract does not
+        answer — see `api-sync-report.md` OQ-API-1.
+      schema: { type: string, maxLength: 512 }
+
+  responses:
+    AntiforgeryFailed:
+      description: |
+        The antiforgery token was missing or did not match — the request is not proven to have originated
+        from this application (sad.md §8). The session, if any, is untouched.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/accounts/antiforgery-failed"
+            title: "The request could not be verified"
+            status: 403
+            detail: "The request could not be verified as coming from this application."
+            code: "accounts.antiforgery_failed"
+
+    SessionNotRecognised:
+      description: |
+        No session is recognised for this request — the cookie is absent, or the record says the session
+        was revoked (AC-08/AC-10), or the Session entity judges it expired: idle for 14 days (AC-07) or
+        opened 90 days ago however actively it was used (AC-07b). One code covers all four, because the
+        client's response to each is identical: present the sign-in form.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/accounts/session-not-recognised"
+            title: "Not signed in"
+            status: 401
+            detail: "Sign in to continue."
+            code: "accounts.session_not_recognised"
+
+  schemas:
+    # RFC 9457 ProblemDetails — the repo's one error shape (architecture-map §Conventions, sad.md §8),
+    # produced by a single exception handler; endpoints never build an ad-hoc error body. `code` is an
+    # RFC 9457 extension member carrying the neutral `module.error_name` convention, so the machine-
+    # readable contract survives the deviation from the {code,message,details?} envelope.
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: a URI identifying the problem type
+        title:
+          type: string
+          description: a short, human-readable summary of the problem type
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          description: |
+            The plain-language reason its acceptance criterion specifies — and no more. AC-05 must not
+            reveal which of the address or the password was wrong (sad.md §8).
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+          pattern: "^[a-z_]+\\.[a-z_]+$"
+          description: neutral `module.error_name` identifier, stable across wording changes
+          example: "accounts.credentials_invalid"
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+          description: present only on `accounts.registration_rate_limited` (AC-01b)
+
+    # The account as it is shown back to itself. Every property traces to an AspNetUsers column.
+    # Deliberately absent: PasswordHash (never a readable form), AccessFailedCount and
+    # LastFailedAttemptAt (AC-12 — nothing may reveal that an account is under attack), and every
+    # unused Identity default column.
+    Account:
+      type: object
+      required: [id, email, display_name]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The single stable identity AC-13 promises — allocated once with `Guid.CreateVersion7()`,
+            never reused, never reassigned, and what every later feature records ownership against.
+        email:
+          type: string
+          format: email
+          maxLength: 256
+          description: |
+            The address exactly as it was typed. Shown back to its own account only — never to other
+            board members, who see the display name (CONTEXT: *display name* NOT *email*).
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: The label other board members see next to this account's actions (AC-11).
+
+    RegisterAccountRequest:
+      type: object
+      required: [email, password, display_name]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 256
+          description: |
+            Normalised by the application — trim, then invariant upper-case — and the normalised form
+            carries the unique index that makes AC-03 true. Registration and sign-in normalise through
+            the identical code path (data-model.md § AspNetUsers).
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          format: password
+          writeOnly: true
+          description: |
+            AC-01 / AC-02. Bounds come from the acceptance criteria, not from a column — only the hash is
+            stored. Verification is deliberately slow (≥ 100 ms, spec §6).
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: AC-01 / AC-11. Must not already be in use (AC-11b).
+
+    CreateSessionRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          maxLength: 256
+          description: |
+            Deliberately NOT `format: email` — unlike registration, sign-in must refuse an unusable
+            address with the same wording and a comparable wait as a wrong password (AC-05b). A format
+            rejection here would be a second enumeration oracle.
+        password:
+          type: string
+          maxLength: 128
+          format: password
+          writeOnly: true
+          description: |
+            Deliberately NOT bounded by `minLength: 8` — a short password must be refused as
+            `accounts.credentials_invalid`, exactly like any other wrong one (AC-05).
