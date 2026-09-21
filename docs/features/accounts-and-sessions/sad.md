@@ -189,31 +189,77 @@ C4Container
 
 ## 6. Runtime view
 
-<!-- 🎯 Why: the RUNTIME FLOW of 1–2 critical scenarios — who talks to whom, when, in what order.
-     Without §6, §5 is just boxes with no life.
-     📋 Write: a Mermaid sequenceDiagram. Participants are names from §5 (don't invent new ones).
-     Messages are semantic («saves a draft»), NO HTTP verbs / paths / status codes — endpoint-level
-     sequences arrive at the `api` stage.
-     📌 e.g. «author → web: composes draft → web → content API: save». Seed the primary flow(s) here;
-     the `sequences` stage then covers every §5 AC (no cap). Never N/A for M+; XS/S keeps ≥1 happy-path flow. -->
+Two flows are seeded here — the one that carries the feature's primary goal, and the one that motivated ADR 0008. `/sdd:sequences` then covers every §5 acceptance criterion; participants below are §5 container names and no new ones are invented.
 
-**Critical flow 1: <flow name>**
+**Critical flow 1: register unaided and arrive signed in (AC-01, AC-03, AC-11b)**
 
 ```mermaid
 sequenceDiagram
-    actor Actor
-    participant Web
-    participant Service
-    participant Store
-    Actor->>Web: <action>
-    Web->>Service: <call>
-    Service->>Store: <write>
-    Store-->>Service: ok
-    Service-->>Web: result
-    Web-->>Actor: confirmation
+    actor Visitor
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Visitor->>Spa: Fills in address, password and display name
+    Spa->>Api: Submits the registration
+    Api->>App: Register this account
+    App->>Infra: Is the address or the display name already taken
+    Infra->>Db: Look both up
+    Db-->>Infra: Answer
+    Infra-->>App: Answer
+    alt Address or display name already in use
+        App-->>Api: Refused, naming which one
+        Api-->>Spa: Refusal in plain language
+        Spa-->>Visitor: Shows the reason and keeps what was typed
+    else Both are free
+        App->>Domain: Build the account and check its invariants
+        Domain-->>App: Accepted
+        App->>Infra: Store the account and open a session for it
+        Infra->>Db: Write the account and the session record
+        Db-->>Infra: Written
+        Infra-->>App: Session reference
+        App-->>Api: Account created and session opened
+        Api-->>Spa: Signed in, session cookie set
+        Spa-->>Visitor: Shows their own display name
+    end
 ```
 
-**Critical flow 2: <e.g. async event propagation>** — <if applicable, otherwise N/A>.
+**Critical flow 2: signing out withdraws access over every channel at once (AC-08, AC-09, AC-10)**
+
+```mermaid
+sequenceDiagram
+    actor Account
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+    participant Hub as Realtime hub
+
+    Note over Spa,Hub: This account already holds an open live-update connection
+    Account->>Spa: Signs out
+    Spa->>Api: Requests sign-out
+    Api->>App: End the session this request arrived on
+    App->>Infra: Mark that one session revoked
+    Infra->>Db: Update the session record
+    Db-->>Infra: Updated
+    App->>Hub: This session has ended
+    Note over App,Hub: How sign-out reaches an already-open connection is still open - spec section 8, question 1
+    Hub->>Hub: Drops the connections held by that session
+    Hub-->>Spa: Live updates stop
+    App-->>Api: Session ended
+    Api-->>Spa: Signed out and the cookie cleared
+    Spa-->>Account: Shows the view a visitor sees
+```
+
+Sessions the same account holds on other devices are untouched — sign-out is per-session (AC-08, ADR 0008). A later request carrying the revoked cookie is refused because the session record says so, not because the browser stopped sending it (AC-10).
+
+<!-- Further flows - sign in on return, recognise a session on an ordinary read, the progressive
+     delay under guessing, expiry at 14 days idle and 90 days absolute - are covered by
+     /sdd:sequences against the full AC list. -->
 
 ## 7. Deployment view
 
