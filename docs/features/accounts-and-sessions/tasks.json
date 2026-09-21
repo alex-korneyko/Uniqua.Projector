@@ -1,0 +1,296 @@
+{
+  "slug": "accounts-and-sessions",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Declare the Identity account model and generate the identity-schema migration",
+      "layer": "migration",
+      "deps": [],
+      "acs": ["AC-03", "AC-11b", "AC-13"],
+      "dod": "The generated EF Core migration is diffed against the staged 01_create_identity_schema SQL, applies and reverts cleanly, and both unique indexes refuse a colliding insert in a test.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/migrations/01_create_identity_schema.up.sql",
+        "docs/features/accounts-and-sessions/migrations/01_create_identity_schema.down.sql",
+        "src/Uniqua.Projector.Infrastructure/AppDbContext.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/ProjectorUser.cs",
+        "src/Uniqua.Projector.Infrastructure/Migrations/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/01-identity-schema-and-account-model.md"
+    },
+    {
+      "id": "T2",
+      "title": "Build the Session entity owning the 14-day idle and 90-day absolute expiry rules",
+      "layer": "domain",
+      "deps": [],
+      "acs": ["AC-07", "AC-07b"],
+      "dod": "Unit tests pass on both sides of the 14-day and 90-day boundaries against an injected instant, and Session.IsExpired is the only place either figure appears.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Accounts/Session.cs",
+        "tests/Uniqua.Projector.Domain.UnitTests/Accounts/SessionTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/02-session-entity-and-expiry-rules.md"
+    },
+    {
+      "id": "T3",
+      "title": "Build the Account entity, its sentinel errors and the progressive-delay rule",
+      "layer": "domain",
+      "deps": [],
+      "acs": ["AC-02", "AC-02b", "AC-11", "AC-12"],
+      "dod": "Unit tests pass for each creation invariant and for the delay curve: zero through the 5th failure, at least 2 s at the 6th, at least 30 s at the 10th, and a reset once 15 minutes pass with no attempt.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Accounts/Account.cs",
+        "src/Uniqua.Projector.Domain/Accounts/AccountErrors.cs",
+        "src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs",
+        "tests/Uniqua.Projector.Domain.UnitTests/Accounts/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/03-account-invariants-and-guessing-delay.md"
+    },
+    {
+      "id": "T4",
+      "title": "Map the Session entity and generate the sessions-table migration with its three indexes",
+      "layer": "migration",
+      "deps": ["T1", "T2"],
+      "acs": ["AC-07", "AC-07b", "AC-08", "AC-10"],
+      "dod": "The generated migration is diffed against the staged 02_create_sessions SQL, applies and reverts cleanly, carries the three indexes with the filtered predicate on IX_Sessions_RevokedAt, and leaves LastSeenAt unindexed.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/migrations/02_create_sessions.up.sql",
+        "docs/features/accounts-and-sessions/migrations/02_create_sessions.down.sql",
+        "src/Uniqua.Projector.Infrastructure/AppDbContext.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/SessionConfiguration.cs",
+        "src/Uniqua.Projector.Infrastructure/Migrations/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/04-sessions-table-migration.md"
+    },
+    {
+      "id": "T5",
+      "title": "Generate the data-protection key-ring table so sessions survive a redeploy",
+      "layer": "migration",
+      "deps": ["T4"],
+      "acs": [],
+      "dod": "The generated migration is diffed against the staged 03_create_data_protection_keys SQL, and an integration test shows a payload protected by one application instance being unprotected by a second instance over the same database.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/migrations/03_create_data_protection_keys.up.sql",
+        "docs/features/accounts-and-sessions/migrations/03_create_data_protection_keys.down.sql",
+        "src/Uniqua.Projector.Infrastructure/AppDbContext.cs",
+        "src/Uniqua.Projector.Infrastructure/Migrations/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/05-data-protection-key-ring-migration.md"
+    },
+    {
+      "id": "T6",
+      "title": "Declare the session ports and implement them over EF Core",
+      "layer": "infra",
+      "deps": ["T2", "T4"],
+      "acs": ["AC-06", "AC-08", "AC-10"],
+      "dod": "Integration tests against the SQL Server container prove Find is a single primary-key query materialising no account, the activity stamp writes at most once an hour, and revoking one session leaves the account's other sessions live.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/Ports/ISessionStore.cs",
+        "src/Uniqua.Projector.Application/Accounts/Ports/ISessionReader.cs",
+        "src/Uniqua.Projector.Application/Accounts/Ports/IClock.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/SessionStore.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionStoreTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/06-session-store-and-ports.md"
+    },
+    {
+      "id": "T7",
+      "title": "Put ASP.NET Core Identity behind IAccountStore, with lockout off and hashing tuned",
+      "layer": "infra",
+      "deps": ["T1", "T3"],
+      "acs": ["AC-05", "AC-05b", "AC-12"],
+      "dod": "A unit test holds the hashing parameters at the 100 ms floor, and integration tests prove the dummy verification costs a comparable time, lockout is off, and an account with 20 recent failures still verifies its correct password immediately.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/Ports/IAccountStore.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/IdentityAccountStore.cs",
+        "src/Uniqua.Projector.Infrastructure/InfrastructureServiceCollectionExtensions.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/IdentityAccountStoreTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/07-identity-account-store.md"
+    },
+    {
+      "id": "T8",
+      "title": "Implement the RegisterAccount use case: create the account and open its session in one step",
+      "layer": "app",
+      "deps": ["T3", "T6", "T7"],
+      "acs": ["AC-01", "AC-02", "AC-02b", "AC-03", "AC-11", "AC-11b", "AC-13"],
+      "dod": "Integration tests prove the happy path writes exactly one account row and one live session row and returns the display name, while each refusal leaves the store untouched — no account, no session, no counter.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/RegisterAccount.cs",
+        "src/Uniqua.Projector.Application/ApplicationServiceCollectionExtensions.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterAccountTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/08-register-account-use-case.md"
+    },
+    {
+      "id": "T9",
+      "title": "Implement the SignIn use case with the progressive delay and the indistinguishable refusal",
+      "layer": "app",
+      "deps": ["T3", "T6", "T7"],
+      "acs": ["AC-04", "AC-05", "AC-05b", "AC-12"],
+      "dod": "Integration tests prove a successful sign-in opens one session and zeroes the failure count, the wrong-password and unknown-address refusals are identical and comparably timed, and the delay curve and 15-minute reset hold against a controllable clock.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/SignIn.cs",
+        "src/Uniqua.Projector.Application/ApplicationServiceCollectionExtensions.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignInTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/09-sign-in-use-case.md"
+    },
+    {
+      "id": "T10",
+      "title": "Implement the SignOut use case and declare the session-revocation notifier port",
+      "layer": "app",
+      "deps": ["T6"],
+      "acs": ["AC-08", "AC-09", "AC-10"],
+      "dod": "A unit test proves the notifier is called exactly once per revocation after the store write, and an integration test proves revoking one session leaves the account's other sessions live while the revoked cookie is no longer recognised.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/SignOut.cs",
+        "src/Uniqua.Projector.Application/Accounts/Ports/ISessionRevocationNotifier.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignOutTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/10-sign-out-use-case-and-revocation-port.md"
+    },
+    {
+      "id": "T11",
+      "title": "Set up the single ProblemDetails handler and the antiforgery requirement",
+      "layer": "wiring",
+      "deps": [],
+      "acs": ["AC-02", "AC-02b", "AC-05"],
+      "dod": "Integration tests prove all eight accounts.* codes are produced with the contract's status, title and detail, that the AC-05 and AC-05b bodies are byte-identical, that a state-changing request without the antiforgery token is refused 403 with its session intact, and that an unmapped exception leaks no exception text.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/ProblemDetailsSetup.cs",
+        "src/Uniqua.Projector.Api/Antiforgery/AntiforgerySetup.cs",
+        "src/Uniqua.Projector.Api/Program.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/ProblemDetailsTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/11-problem-details-and-antiforgery.md"
+    },
+    {
+      "id": "T12",
+      "title": "Recognise a session on every request: the authentication handler, the cookie and the key ring",
+      "layer": "ports",
+      "deps": ["T2", "T5", "T6", "T11"],
+      "acs": ["AC-06", "AC-07", "AC-07b", "AC-10"],
+      "dod": "An integration test per flow-5 branch passes through GET /api/v1/accounts/me — live, absent, revoked, 14-day idle, 90-day absolute — with byte-identical refusal bodies, one primary-key query per recognition, an httpOnly secure same-site cookie, and no 14 or 90 day literal anywhere in the Api project.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SessionAuthenticationHandler.cs",
+        "src/Uniqua.Projector.Api/Accounts/SessionCookie.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.Me.cs",
+        "src/Uniqua.Projector.Api/Program.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionRecognitionTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/12-session-authentication-handler.md"
+    },
+    {
+      "id": "T13",
+      "title": "Expose POST /api/v1/accounts with the per-source registration rate limit",
+      "layer": "ports",
+      "deps": ["T8", "T11", "T12"],
+      "acs": ["AC-01", "AC-01b", "AC-02", "AC-02b", "AC-03", "AC-11b"],
+      "dod": "An integration test drives AC-01 end to end with a cookie immediately accepted by GET /api/v1/accounts/me, the 6th registration from one source within a minute is refused 429 with a positive Retry-After, each refusal returns its contract code, and a forwarded client address is honoured only when the request arrives from the configured proxy.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "src/Uniqua.Projector.Api/Accounts/RegistrationRateLimit.cs",
+        "src/Uniqua.Projector.Api/Program.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/13-registration-endpoint-and-rate-limit.md"
+    },
+    {
+      "id": "T14",
+      "title": "Expose the sign-in and sign-out endpoints and the Api-side revocation notifier",
+      "layer": "ports",
+      "deps": ["T9", "T10", "T11", "T12"],
+      "acs": ["AC-04", "AC-05", "AC-05b", "AC-08", "AC-09"],
+      "dod": "Integration tests prove sign-in returns 201 with a usable cookie, the two refusals are identical in status, headers and body, sign-out returns 204 with the cookie cleared and exactly one session revoked while a second stays live, and the notifier is called once per sign-out.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "src/Uniqua.Projector.Api/Accounts/HubSessionRevocationNotifier.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/14-session-endpoints-and-hub-notifier.md"
+    },
+    {
+      "id": "T15",
+      "title": "Build the web API client, the session bootstrap and the signed-in shell with sign-out",
+      "layer": "ui",
+      "deps": [],
+      "acs": ["AC-06", "AC-08", "AC-10", "AC-11"],
+      "dod": "Component tests against a mocked transport pass for the loading, visitor, account and error states, prove a 401 from any call lands the client on the sign-in form without a reload, prove sign-out leaves the visitor state, and prove the display name is rendered while the email address is not.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/api/accounts.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/useSession.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/AccountShell.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/15-web-session-bootstrap-and-shell.md"
+    },
+    {
+      "id": "T16",
+      "title": "Build the registration screen with every refusal state the contract can return",
+      "layer": "ui",
+      "deps": ["T15"],
+      "acs": ["AC-01", "AC-01b", "AC-02", "AC-02b", "AC-03", "AC-11b"],
+      "dod": "Component tests against a mocked transport pass for all six states, prove every field keeps its value after each of the four refusal codes, prove the 429 state names the wait in seconds, and prove a 201 leaves the client signed in without showing a sign-in form.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/RegisterScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/RegisterScreen.test.tsx"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/16-registration-screen.md"
+    },
+    {
+      "id": "T17",
+      "title": "Build the sign-in screen with one indistinguishable refusal",
+      "layer": "ui",
+      "deps": ["T15"],
+      "acs": ["AC-04", "AC-05", "AC-05b"],
+      "dod": "Component tests against a mocked transport pass for all four states, assert the refusal renders identically for a wrong password and an unregistered address, assert no format or length pre-check blocks a request, and assert a 201 lands the client in the signed-in shell.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/SignInScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/SignInScreen.test.tsx"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/17-sign-in-screen.md"
+    },
+    {
+      "id": "T18",
+      "title": "Write the three quality-scenario test suites, including the anti-lockout regression",
+      "layer": "tests",
+      "deps": ["T9", "T12", "T13", "T14"],
+      "acs": ["AC-05b", "AC-07", "AC-07b", "AC-12"],
+      "dod": "All three QG suites pass through WebApplicationFactory against the SQL Server container, the anti-lockout regression fails when lockout is flipped on, every time-dependent test drives IClock, and the redeploy-survival row appears as an explicitly skipped test citing roadmap step 4.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/SessionLifetimeTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/LatencyBudgetTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/18-quality-scenario-tests.md"
+    },
+    {
+      "id": "T19",
+      "title": "Write the four session rules into the repository where the fifteen-minute read finds them",
+      "layer": "docs",
+      "deps": ["T12", "T14"],
+      "acs": [],
+      "dod": "docs/session-rules.md states all four rules, each naming its enforcing file and proving test as a resolving link plus an observation a reader can make from outside, README.md links to it, and the two deferred commitments are labelled with the roadmap step that verifies them.",
+      "files_hint": [
+        "docs/session-rules.md",
+        "README.md"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/19-write-down-the-session-rules.md"
+    },
+    {
+      "id": "T20",
+      "title": "Add the expired-session cleanup hosted service with its startup and daily runs",
+      "layer": "infra",
+      "deps": ["T4", "T6"],
+      "acs": [],
+      "dod": "Integration tests prove rows opened more than 90 days ago and rows revoked more than 14 days ago are removed while live and recently-revoked rows survive, the guard prevents a second concurrent run, and a failing sweep neither stops the host nor blocks the next run.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/ExpiredSessionCleanupService.cs",
+        "src/Uniqua.Projector.Api/Program.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/ExpiredSessionCleanupTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/20-expired-session-cleanup-service.md"
+    }
+  ]
+}
