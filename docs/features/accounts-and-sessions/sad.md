@@ -124,49 +124,67 @@ Each tactical decision in later sections should trace to one of these seeds. Tac
 
 ## 5. Building block view
 
-<!-- 🎯 Why: INTERNAL DECOMPOSITION — modules, containers, datastores. The static topology: who
-     may talk to whom. Without §5, §6 (the flows) has no vocabulary of participants.
-     📋 Write: 1 ¶ on the style (layered / hexagonal / clean / event-driven) + a folder tree + a
-     C4Container block.
-     📌 Draw ONE Container per declared `target_surface` (frontmatter): a fullstack
-     [backend-service, web-frontend] = a backend-API container + a web/SPA container; a
-     [backend-service, mobile-app] = the API + the mobile app. The Container(web, …) line below is
-     just one surface's container — swap/add per what was declared in §4. → _shared/surfaces.md
-     📌 e.g. «web app, content API, media worker, datastore, object store, CDN». -->
+The style is the **clean / layered split the foundation already fixes**: `Api → Application → Domain` and `Infrastructure → Application → Domain`, with Domain referencing nothing and Api referencing Infrastructure only to register implementations at startup. This feature introduces no new layering — it is the first real capability to travel through the existing one, so it sets the precedent every later feature is measured against. Two of the six containers below are this feature's declared **target surfaces** (the HTTP API and the web client); the rest are the layers behind them and the store.
 
-<One paragraph: layered / hexagonal / clean / event-driven, and why.>
+The one placement that is not simply inherited is **session recognition**. It runs on every authenticated request, so it belongs in the request pipeline in `Api` — but it must read a session record, which only `Infrastructure` may do. It is therefore an Api-level authentication handler that calls an **Application port** (`ISessionReader`), implemented in Infrastructure. The rule that a session is expired — 14 days idle or 90 days old — lives on the **Session entity in Domain**, not in the handler, so that the handler asks the entity rather than re-deriving the arithmetic.
 
 **Internal decomposition:**
 
 ```
-<e.g. modules/<feature>/>
-├── domain/       <entities + sentinel errors>
-├── app/          <use cases / services>
-├── infra/        <repository + integration impl>
-├── ports/        <handlers, DTOs, error mapping>
-└── wiring        <self-wiring entry point>
+src/Uniqua.Projector.Domain/Accounts/
+├── Account.cs              # entity: email, display name, credential reference
+├── Session.cs              # entity: owns IsExpired(now) - the 14-day and 90-day rules
+└── AccountErrors.cs        # sentinel errors: address taken, display name taken, bad credentials
+
+src/Uniqua.Projector.Application/Accounts/
+├── RegisterAccount.cs      # use case: create + open a session in one step (AC-01)
+├── SignIn.cs               # use case: verify, apply the progressive delay, open a session
+├── SignOut.cs              # use case: revoke this session, notify the hub
+└── Ports/                  # ISessionStore, ISessionReader, IAccountStore, IClock
+
+src/Uniqua.Projector.Infrastructure/Accounts/
+├── SessionStore.cs         # EF Core implementation of the session ports
+├── IdentityAccountStore.cs # ASP.NET Core Identity behind IAccountStore
+└── Migrations/             # accounts, sessions, data-protection keys
+
+src/Uniqua.Projector.Api/Accounts/
+├── AccountEndpoints.cs     # register, sign in, sign out
+└── SessionAuthenticationHandler.cs  # recognises a session per request via ISessionReader
+
+src/Uniqua.Projector.Web/src/features/auth/
+├── RegisterScreen.tsx      # composed from the vendored shadcn/ui primitives
+└── SignInScreen.tsx        # same; no new primitive is introduced by this feature
 ```
 
-**C4 Container (L2):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. ONE Container per declared target_surface (frontmatter); the web container below is one example surface. -->
+**C4 Container (L2):**
 
 ```mermaid
 C4Container
-    title <feature> — Containers
+    title accounts-and-sessions - Containers
 
-    Person(actor, "<Actor>")
+    Person(visitor, "Visitor", "Registers and signs in")
+    Person(account, "Account", "Returns, is recognised, signs out")
 
-    Container_Boundary(app, "<Our system>") {
-        Container(web, "<Web/UI>", "<technology>", "<purpose>")
-        Container(api, "<API/handler>", "<technology>", "<purpose>")
-        ContainerDb(db, "<Datastore>", "<technology>", "<purpose>")
+    Container_Boundary(projector, "Uniqua.Projector") {
+        Container(spa, "Web client", "React 19, TypeScript, Vite", "Registration and sign-in screens; cannot read the session cookie")
+        Container(api, "HTTP API", "ASP.NET Core 10", "Owns the contract; recognises a session on every request; serves the built client")
+        Container(hub, "Realtime hub", "ASP.NET Core SignalR", "Live-update connections; admitted only while the session is live")
+        Container(app, "Application layer", "C# class library", "Register, sign in, sign out, recognise-session; declares the ports")
+        Container(domain, "Domain layer", "C# class library", "Account and Session entities and their invariants; references nothing")
+        Container(infra, "Infrastructure layer", "C# class library, EF Core 10", "Identity store, session repository, data-protection key ring")
     }
 
-    System_Ext(ext, "<External>", "<purpose>")
+    ContainerDb(db, "Relational store", "SQL Server", "Accounts, sessions, data-protection keys")
 
-    Rel(actor, web, "<interaction>", "<protocol>")
-    Rel(web, api, "<calls>")
-    Rel(api, db, "<reads/writes>", "<driver>")
-    Rel(api, ext, "<emits>", "<protocol>")
+    Rel(visitor, spa, "Registers, signs in", "HTTPS")
+    Rel(account, spa, "Returns; signs out", "HTTPS")
+    Rel(spa, api, "Calls JSON endpoints; the browser attaches the session cookie", "JSON/HTTPS")
+    Rel(spa, hub, "Holds a live-update connection, authorised by the same cookie", "HTTPS, persistent")
+    Rel(api, app, "Invokes use cases")
+    Rel(hub, app, "Checks the session is still live")
+    Rel(app, domain, "Uses entities and invariants")
+    Rel(infra, app, "Implements the ports declared here")
+    Rel(infra, db, "Reads and writes", "EF Core")
 ```
 
 ## 6. Runtime view
