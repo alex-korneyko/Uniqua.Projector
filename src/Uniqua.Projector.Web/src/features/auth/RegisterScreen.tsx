@@ -1,0 +1,156 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+
+import { registerAccount } from '@/api/accounts'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { describeRefusal, type Refusal } from '@/features/auth/accountRefusals'
+import { sessionQueryKey } from '@/features/auth/useSession'
+
+/** The contract's bounds, offered as help. The server's refusal is always the authority. */
+const passwordMinLength = 8
+const passwordMaxLength = 128
+const displayNameMaxLength = 50
+
+/**
+ * AC-01: what a stranger arriving on the public link fills in.
+ *
+ * The rule the whole screen is built around is that a refusal costs the visitor nothing they
+ * typed — including the password. Retyping three fields because one collided is the friction
+ * KPI 1 measures, and clearing a password field on error is the most common way to cause it.
+ */
+export function RegisterScreen() {
+  const queryClient = useQueryClient()
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [refusal, setRefusal] = useState<Refusal | null>(null)
+
+  const emailRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const displayNameRef = useRef<HTMLInputElement>(null)
+
+  const register = useMutation({
+    mutationFn: registerAccount,
+    onSuccess: () => {
+      setRefusal(null)
+      // AC-01: the cookie is already set, so the shell only has to re-ask who it is. Nothing
+      // routes to a sign-in form — the visitor is signed in already.
+      void queryClient.invalidateQueries({ queryKey: sessionQueryKey })
+    },
+    onError: (error: unknown) => setRefusal(describeRefusal(error)),
+  })
+
+  // Focus follows the refusal, so a correction does not begin with hunting for which of three
+  // fields the server meant.
+  useEffect(() => {
+    if (refusal === null) {
+      return
+    }
+
+    // A refusal about nothing the visitor typed moves no focus at all.
+    switch (refusal.field) {
+      case 'email':
+        emailRef.current?.focus()
+        break
+      case 'password':
+        passwordRef.current?.focus()
+        break
+      case 'displayName':
+        displayNameRef.current?.focus()
+        break
+    }
+  }, [refusal])
+
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-md items-center p-4">
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Create an account</CardTitle>
+          <CardDescription>No invitation needed — this takes one step.</CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <form
+            noValidate
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault()
+              setRefusal(null)
+              register.mutate({ email, password, display_name: displayName })
+            }}
+          >
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="register-email">Email address</Label>
+              <Input
+                id="register-email"
+                ref={emailRef}
+                type="email"
+                autoComplete="email"
+                value={email}
+                aria-invalid={refusal?.field === 'email'}
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="register-password">Password</Label>
+              <Input
+                id="register-password"
+                ref={passwordRef}
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                minLength={passwordMinLength}
+                maxLength={passwordMaxLength}
+                aria-invalid={refusal?.field === 'password'}
+                aria-describedby="register-password-hint"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <p id="register-password-hint" className="text-muted-foreground text-xs">
+                Between {passwordMinLength} and {passwordMaxLength} characters.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="register-display-name">Display name</Label>
+              <Input
+                id="register-display-name"
+                ref={displayNameRef}
+                autoComplete="nickname"
+                value={displayName}
+                maxLength={displayNameMaxLength}
+                aria-invalid={refusal?.field === 'displayName'}
+                aria-describedby="register-display-name-hint"
+                onChange={(event) => setDisplayName(event.target.value)}
+              />
+              <p id="register-display-name-hint" className="text-muted-foreground text-xs">
+                What other members see. At most {displayNameMaxLength} characters.
+              </p>
+            </div>
+
+            {refusal !== null && (
+              // One message, whatever happened. The screen never adds a second of its own.
+              <p role="alert" className="text-destructive text-sm">
+                {refusal.message}
+              </p>
+            )}
+
+            <Button type="submit" disabled={register.isPending}>
+              {register.isPending ? 'Creating account…' : 'Create account'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </main>
+  )
+}
