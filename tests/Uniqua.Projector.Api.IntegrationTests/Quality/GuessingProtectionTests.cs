@@ -94,6 +94,42 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task After_five_failures_an_unregistered_address_is_held_exactly_like_a_registered_one()
+    {
+        // AC-05b: "neither the message nor the wait reveals whether the address is registered".
+        // Once the curve starts, a registered address is held for seconds; if an unregistered one
+        // kept answering at hashing speed, the wait alone would tell a guesser which is which.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var unknown = $"{Guid.NewGuid():N}@example.test";
+        var client = await factory.AWritingClientAsync();
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+
+            // Casing and padding vary on purpose: one address, however it is typed, is one count.
+            var typed = attempt % 2 == 0 ? unknown : $" {unknown.ToUpperInvariant()} ";
+            await client.PostAsJsonAsync(
+                Sessions, new { email = typed, password = "not-the-password" });
+        }
+
+        factory.Clock.ClearRequestedDelays();
+        await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+        var registeredDelay = factory.Clock.LongestRequestedDelay;
+
+        factory.Clock.ClearRequestedDelays();
+        await client.PostAsJsonAsync(
+            Sessions, new { email = unknown, password = "not-the-password" });
+        var unknownDelay = factory.Clock.LongestRequestedDelay;
+
+        Assert.True(registeredDelay >= TimeSpan.FromSeconds(2));
+        Assert.Equal(registeredDelay, unknownDelay);
+    }
+
+    [Fact]
     public async Task The_two_refusals_are_identical_in_what_they_say()
     {
         factory.Clock.Reset();

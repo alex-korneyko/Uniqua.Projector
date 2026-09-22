@@ -87,6 +87,9 @@ public static class DependencyInjection
         services.AddSingleton<IClock, SystemClock>();
         services.AddScoped<IAccountStore, IdentityAccountStore>();
 
+        // A singleton because it is the state: a guesser's attempts arrive on separate requests.
+        services.AddSingleton<IUnknownAddressAttempts, InMemoryUnknownAddressAttempts>();
+
         // One implementation, registered against both ports: they are two views of one table, and
         // keeping them separate interfaces is what stops the recognition path acquiring the write
         // path's needs.

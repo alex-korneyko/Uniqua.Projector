@@ -12,6 +12,7 @@ namespace Uniqua.Projector.Application.Accounts;
 public sealed class SignIn(
     IAccountStore accounts,
     ISessionStore sessions,
+    IUnknownAddressAttempts unknownAddresses,
     IClock clock)
 {
     /// <summary>
@@ -34,9 +35,13 @@ public sealed class SignIn(
         if (account is null)
         {
             // AC-05b. The verification is not a formality: it is what makes the refusal take as
-            // long as a real one. Nothing is recorded, because there is no account to count
-            // against and a counter here would be a row that exists only because someone guessed.
+            // long as a real one. And once the curve would hold a registered address back, this
+            // one is held back by the same curve — counted in memory, since there is no account
+            // row to count against and writing one would store the guess itself.
             await accounts.VerifyDummyPasswordAsync(password ?? string.Empty, cancellationToken);
+            var guess = unknownAddresses.RecordFailure(email ?? string.Empty, clock.UtcNow);
+            await clock.DelayAsync(GuessingDelay.ForFailure(guess), cancellationToken);
+
             return Refused();
         }
 

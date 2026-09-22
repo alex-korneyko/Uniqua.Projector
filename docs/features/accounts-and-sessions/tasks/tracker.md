@@ -26,7 +26,7 @@
 | T19 | The four session rules, written down | docs | Alex Korneiko | S | T12, T14 | done |
 | T20 | Expired-session cleanup hosted service | infra | Alex Korneiko | S | T4, T6 | done |
 | T21 | Serve the AC-12 delay from the attempt being made, reset the stored count after the quiet period, and record a failure before waiting | app | Alex Korneiko | S | — | done |
-| T22 | Hold refusals for unregistered addresses on the same curve, so the wait does not reveal registration | app | Alex Korneiko | S | T21 | todo |
+| T22 | Hold refusals for unregistered addresses on the same curve, so the wait does not reveal registration | app | Alex Korneiko | S | T21 | done |
 | T23 | Make the session cookie persistent and add the activity-stamp slack after the 14 days, not before | domain | Alex Korneiko | S | — | todo |
 | T24 | Count only accepted registrations against the per-source limit and prune stale sources | ports | Alex Korneiko | S | — | todo |
 | T25 | Accept every address MailAddress accepts and stop mapping unexpected Identity errors to a uniqueness refusal | infra | Alex Korneiko | S | T21 | todo |
