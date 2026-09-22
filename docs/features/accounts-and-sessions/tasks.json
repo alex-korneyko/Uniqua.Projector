@@ -520,6 +520,188 @@
       ],
       "file": "docs/features/accounts-and-sessions/tasks/34-record-lightningcss-licence-exception.md",
       "origin": "review-2026-09-22: R-29"
+    },
+    {
+      "id": "T35",
+      "title": "Cap failed sign-ins per request source, counted before the verification, so hanging up no longer escapes the AC-12 delay",
+      "layer": "ports",
+      "deps": [],
+      "acs": ["AC-12", "AC-05b"],
+      "dod": "A failed-sign-in slot is reserved for the request source (RequestSource.Of, the trusted-proxy-resolved address registration already uses) BEFORE the password is verified and released only on a successful sign-in, so an abandoned or parallel attempt still counts; once a source holds the cap (default 20 failed sign-ins per 15-minute sliding window, the figure named as a constant and recorded in the amendment) the next attempt from it is refused WITHOUT verifying the password, with a new declared problem `accounts.sign_in_rate_limited` (429 + Retry-After) routed through the AccountProblems wording table; the cap applies identically to registered and unregistered addresses (AC-05b) and a correct password from a different source is still accepted immediately (AC-12); the dictionary is bounded and pruned like RegistrationRateLimit (extract a shared sliding-window limiter if that keeps both simpler); openapi.yaml declares the 429 on POST /api/v1/sessions; an ADR 0010 amendment records the decision, the figure and the residual risk (one account attacked from many sources), and spec §6.1 and the sad §8 \"Guessing protection\" row say the same; integration tests: the 21st failure from one source gets 429 without a verification, parallel hung-up attempts still consume slots, another source signs in with the correct password immediately, an unregistered address is capped identically.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs",
+        "src/Uniqua.Projector.Api/Accounts/RegistrationRateLimit.cs",
+        "src/Uniqua.Projector.Api/DependencyInjection.cs",
+        "src/Uniqua.Projector.Api/AccountProblems.cs",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md",
+        "docs/features/accounts-and-sessions/spec.md",
+        "docs/features/accounts-and-sessions/sad.md",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/AccountProblemsTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/35-per-source-sign-in-failure-cap.md",
+      "origin": "review-2026-09-22-2: N-01"
+    },
+    {
+      "id": "T36",
+      "title": "Render the sign-in-rate-limited refusal on the sign-in screen with its statement and wait",
+      "layer": "ui",
+      "deps": ["T35"],
+      "acs": ["AC-12"],
+      "dod": "A 429 `accounts.sign_in_rate_limited` on the sign-in screen shows its title as the statement and its detail as the reason via statementAndReason, names the wait once, and keeps the form usable afterwards; it is never shown as \"credentials invalid\" and never ends the session; a component test in SignInScreen.test.tsx drives the 429 through the real api client.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/accountRefusals.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/SignInScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/SignInScreen.test.tsx"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/36-sign-in-screen-states-the-source-limit.md",
+      "origin": "review-2026-09-22-2: N-01 (UI half)"
+    },
+    {
+      "id": "T37",
+      "title": "Seed the failure compare-and-set with the count already read, and return the count actually written under contention",
+      "layer": "infra",
+      "deps": [],
+      "acs": ["AC-12", "AC-05b"],
+      "dod": "RecordFailureAsync takes the ConsecutiveFailures / LastFailedAttemptAt already read by FindByEmailAsync as its first compare-and-set expectation, so an uncontended wrong password costs one UPDATE and no extra SELECT; only a missed write re-reads; after the retry budget the blind increment returns the value actually stored (read back, or OUTPUT inserted), never the stale `next`; the reset rule stays in GuessingDelay (Domain); tests: the uncontended path issues no re-read (observable through a counting interceptor or equivalent), the contended fallback returns the stored count, 6 parallel failures still get 1..6.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/Ports/IAccountStore.cs",
+        "src/Uniqua.Projector.Application/Accounts/SignIn.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/IdentityAccountStore.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/IdentityAccountStoreTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignInTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/37-failure-write-seeded-and-honest.md",
+      "origin": "review-2026-09-22-2: N-09, N-10"
+    },
+    {
+      "id": "T38",
+      "title": "Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem",
+      "layer": "ports",
+      "deps": ["T35"],
+      "acs": ["AC-01", "AC-02"],
+      "dod": "The password_invalid detail names both bounds (\"between 8 and 128 characters\"), in AccountErrors, openapi.yaml and the AccountProblemsTests row, and the stale comment pointing at AccountProblems is removed; a 129-character password gets that refusal (RegisterEndpointTests); AccountProblemsTests has a display_name_invalid row, its stale \"not in contracts\" comment is gone, and it compares the full detail rather than StartsWith; the openapi 429 example matches what AccountProblems emits; a missing or malformed JSON body on POST /api/v1/accounts and POST /api/v1/sessions is answered with a problem carrying a declared `code` and status through the one ProblemDetails handler (never a 500, never a problem without a code), declared in openapi.yaml; RegisterEndpointTests:161 asserts the exact status and code.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Accounts/AccountErrors.cs",
+        "src/Uniqua.Projector.Api/AccountProblems.cs",
+        "src/Uniqua.Projector.Api/ProblemDetailsSetup.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "tests/Uniqua.Projector.Api.IntegrationTests/AccountProblemsTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/38-refusal-wording-and-contract-fidelity.md",
+      "origin": "review-2026-09-22-2: N-02, N-06"
+    },
+    {
+      "id": "T39",
+      "title": "Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves",
+      "layer": "tests",
+      "deps": [],
+      "acs": ["AC-10"],
+      "dod": "An integration test replaces ISessionReader with one that throws and shows /api/v1/me answers a non-2xx application/problem+json and never a 200 or the account view; the test-plan.md edge row for \"store unavailable\" is re-worded to \"fails closed: the failure view with retry is shown, never the account view\"; any production change needed stays inside the one ProblemDetails handler.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionRecognitionTests.cs",
+        "docs/features/accounts-and-sessions/test-plan.md"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/39-store-unavailable-fails-closed.md",
+      "origin": "review-2026-09-22-2: N-05"
+    },
+    {
+      "id": "T40",
+      "title": "Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question",
+      "layer": "docs",
+      "deps": ["T35", "T39"],
+      "acs": ["AC-05b", "AC-07", "AC-12"],
+      "dod": "spec §6.1 and an ADR 0010 amendment record the unregistered-address counter as accepted residual risk (lost on restart, cap of 100,000 tracked addresses) and sad §5 lists the IUnknownAddressAttempts port; the test-plan.md rows for the AC-07 boundary and the data-model.md fixture state 14 days + 1 hour after the stamp, and sad flow 5 (or an ADR 0008 amendment) records why; the spec §8 ADR-0003 item is ticked with a link to ADR 0010 and ADR 0003 carries a \"see ADR 0010\" note; no code changes.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/spec.md",
+        "docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md",
+        "docs/features/accounts-and-sessions/sad.md",
+        "docs/features/accounts-and-sessions/test-plan.md",
+        "docs/features/accounts-and-sessions/data-model.md",
+        "docs/adr/0003-authenticate-with-identity-and-an-httponly-cookie.md"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/40-record-residual-risks-and-boundaries.md",
+      "origin": "review-2026-09-22-2: N-03, N-04, N-07"
+    },
+    {
+      "id": "T41",
+      "title": "Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "HasNotSucceededRecently compares clock.UtcNow against LastSucceededAt ?? the instant the service was constructed; a first sweep that fails at t=0 raises no session_cleanup_stale error; a process that has never succeeded for more than 48 hours does; the existing success-then-49-hours test still holds.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/ExpiredSessionCleanupService.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/ExpiredSessionCleanupTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/41-cleanup-alert-from-process-start.md",
+      "origin": "review-2026-09-22-2: N-08"
+    },
+    {
+      "id": "T42",
+      "title": "Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal",
+      "layer": "tests",
+      "deps": ["T35", "T37", "T38"],
+      "acs": ["AC-01b"],
+      "dod": "A test runs more than 5 parallel Reserve calls for one source on a test clock and asserts exactly PermittedPerWindow are permitted; Release of a refused decision is a no-op; an unexpected Identity error from CreateAsync surfaces as a 500 problem (not email_taken or display_name_taken) through a test double; if T35 extracted a shared limiter, the same concurrency test covers it.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/RegistrationRateLimit.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/IdentityAccountStoreTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/42-concurrency-and-error-path-tests.md",
+      "origin": "review-2026-09-22-2: N-11"
+    },
+    {
+      "id": "T43",
+      "title": "Move keyboard focus to the new form when switching between sign-in and registration",
+      "layer": "ui",
+      "deps": ["T36"],
+      "acs": ["AC-01"],
+      "dod": "Activating \"No account yet? Create one\" or its sign-in counterpart moves focus to the new screen's heading or first field (not on the landing's first mount); VisitorScreens.test.tsx asserts toHaveFocus() after each switch; Tailwind only, no new dependency.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/VisitorScreens.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/RegisterScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/SignInScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/VisitorScreens.test.tsx"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/43-focus-follows-the-screen-switch.md",
+      "origin": "review-2026-09-22-2: N-12"
+    },
+    {
+      "id": "T44",
+      "title": "Darken the input border and focus-ring tokens to at least 3:1 against the background",
+      "layer": "ui",
+      "deps": [],
+      "acs": [],
+      "dod": "--color-input and --color-ring in src/index.css reach a contrast ratio of at least 3:1 against --color-background (WCAG 1.4.11), in the light and, where defined, the dark theme; src/test/themeTokens.test.ts computes the ratio from the declared oklch values and fails below 3:1.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/index.css",
+        "src/Uniqua.Projector.Web/src/test/themeTokens.test.ts"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/44-input-and-ring-contrast.md",
+      "origin": "review-2026-09-22-2: N-13"
+    },
+    {
+      "id": "T45",
+      "title": "Remove the tracked crash dump and bring every task file status in line with the tracker",
+      "layer": "config",
+      "deps": ["T35", "T36", "T37", "T38", "T39", "T40", "T41", "T42", "T43", "T44"],
+      "acs": [],
+      "dod": "grep.exe.stackdump is removed from the index and *.stackdump is git-ignored; every docs/features/accounts-and-sessions/tasks/*.md frontmatter status matches tracker.md.",
+      "files_hint": [
+        "grep.exe.stackdump",
+        ".gitignore",
+        "docs/features/accounts-and-sessions/tasks/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/45-housekeeping.md",
+      "origin": "review-2026-09-22-2: N-14"
     }
   ]
 }
