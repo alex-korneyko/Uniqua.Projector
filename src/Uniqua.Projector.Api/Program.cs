@@ -1,4 +1,6 @@
 using Uniqua.Projector.Api;
+using Microsoft.AspNetCore.Authentication;
+using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Application;
 using Uniqua.Projector.Infrastructure;
@@ -8,6 +10,15 @@ var builder = WebApplication.CreateBuilder(args);
 // Each layer is wired through its own AddXxx extension; this file names no type from inside a layer.
 builder.Services.AddProblemDetailsHandling();
 builder.Services.AddAntiforgeryGuard();
+
+// Recognition runs in the request pipeline but reads the session record only through an
+// Application port (sad §5). The scheme is the default, so RequireAuthorization on an endpoint
+// means "recognise a session" and nothing else has to be said.
+builder.Services
+    .AddAuthentication(SessionAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
+        SessionAuthenticationHandler.SchemeName, configureOptions: null);
+builder.Services.AddAuthorization();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -20,12 +31,17 @@ app.UseStatusCodePages();
 // endpoint that could act on it (sad.md §8).
 app.UseAntiforgeryGuard();
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Serves the built React client from wwwroot, so client and API share one origin — the cookie
 // authentication decision in docs/adr/ depends on this.
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
+app.MapCurrentAccount();
 
 // The skeleton's proof that the ProblemDetails handler is the only error shape.
 app.MapGet("/boom", void () => throw new InvalidOperationException("Intentional skeleton failure."));

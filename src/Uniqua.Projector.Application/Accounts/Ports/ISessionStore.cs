@@ -26,7 +26,13 @@ public interface ISessionStore
     /// write. Returns whether anything was written, which is almost always <c>false</c>: an
     /// ordinary read inside the hour costs nothing at all.
     /// </summary>
-    Task<bool> StampActivityAsync(Guid sessionId, CancellationToken cancellationToken);
+    /// <remarks>
+    /// It takes the session rather than its id on purpose. The only caller is the recognition
+    /// path, which has just read the record — and sad §6 flow 5's postcondition is that
+    /// recognition cost <em>one</em> indexed read. An id here would mean a second one on every
+    /// authenticated request in the product, against a 30 ms budget.
+    /// </remarks>
+    Task<bool> StampActivityAsync(Session session, CancellationToken cancellationToken);
 
     /// <summary>
     /// Removes the rows that can no longer affect any decision — opened past the 90-day ceiling,

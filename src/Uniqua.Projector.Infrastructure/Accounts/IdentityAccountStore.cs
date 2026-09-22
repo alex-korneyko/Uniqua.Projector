@@ -38,6 +38,15 @@ internal sealed class IdentityAccountStore(
         return found is null ? null : Project(found);
     }
 
+    public async Task<StoredAccount?> FindByIdAsync(Guid accountId, CancellationToken cancellationToken)
+    {
+        var found = await users.Users
+            .AsNoTracking()
+            .SingleOrDefaultAsync(user => user.Id == accountId, cancellationToken);
+
+        return found is null ? null : Project(found);
+    }
+
     public async Task<Result<StoredAccount, AccountError>> CreateAsync(
         Account account,
         string password,

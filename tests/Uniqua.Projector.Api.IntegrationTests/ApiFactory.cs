@@ -88,12 +88,40 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// connection string, which is the point: anything it can still read is something that
     /// genuinely lives in the store rather than in the first process.
     /// </summary>
-    public sealed class Replacement(string connectionString) : WebApplicationFactory<Program>
+    public sealed class Replacement : WebApplicationFactory<Program>
     {
+        private readonly string _connectionString;
+        private readonly IClock? _clock;
+
+        /// <param name="connectionString">The database the first instance left behind.</param>
+        /// <param name="clock">
+        /// The same clock the first instance ran on, where the test needs the replacement to agree
+        /// about what time it is. Without it the replacement uses the system clock and a session
+        /// the test opened at a chosen instant looks long expired.
+        /// </param>
+        public Replacement(string connectionString, IClock? clock = null)
+        {
+            _connectionString = connectionString;
+            _clock = clock;
+
+            // Same reason as the first instance: every cookie is Secure and the antiforgery system
+            // refuses to issue a token over a plain request rather than downgrading.
+            ClientOptions.BaseAddress = new Uri("https://localhost");
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            builder.UseSetting("ConnectionStrings:Default", connectionString);
+            builder.UseSetting("ConnectionStrings:Default", _connectionString);
             builder.UseEnvironment("Testing");
+
+            if (_clock is not null)
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.RemoveAll<IClock>();
+                    services.AddSingleton(_clock);
+                });
+            }
         }
     }
 }

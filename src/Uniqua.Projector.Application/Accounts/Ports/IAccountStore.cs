@@ -46,6 +46,13 @@ public interface IAccountStore
     /// <summary>Clears the count and the instant together, on a correct password.</summary>
     Task ResetFailuresAsync(Guid accountId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The account with this id, or <c>null</c>. Used once a request has already been recognised,
+    /// to show an account itself — recognition never needs it, which is why the session lookup
+    /// stays free of any join to the account.
+    /// </summary>
+    Task<StoredAccount?> FindByIdAsync(Guid accountId, CancellationToken cancellationToken);
+
     /// <summary>Whether a display name already identifies an account (AC-11b).</summary>
     Task<bool> IsDisplayNameTakenAsync(string displayName, CancellationToken cancellationToken);
 }

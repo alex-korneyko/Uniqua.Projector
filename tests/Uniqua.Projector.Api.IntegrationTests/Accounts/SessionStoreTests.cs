@@ -134,7 +134,7 @@ public sealed class SessionStoreTests(ApiFactory factory)
 
         using var scope = factory.Services.CreateScope();
         factory.Commands.Clear();
-        var stamped = await Store(scope).StampActivityAsync(session.Id, CancellationToken.None);
+        var stamped = await Store(scope).StampActivityAsync(session, CancellationToken.None);
 
         Assert.False(stamped);
         Assert.DoesNotContain(
@@ -150,7 +150,7 @@ public sealed class SessionStoreTests(ApiFactory factory)
         var anHourOn = factory.Clock.Advance(TimeSpan.FromMinutes(61));
 
         using var scope = factory.Services.CreateScope();
-        Assert.True(await Store(scope).StampActivityAsync(session.Id, CancellationToken.None));
+        Assert.True(await Store(scope).StampActivityAsync(session, CancellationToken.None));
 
         using var reading = factory.Services.CreateScope();
         var reread = await Reader(reading).FindAsync(session.Id, CancellationToken.None);
@@ -162,12 +162,19 @@ public sealed class SessionStoreTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task Stamping_a_session_that_does_not_exist_changes_nothing()
+    public async Task Stamping_a_session_whose_row_has_gone_reports_that_nothing_was_written()
     {
+        // The sweep can remove a row between a request being recognised and the stamp being
+        // written. That is not an error — there is simply nothing left to stamp.
+        factory.Clock.Reset();
+        var session = await AnOpenSessionAsync();
+        await factory.ExecuteAsync($"DELETE FROM [dbo].[Sessions] WHERE [Id] = '{session.Id}';");
+
+        factory.Clock.Advance(TimeSpan.FromHours(2));
         using var scope = factory.Services.CreateScope();
 
-        Assert.False(await Store(scope).StampActivityAsync(
-            Guid.CreateVersion7(), CancellationToken.None));
+        Assert.False(await Store(scope).StampActivityAsync(session, CancellationToken.None));
+        factory.Clock.Reset();
     }
 
     // ---- Revoking ------------------------------------------------------------------------------

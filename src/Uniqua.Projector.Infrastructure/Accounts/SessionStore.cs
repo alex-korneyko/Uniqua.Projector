@@ -55,26 +55,31 @@ internal sealed class SessionStore(AppDbContext context, IClock clock)
         await context.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<bool> StampActivityAsync(Guid sessionId, CancellationToken cancellationToken)
+    public async Task<bool> StampActivityAsync(Session session, CancellationToken cancellationToken)
     {
         var now = clock.UtcNow;
-
-        var session = await context.Sessions
-            .SingleOrDefaultAsync(candidate => candidate.Id == sessionId, cancellationToken);
 
         // The entity decides whether this is worth a write, not this method — the one-hour
         // allowance is part of the session's own rules (spec §6 permits an hour of slack on expiry
         // accuracy, and spending it buys one write per session per hour instead of one per
         // request).
-        if (session is null || !session.ShouldStampActivity(now))
+        if (!session.ShouldStampActivity(now))
         {
             return false;
         }
 
         session.StampActivity(now);
-        await context.SaveChangesAsync(cancellationToken);
 
-        return true;
+        // The caller read the session with AsNoTracking, so the update is issued directly rather
+        // than by attaching the instance — which also keeps this to the single column that
+        // actually changed.
+        var updated = await context.Sessions
+            .Where(candidate => candidate.Id == session.Id)
+            .ExecuteUpdateAsync(
+                update => update.SetProperty(candidate => candidate.LastSeenAt, now),
+                cancellationToken);
+
+        return updated > 0;
     }
 
     public Task<int> DeleteExpiredAsync(CancellationToken cancellationToken)
