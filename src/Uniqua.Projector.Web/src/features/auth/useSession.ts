@@ -68,6 +68,8 @@ export function useSession() {
     /** Retries the bootstrap call after a failure that was not a refusal. */
     retry: () => void query.refetch(),
     signOut: () => signOut.mutate(),
+    /** While the sign-out call is in flight, so it can be neither repeated nor mistaken for idle. */
+    isSigningOut: signOut.isPending,
     /**
      * True only when the sign-out call itself failed for a reason other than the session already
      * being gone. Claiming a sign-out that did not happen is the one wrong answer available here.

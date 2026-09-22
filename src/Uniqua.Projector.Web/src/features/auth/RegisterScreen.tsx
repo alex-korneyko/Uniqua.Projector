@@ -46,10 +46,12 @@ export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
 
   const register = useMutation({
     mutationFn: registerAccount,
-    onSuccess: () => {
+    onSuccess: (account) => {
       setRefusal(null)
-      // AC-01: the cookie is already set, so the shell only has to re-ask who it is. Nothing
-      // routes to a sign-in form — the visitor is signed in already.
+      // AC-01: the cookie is already set and the 201 carries the whole account, so the session is
+      // known at once. Waiting for /me instead would leave the shell reading "visitor" — and this
+      // form live — until it answered. The re-check still runs, to confirm with the server.
+      queryClient.setQueryData(sessionQueryKey, account)
       void queryClient.invalidateQueries({ queryKey: sessionQueryKey })
     },
     onError: (error: unknown) => setRefusal(describeRefusal(error)),
@@ -116,7 +118,6 @@ export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
                 autoComplete="new-password"
                 value={password}
                 minLength={passwordMinLength}
-                maxLength={passwordMaxLength}
                 aria-invalid={refusal?.field === 'password'}
                 aria-describedby="register-password-hint"
                 onChange={(event) => setPassword(event.target.value)}

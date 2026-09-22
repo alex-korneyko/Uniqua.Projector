@@ -3,6 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { sessionQueryKey } from '@/api/queryClient'
+
 import { SignInScreen } from '@/features/auth/SignInScreen'
 
 /**
@@ -15,8 +17,10 @@ import { SignInScreen } from '@/features/auth/SignInScreen'
  * here assert that the screen does *less* than it might.
  */
 
+let client: QueryClient
+
 function renderScreen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
 
   return render(
     <QueryClientProvider client={client}>
@@ -235,6 +239,23 @@ describe('when the credentials are accepted', () => {
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
     expect(submitButton()).toBeEnabled()
+  })
+
+  it('knows who is signed in from the 201 itself, without waiting for the session check', async () => {
+    // Review 2026-09-22 R-20: until /me answers, the session would otherwise still read "visitor".
+    fetchMock.mockImplementation((_: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'POST' ? Promise.resolve(created()) : new Promise(() => {}),
+    )
+
+    renderScreen()
+    // In the app the shell always observes the session; kept here as it would keep it, so this
+    // suite's gcTime: 0 does not collect what the screen wrote before it can be read.
+    client.setQueryDefaults(sessionQueryKey, { gcTime: Infinity })
+    await submit('someone@example.test', 'a-long-enough-password')
+
+    await waitFor(() =>
+      expect(client.getQueryData(sessionQueryKey)).toMatchObject({ display_name: 'Someone Real' }),
+    )
   })
 })
 

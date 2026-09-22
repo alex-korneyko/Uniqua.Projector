@@ -46,9 +46,11 @@ export function SignInScreen({ alternative }: SignInScreenProps = {}) {
 
   const signIn = useMutation({
     mutationFn: createSession,
-    onSuccess: () => {
+    onSuccess: (account) => {
       setRefusal(null)
-      // The cookie is set; the shell only has to re-ask who it is.
+      // The cookie is set and the 201 carries the account, so the session is known at once rather
+      // than after /me answers; the re-check still runs, to confirm with the server.
+      queryClient.setQueryData(sessionQueryKey, account)
       void queryClient.invalidateQueries({ queryKey: sessionQueryKey })
     },
     onError: (error: unknown) => setRefusal(describeRefusal(error)),

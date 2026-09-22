@@ -22,7 +22,7 @@ interface AccountShellProps {
  * that looks entirely normal, and invite people to type a password at a server that cannot check it.
  */
 export function AccountShell({ children }: AccountShellProps) {
-  const { state, retry, signOut, signOutFailed } = useSession()
+  const { state, retry, signOut, isSigningOut, signOutFailed } = useSession()
 
   if (state.status === 'loading') {
     return (
@@ -59,8 +59,8 @@ export function AccountShell({ children }: AccountShellProps) {
       <header className="flex items-center justify-between gap-4 border-b pb-4">
         {/* AC-11: the display name, and never the address — not even as a fallback. */}
         <span className="font-medium">{state.account.display_name}</span>
-        <Button variant="outline" size="sm" onClick={signOut}>
-          Sign out
+        <Button variant="outline" size="sm" onClick={signOut} disabled={isSigningOut}>
+          {isSigningOut ? 'Signing out…' : 'Sign out'}
         </Button>
       </header>
 

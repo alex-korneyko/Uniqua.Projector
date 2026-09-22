@@ -3,6 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { sessionQueryKey } from '@/api/queryClient'
+
 import { RegisterScreen } from '@/features/auth/RegisterScreen'
 
 /**
@@ -19,8 +21,10 @@ const submitted = {
   displayName: 'Someone Real',
 }
 
+let client: QueryClient
+
 function renderScreen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+  client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
 
   return render(
     <QueryClientProvider client={client}>
@@ -313,6 +317,42 @@ describe('when the account is created', () => {
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
     expect(screen.queryByText(/sign in/i)).not.toBeInTheDocument()
+  })
+
+  it('knows who is signed in from the 201 itself, without waiting for the session check', async () => {
+    // Review 2026-09-22 R-20. The contract returns the whole Account on 201. If the screen only
+    // asks the shell to re-check, the session still reads "visitor" until /me answers — the form
+    // re-enables, and a second click registers again (and is refused as a taken address).
+    fetchMock.mockImplementation((_: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'POST' ? Promise.resolve(created()) : new Promise(() => {}),
+    )
+
+    renderScreen()
+    // In the app the shell always observes the session; kept here as it would keep it, so this
+    // suite's gcTime: 0 does not collect what the screen wrote before it can be read.
+    client.setQueryDefaults(sessionQueryKey, { gcTime: Infinity })
+    await fillAndSubmit()
+
+    await waitFor(() =>
+      expect(client.getQueryData(sessionQueryKey)).toMatchObject({
+        display_name: submitted.displayName,
+      }),
+    )
+  })
+})
+
+describe('a long password', () => {
+  it('is kept whole rather than silently cut short', async () => {
+    // Review 2026-09-22 R-21. A maxLength on the field truncates a pasted or generated password
+    // without a word; the account is then registered with the shorter one, and signing in later
+    // with the full value is refused. The server's password_invalid refusal is the length guard.
+    renderScreen()
+    const long = 'x'.repeat(150)
+
+    await userEvent.click(passwordField())
+    await userEvent.paste(long)
+
+    expect(passwordField()).toHaveValue(long)
   })
 })
 

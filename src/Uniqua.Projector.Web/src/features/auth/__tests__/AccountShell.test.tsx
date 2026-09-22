@@ -243,3 +243,22 @@ describe('a sign-out whose session had already ended', () => {
     expect(await screen.findByTestId('sign-in-form')).toBeInTheDocument()
   })
 })
+
+describe('a sign-out in progress', () => {
+  it('cannot be sent twice and says it is happening', async () => {
+    // Review 2026-09-22 R-22. On a shared machine a slow sign-out with no feedback invites a second
+    // click, and a second DELETE; the button says what is happening and stays disabled meanwhile.
+    fetchMock.mockImplementation((_: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'DELETE' ? new Promise(() => {}) : Promise.resolve(jsonResponse(200, anAccount)),
+    )
+
+    renderShell()
+    await userEvent.click(await screen.findByRole('button', { name: /sign out/i }))
+
+    const pending = await screen.findByRole('button', { name: /signing out/i })
+    expect(pending).toBeDisabled()
+
+    await userEvent.click(pending)
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1)
+  })
+})

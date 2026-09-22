@@ -35,7 +35,7 @@
 | T28 | Raise the 48-hour cleanup alert as an error log so sad §7 monitoring can fire | infra | Alex Korneiko | S | — | done |
 | T29 | Render a refusal's title as its statement and its detail as the reason | ui | Alex Korneiko | S | — | done |
 | T30 | Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session | ui | Alex Korneiko | S | — | done |
-| T31 | Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords | ui | Alex Korneiko | S | T29, T30 | todo |
+| T31 | Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords | ui | Alex Korneiko | S | T29, T30 | done |
 | T32 | Define the theme tokens the vendored components read | ui | Alex Korneiko | S | — | todo |
 | T33 | Type-check tests in their own program and drop vitest globals | config | Alex Korneiko | S | — | todo |
 | T34 | Record lightningcss (MPL-2.0, build-time only) as a licence exception | docs | Alex Korneiko | S | — | todo |
