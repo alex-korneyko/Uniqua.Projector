@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { ApiError, deleteCurrentSession, getCurrentAccount, type Account } from '@/api/accounts'
+import { sessionQueryKey } from '@/api/queryClient'
 
-/** The cache key for "who am I". One key, so there is exactly one answer on the client. */
-export const sessionQueryKey = ['session'] as const
+export { sessionQueryKey }
+
 
 /**
  * What the client currently knows about who it is.
@@ -15,7 +16,15 @@ export const sessionQueryKey = ['session'] as const
  */
 export type SessionState =
   | { status: 'loading' }
-  | { status: 'visitor' }
+  | {
+      status: 'visitor'
+      /**
+       * True when this visitor had a session on this client and it ended — signed out, expired or
+       * revoked. They already own an account, so AC-07, AC-07b and AC-10 show them the sign-in
+       * form; a first-time arrival is shown registration (AC-01).
+       */
+      ended: boolean
+    }
   | { status: 'account'; account: Account }
   | { status: 'failed' }
 
@@ -75,12 +84,14 @@ function toState(query: {
   data: Account | null | undefined
   error: unknown
 }): SessionState {
-  if (query.data != null) {
-    return { status: 'account', account: query.data }
+  // Before the cached account: a refetch that is refused keeps the previous data, and showing it
+  // would present an ended session as a live one (AC-10).
+  if (query.error instanceof ApiError && query.error.isNotRecognised) {
+    return { status: 'visitor', ended: query.data !== undefined }
   }
 
-  if (query.error instanceof ApiError && query.error.isNotRecognised) {
-    return { status: 'visitor' }
+  if (query.data != null) {
+    return { status: 'account', account: query.data }
   }
 
   if (query.error != null) {
@@ -88,5 +99,5 @@ function toState(query: {
   }
 
   // data === null is a signed-out account: known, not pending.
-  return query.data === null ? { status: 'visitor' } : { status: 'loading' }
+  return query.data === null ? { status: 'visitor', ended: true } : { status: 'loading' }
 }

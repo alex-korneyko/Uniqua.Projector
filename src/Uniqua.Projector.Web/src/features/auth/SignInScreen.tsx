@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 
 import { createSession } from '@/api/accounts'
 import { Button } from '@/components/ui/button'
@@ -32,7 +32,12 @@ import { sessionQueryKey } from '@/features/auth/useSession'
  * So there are no hints, no patterns, no field-level errors here — unlike the registration screen,
  * where bounds are genuinely helpful because nothing is being concealed.
  */
-export function SignInScreen() {
+interface SignInScreenProps {
+  /** Shown inside the card, under the form — the way to create an account instead, where it cannot fall below the fold. */
+  alternative?: ReactNode
+}
+
+export function SignInScreen({ alternative }: SignInScreenProps = {}) {
   const queryClient = useQueryClient()
 
   const [email, setEmail] = useState('')
@@ -102,6 +107,8 @@ export function SignInScreen() {
               {signIn.isPending ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
+
+          {alternative !== undefined && <div className="mt-4 flex justify-center">{alternative}</div>}
         </CardContent>
       </Card>
     </main>

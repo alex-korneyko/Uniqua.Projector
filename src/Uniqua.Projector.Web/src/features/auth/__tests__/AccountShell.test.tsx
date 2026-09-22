@@ -228,10 +228,10 @@ describe('signing out', () => {
   })
 })
 
-describe('a 401 arriving from any call at all', () => {
-  it('flips the client to the visitor view without a reload', async () => {
-    // AC-10 as the client experiences it: the session ended server-side while the tab was open,
-    // and the next answer is what tells us.
+describe('a sign-out whose session had already ended', () => {
+  it('still lands the client in the visitor view', async () => {
+    // The sign-out call itself is refused as not recognised: the end state is the one asked for.
+    // A 401 from any other call is covered by VisitorScreens.test.tsx, composed as main.tsx is.
     fetchMock.mockResolvedValueOnce(jsonResponse(200, anAccount))
 
     renderShell()

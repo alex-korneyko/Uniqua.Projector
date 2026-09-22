@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { registerAccount } from '@/api/accounts'
 import { Button } from '@/components/ui/button'
@@ -27,7 +27,12 @@ const displayNameMaxLength = 50
  * typed — including the password. Retyping three fields because one collided is the friction
  * KPI 1 measures, and clearing a password field on error is the most common way to cause it.
  */
-export function RegisterScreen() {
+interface RegisterScreenProps {
+  /** Shown inside the card, under the form — the way to sign in instead, where it cannot fall below the fold. */
+  alternative?: ReactNode
+}
+
+export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
   const queryClient = useQueryClient()
 
   const [email, setEmail] = useState('')
@@ -149,6 +154,8 @@ export function RegisterScreen() {
               {register.isPending ? 'Creating account…' : 'Create account'}
             </Button>
           </form>
+
+          {alternative !== undefined && <div className="mt-4 flex justify-center">{alternative}</div>}
         </CardContent>
       </Card>
     </main>

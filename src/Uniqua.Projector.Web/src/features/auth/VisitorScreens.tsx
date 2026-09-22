@@ -4,27 +4,43 @@ import { Button } from '@/components/ui/button'
 import { RegisterScreen } from '@/features/auth/RegisterScreen'
 import { SignInScreen } from '@/features/auth/SignInScreen'
 
+interface VisitorScreensProps {
+  /**
+   * Whether this visitor's session on this client ended, as the shell knows it. Passed in rather
+   * than read from the session query here: a second observer mounting on a refused query would
+   * refetch it, flip the shell back to "checking", and unmount this very component.
+   */
+  ended?: boolean
+}
+
 /**
- * What a visitor is shown: one of the two screens, and a way to reach the other.
+ * What a visitor is shown: one of the two screens, and — inside its card — a way to reach the
+ * other.
  *
- * Registration is offered first. AC-01's whole point is that a stranger arriving on a public link
- * can reach the product unaided, and putting the sign-in form in front of them asks a question
- * they cannot yet answer.
+ * Which comes first depends on who the visitor is. Someone whose session ended (signed out,
+ * expired, revoked) already owns an account, and AC-07, AC-07b and AC-10 say they are presented
+ * the sign-in form. A stranger arriving on the public link is offered registration first, because
+ * AC-01's whole point is that they can reach the product unaided and the sign-in form asks a
+ * question they cannot yet answer.
  */
-export function VisitorScreens() {
-  const [screen, setScreen] = useState<'register' | 'signIn'>('register')
+export function VisitorScreens({ ended = false }: VisitorScreensProps) {
+  const [screen, setScreen] = useState<'register' | 'signIn'>(ended ? 'signIn' : 'register')
 
-  return (
-    <div className="flex flex-col items-center">
-      {screen === 'register' ? <RegisterScreen /> : <SignInScreen />}
-
-      <Button
-        variant="ghost"
-        className="mb-8"
-        onClick={() => setScreen(screen === 'register' ? 'signIn' : 'register')}
-      >
-        {screen === 'register' ? 'I already have an account' : 'Create an account instead'}
-      </Button>
-    </div>
+  return screen === 'register' ? (
+    <RegisterScreen
+      alternative={
+        <Button variant="ghost" onClick={() => setScreen('signIn')}>
+          I already have an account
+        </Button>
+      }
+    />
+  ) : (
+    <SignInScreen
+      alternative={
+        <Button variant="ghost" onClick={() => setScreen('register')}>
+          Create an account instead
+        </Button>
+      }
+    />
   )
 }
