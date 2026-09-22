@@ -63,9 +63,74 @@ public static class AccountEndpoints
         .AllowAnonymous()
         .WithName("registerAccount");
 
+        endpoints.MapPost("/api/v1/sessions", async (
+            CreateSessionRequest request,
+            HttpContext context,
+            SignIn signIn,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await signIn.ExecuteAsync(
+                request.Email ?? string.Empty, request.Password ?? string.Empty, cancellationToken);
+
+            if (!result.IsSuccess)
+            {
+                // Whatever happened — wrong password, unknown address, or an attempt AC-12 held
+                // back for thirty seconds — this is the same call producing the same response. The
+                // delay is spent before we get here and leaves no trace in what is written, which
+                // is what keeps it from announcing that the account is under attack.
+                await context.WriteAccountProblemAsync(result.Error!);
+                return;
+            }
+
+            SessionCookie.Issue(context, result.Value.SessionId);
+
+            context.Response.StatusCode = StatusCodes.Status201Created;
+            await context.Response.WriteAsJsonAsync(
+                new AccountView(
+                    result.Value.AccountId, request.Email ?? string.Empty, result.Value.DisplayName),
+                cancellationToken);
+        })
+        // security: [] — signing in is what a visitor with no session comes here to do.
+        .AllowAnonymous()
+        .WithName("createSession");
+
+        endpoints.MapDelete("/api/v1/sessions/current", async (
+            HttpContext context,
+            SignOut signOut,
+            CancellationToken cancellationToken) =>
+        {
+            // The session the request arrived on, taken from what recognition established rather
+            // than from anything the caller said. That is how AC-08's "and only that one" holds:
+            // there is no way to name someone else's session.
+            var sessionId = RecognisedSession.SessionId(context.User);
+            if (sessionId is null)
+            {
+                await context.WriteAccountProblemAsync("accounts.session_not_recognised");
+                return;
+            }
+
+            await signOut.ExecuteAsync(sessionId.Value, cancellationToken);
+
+            SessionCookie.Clear(context);
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+        })
+        .RequireAuthorization()
+        .WithName("deleteCurrentSession");
+
         return endpoints;
     }
 }
+
+/// <summary>
+/// The sign-in body. Note what is absent: no format or length constraint on either field. A
+/// pre-check here would refuse a malformed address faster than a wrong password, and that
+/// difference in speed is itself an answer to "is this address registered?".
+/// </summary>
+/// <param name="Email">The address as typed; normalised by the application.</param>
+/// <param name="Password">Verified against the stored hash, or against a dummy one (AC-05b).</param>
+public sealed record CreateSessionRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("email")] string? Email,
+    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password);
 
 /// <summary>The registration body, exactly as the contract's RegisterAccountRequest states it.</summary>
 /// <param name="Email">Normalised by the application; the normalised form carries the unique index.</param>

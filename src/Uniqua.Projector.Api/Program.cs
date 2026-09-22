@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Application;
+using Uniqua.Projector.Application.Accounts.Ports;
 using Uniqua.Projector.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -50,6 +51,12 @@ if (trustedProxies.Length > 0)
 }
 
 builder.Services.AddSingleton<RegistrationRateLimit>();
+
+// Registered BEFORE AddApplication, whose own registration is a TryAdd — so this is the one that
+// wins and the no-op default stands down without that file having to know this one exists.
+builder.Services.AddSingleton<HubSessionRevocationNotifier>();
+builder.Services.AddSingleton<ISessionRevocationNotifier>(
+    provider => provider.GetRequiredService<HubSessionRevocationNotifier>());
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
