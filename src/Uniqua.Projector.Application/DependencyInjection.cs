@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Uniqua.Projector.Application.Accounts;
+using Uniqua.Projector.Application.Accounts.Ports;
 
 namespace Uniqua.Projector.Application;
 
@@ -13,6 +15,12 @@ public static class DependencyInjection
     {
         services.AddScoped<RegisterAccount>();
         services.AddScoped<SignIn>();
+        services.AddScoped<SignOut>();
+
+        // The announcement has no listener until the live-update channel arrives (roadmap step 8).
+        // Registered with TryAdd so the Api-side implementation beside the hub replaces it simply
+        // by being registered first, rather than by editing this line.
+        services.TryAddScoped<ISessionRevocationNotifier, NoSessionRevocationNotifier>();
 
         return services;
     }
