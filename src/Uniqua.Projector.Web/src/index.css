@@ -11,6 +11,13 @@
   --color-muted: oklch(0.97 0 0);
   --color-muted-foreground: oklch(0.556 0 0);
   --color-border: oklch(0.922 0 0);
+  /* Read by the vendored shadcn components by name; a utility naming an undefined token emits no
+     CSS at all, silently (src/test/themeTokens.test.ts). */
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.145 0 0);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-input: oklch(0.922 0 0);
+  --color-ring: oklch(0.708 0 0);
   --radius: 0.5rem;
 }
 
