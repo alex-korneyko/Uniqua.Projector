@@ -21,7 +21,7 @@
 | T14 | Sign-in / sign-out endpoints + hub notifier | ports | Alex Korneiko | M | T9, T10, T11, T12 | done |
 | T15 | Web API client, session bootstrap, signed-in shell | ui | Alex Korneiko | M | — | done |
 | T16 | Registration screen, all six states | ui | Alex Korneiko | M | T15 | done |
-| T17 | Sign-in screen, one indistinguishable refusal | ui | Alex Korneiko | S | T15 | todo |
+| T17 | Sign-in screen, one indistinguishable refusal | ui | Alex Korneiko | S | T15 | done |
 | T18 | Three quality-scenario suites + anti-lockout regression | tests | Alex Korneiko | M | T9, T12, T13, T14 | todo |
 | T19 | The four session rules, written down | docs | Alex Korneiko | S | T12, T14 | todo |
 | T20 | Expired-session cleanup hosted service | infra | Alex Korneiko | S | T4, T6 | done |
