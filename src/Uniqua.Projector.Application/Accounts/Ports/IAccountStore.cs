@@ -38,10 +38,16 @@ public interface IAccountStore
     Task VerifyDummyPasswordAsync(string password, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Records one failed attempt: the count and the instant, both persisted, because AC-12's
-    /// 15-minute reset is derived from them on the next read rather than held by a timer.
+    /// Records one failed attempt and returns the number it carries — the count and the instant,
+    /// both persisted, with the count advanced by <see cref="GuessingDelay.CountAfterFailure"/> so
+    /// AC-12's 15-minute reset is applied when the failure is written rather than held by a timer.
     /// </summary>
-    Task RecordFailureAsync(Guid accountId, CancellationToken cancellationToken);
+    /// <remarks>
+    /// Returning the new count, rather than letting the caller add one to what it read earlier,
+    /// is what gives parallel guesses against one account each a higher number: the value comes
+    /// from the write that won, not from a read every one of them shared.
+    /// </remarks>
+    Task<int> RecordFailureAsync(Guid accountId, CancellationToken cancellationToken);
 
     /// <summary>Clears the count and the instant together, on a correct password.</summary>
     Task ResetFailuresAsync(Guid accountId, CancellationToken cancellationToken);

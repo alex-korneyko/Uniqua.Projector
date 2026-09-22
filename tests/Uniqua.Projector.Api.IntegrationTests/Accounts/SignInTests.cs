@@ -148,12 +148,13 @@ public sealed class SignInTests(ApiFactory factory)
     // ---- AC-12: the delay curve, driven rather than waited for ----------------------------------
 
     [Theory]
-    [InlineData(5, 0)]
-    [InlineData(6, 2)]
-    [InlineData(10, 30)]
+    [InlineData(5, 2)]
+    [InlineData(9, 30)]
     public async Task The_next_failure_is_held_for_at_least_the_curves_floor(
         int priorFailures, int atLeastSeconds)
     {
+        // AC-12's Given is "5 consecutive attempts have already failed": the attempt under test is
+        // the 6th failure, which §6 holds for at least 2 s. With 9 prior, it is the 10th (>= 30 s).
         factory.Clock.Reset();
         var account = await ARegisteredAccountAsync();
         await FailAsync(account.Email, priorFailures);
@@ -183,23 +184,65 @@ public sealed class SignInTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task Fifteen_quiet_minutes_undo_the_delay_without_resetting_the_stored_column()
+    public async Task The_fifth_failure_is_still_free()
     {
-        // The reset is derived on read from LastFailedAttemptAt. The stored count stays where it
-        // was — which is exactly why a restart cannot lose the reset: there is nothing to lose.
+        // The last free attempt: 4 prior failures, so this one is the 5th and is not held at all.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        await FailAsync(account.Email, times: 4);
+
+        factory.Clock.ClearRequestedDelays();
+        using var scope = factory.Services.CreateScope();
+        await SignIn(scope).ExecuteAsync(account.Email, "not-the-password", CancellationToken.None);
+
+        Assert.Equal(TimeSpan.Zero, factory.Clock.LongestRequestedDelay);
+        Assert.Equal(5, await FailureCountAsync(account.AccountId));
+    }
+
+    [Fact]
+    public async Task Fifteen_quiet_minutes_return_the_stored_count_to_zero()
+    {
+        // AC-12: "the count of consecutive failures returns to zero ... after 15 minutes in which
+        // no attempt is made". So after the quiet period the next failure is the 1st of a fresh
+        // count, and an owner who mistypes twice is not held on the second typo either.
         factory.Clock.Reset();
         var account = await ARegisteredAccountAsync();
         await FailAsync(account.Email, times: 20);
-
-        Assert.Equal(20, await FailureCountAsync(account.AccountId));
 
         factory.Clock.Advance(TimeSpan.FromMinutes(16));
         factory.Clock.ClearRequestedDelays();
 
         using var scope = factory.Services.CreateScope();
         await SignIn(scope).ExecuteAsync(account.Email, "not-the-password", CancellationToken.None);
+        await SignIn(scope).ExecuteAsync(account.Email, "not-the-password", CancellationToken.None);
 
         Assert.Equal(TimeSpan.Zero, factory.Clock.LongestRequestedDelay);
+        Assert.Equal(2, await FailureCountAsync(account.AccountId));
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public async Task An_abandoned_delayed_attempt_still_counts_as_a_failure()
+    {
+        // A guesser who hangs up once the verification cost has passed must not skip the count:
+        // otherwise the curve never grows and guessing is limited only by processor time.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        await FailAsync(account.Email, times: 6);
+
+        factory.Clock.AbandonDelays = true;
+        try
+        {
+            using var scope = factory.Services.CreateScope();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SignIn(scope).ExecuteAsync(
+                account.Email, "not-the-password", CancellationToken.None));
+        }
+        finally
+        {
+            factory.Clock.AbandonDelays = false;
+        }
+
+        Assert.Equal(7, await FailureCountAsync(account.AccountId));
         factory.Clock.Reset();
     }
 

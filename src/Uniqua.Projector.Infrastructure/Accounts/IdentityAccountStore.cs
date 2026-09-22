@@ -22,6 +22,9 @@ internal sealed class IdentityAccountStore(
     IClock clock,
     ILogger<IdentityAccountStore> logger) : IAccountStore
 {
+    /// <summary>How many times a failure write is retried after losing a race to another one.</summary>
+    private const int MaxFailureWriteAttempts = 8;
+
     public async Task<StoredAccount?> FindByEmailAsync(string email, CancellationToken cancellationToken)
     {
         // Trim, then through Identity's own normalizer, which upper-cases. This is the pair
@@ -140,22 +143,64 @@ internal sealed class IdentityAccountStore(
         return Task.CompletedTask;
     }
 
-    public async Task RecordFailureAsync(Guid accountId, CancellationToken cancellationToken)
+    public async Task<int> RecordFailureAsync(Guid accountId, CancellationToken cancellationToken)
     {
-        // A single statement, so two concurrent failures both count. A lost update would
-        // understate the count by one and delay very slightly less, which the curve tolerates —
-        // it is a floor, not an exact ledger.
+        // Compare-and-set rather than a blind increment. The next count depends on the stored
+        // instant (GuessingDelay owns the 15-minute reset), so it is computed from a read and then
+        // written only if nobody else wrote in between; a concurrent failure makes the write miss
+        // and the loop reads again. Each of N parallel guesses therefore ends up with its own,
+        // higher number instead of all of them sharing the one they read.
+        var now = clock.UtcNow;
+        var next = 1;
+
+        for (var attempt = 0; attempt < MaxFailureWriteAttempts; attempt++)
+        {
+            var current = await users.Users
+                .AsNoTracking()
+                .Where(user => user.Id == accountId)
+                .Select(user => new { user.AccessFailedCount, user.LastFailedAttemptAt })
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (current is null)
+            {
+                return 0;
+            }
+
+            var storedCount = current.AccessFailedCount;
+            var storedAt = current.LastFailedAttemptAt;
+            next = GuessingDelay.CountAfterFailure(storedCount, storedAt, now);
+
+            var written = await users.Users
+                .Where(user => user.Id == accountId
+                    && user.AccessFailedCount == storedCount
+                    && user.LastFailedAttemptAt == storedAt)
+                .ExecuteUpdateAsync(
+                    update => update
+                        .SetProperty(user => user.AccessFailedCount, next)
+                        .SetProperty(user => user.LastFailedAttemptAt, now),
+                    cancellationToken);
+
+            if (written == 1)
+            {
+                // No address here, and no credential: otherwise the log becomes the
+                // account-enumeration oracle AC-05b exists to close.
+                logger.LogInformation("module=accounts event=sign_in_failure_recorded");
+                return next;
+            }
+        }
+
+        // Sustained contention on one account: fall back to a blind increment so the failure is
+        // still counted. It can only overstate the count, which errs towards a longer delay.
         await users.Users
             .Where(user => user.Id == accountId)
             .ExecuteUpdateAsync(
                 update => update
                     .SetProperty(user => user.AccessFailedCount, user => user.AccessFailedCount + 1)
-                    .SetProperty(user => user.LastFailedAttemptAt, clock.UtcNow),
+                    .SetProperty(user => user.LastFailedAttemptAt, now),
                 cancellationToken);
 
-        // No address here, and no credential: otherwise the log becomes the account-enumeration
-        // oracle AC-05b exists to close.
-        logger.LogInformation("module=accounts event=sign_in_failure_recorded");
+        logger.LogInformation("module=accounts event=sign_in_failure_recorded contended=true");
+        return next;
     }
 
     public Task ResetFailuresAsync(Guid accountId, CancellationToken cancellationToken) =>

@@ -27,9 +27,8 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
     // ---- The delay curve, driven rather than waited for -----------------------------------------
 
     [Theory]
-    [InlineData(5, 0)]
-    [InlineData(6, 2)]
-    [InlineData(10, 30)]
+    [InlineData(5, 2)]
+    [InlineData(9, 30)]
     public async Task The_next_attempt_is_held_for_the_floor_the_criterion_names(
         int priorFailures, int atLeastSeconds)
     {
@@ -61,10 +60,16 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
         factory.Clock.Advance(TimeSpan.FromMinutes(16));
         factory.Clock.ClearRequestedDelays();
 
+        // Two typos, not one: the first proves the delay is gone, the second proves the count
+        // itself went back to zero rather than carrying on from 20.
+        await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
         await client.PostAsJsonAsync(
             Sessions, new { email = account.Email, password = "not-the-password" });
 
         Assert.Equal(TimeSpan.Zero, factory.Clock.LongestRequestedDelay);
+        Assert.Equal(2, await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
         factory.Clock.Reset();
     }
 

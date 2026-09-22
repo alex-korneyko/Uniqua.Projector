@@ -50,6 +50,7 @@ ADR 0003 lists «lockout after repeated attempts» among the positive consequenc
 - A per-account counter does not slow an attack spread thinly across many accounts — already accepted as residual risk in spec §6.1.
 
 **Neutral**
+- **Amendment 2026-09-22 (review R-05): the delay is capped at 5 minutes.** AC-12's "grows with each additional failure" holds up to the 14th consecutive failure, where the doubling curve reaches the ceiling and stays there. The cap is deliberate: an unbounded delay would let a guesser hold a request open indefinitely, turning the defence into a way of tying up the server. A guesser gains nothing from the cap, since at five minutes per attempt guessing is already futile. It is recorded in spec §6 alongside the two floors.
 - Moving to option 2 later would be additive and would not require a data migration, since the counter would simply start being read from elsewhere.
 
 ## Links

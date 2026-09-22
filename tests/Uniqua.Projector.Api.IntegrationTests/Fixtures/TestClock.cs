@@ -24,10 +24,19 @@ public sealed class TestClock : IClock
 
     public TimeSpan LongestRequestedDelay => _delays.Count is 0 ? TimeSpan.Zero : _delays.Max();
 
+    /// <summary>
+    /// When set, every non-zero delay behaves as a request the client abandoned mid-wait: it is
+    /// recorded, then cancelled — which is what a real <see cref="Task.Delay(TimeSpan, CancellationToken)"/>
+    /// on the request-abort token does when a guesser hangs up.
+    /// </summary>
+    public bool AbandonDelays { get; set; }
+
     public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
     {
         _delays.Add(duration);
-        return Task.CompletedTask;
+        return AbandonDelays && duration > TimeSpan.Zero
+            ? Task.FromCanceled(new CancellationToken(canceled: true))
+            : Task.CompletedTask;
     }
 
     public void ClearRequestedDelays() => _delays.Clear();
@@ -42,6 +51,7 @@ public sealed class TestClock : IClock
     public void Reset()
     {
         _delays.Clear();
+        AbandonDelays = false;
         _now = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
     }
 

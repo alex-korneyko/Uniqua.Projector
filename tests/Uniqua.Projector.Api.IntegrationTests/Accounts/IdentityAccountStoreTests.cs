@@ -143,6 +143,27 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task Parallel_failures_against_one_account_each_get_their_own_number()
+    {
+        // Review 2026-09-22 R-03: parallel guesses must not all read one stale count. Each write
+        // that wins returns the number it wrote, so six at once are failures 1 to 6, not six 1s.
+        factory.Clock.Reset();
+        Guid accountId;
+        using (var setup = factory.Services.CreateScope())
+        {
+            accountId = (await CreateAccountAsync(Store(setup))).Id;
+        }
+
+        var numbers = await Task.WhenAll(Enumerable.Range(0, 6).Select(async _ =>
+        {
+            using var scope = factory.Services.CreateScope();
+            return await Store(scope).RecordFailureAsync(accountId, CancellationToken.None);
+        }));
+
+        Assert.Equal(Enumerable.Range(1, 6), numbers.Order());
+    }
+
+    [Fact]
     public async Task Resetting_clears_the_count_and_the_instant_together()
     {
         using var scope = factory.Services.CreateScope();

@@ -40,21 +40,20 @@ public sealed class SignIn(
             return Refused();
         }
 
-        // Computed before the verification so that the cost of the verification is spent inside
-        // the same request as the wait, rather than on top of it.
-        var delay = GuessingDelay.For(
-            account.ConsecutiveFailures, account.LastFailedAttemptAt, clock.UtcNow);
-
         var verified = await accounts.VerifyPasswordAsync(
             account.Id, password ?? string.Empty, cancellationToken);
 
         if (!verified)
         {
+            // Recorded first, and on a token no client can cancel. A guesser who hangs up once the
+            // verification has cost what it costs already knows the answer; if the count were
+            // written after the wait, hanging up would skip it and the curve would never grow.
+            var failure = await accounts.RecordFailureAsync(account.Id, CancellationToken.None);
+
             // The delay is served only on failure. A correct password is never held, which is what
             // keeps the account usable to its owner no matter how hard anyone else is guessing
             // (AC-12, ADR 0010).
-            await clock.DelayAsync(delay, cancellationToken);
-            await accounts.RecordFailureAsync(account.Id, cancellationToken);
+            await clock.DelayAsync(GuessingDelay.ForFailure(failure), cancellationToken);
 
             return Refused();
         }
