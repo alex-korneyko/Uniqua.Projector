@@ -5,9 +5,9 @@ updated_at: "2026-09-20"
 reflects_commit: "16bba53"
 # machine-readable keys — decided in the greenfield foundation session, not scanned.
 # implement's command-detection cascade reads test_cmd/lint_cmd right after the settings override.
-language: "C# / .NET 10 (LTS); TypeScript 5 / React 19"
-build_cmd: "dotnet build Uniqua.Projector.sln"
-test_cmd: "dotnet test Uniqua.Projector.sln"
+language: "C# / .NET 10 (LTS), net10.0; TypeScript 5 / React 19"
+build_cmd: "dotnet build Uniqua.Projector.slnx"
+test_cmd: "dotnet test Uniqua.Projector.slnx"
 lint_cmd: "dotnet format --verify-no-changes"
 migration_tool: "ef-core-migrations"
 frontend: "react 19 + vite + tailwind + shadcn/ui"
@@ -24,15 +24,17 @@ frontend: "react 19 + vite + tailwind + shadcn/ui"
 ## Stack
 
 - Language / runtime: C# on .NET 10 (LTS) for the server; TypeScript 5 / React 19 for the client.
-  The SDK version is the one assumption of this map that was not verified — confirm it at scaffold
-  time and fall back to .NET 8 (LTS) if 10 is not installed.
+  **Confirmed at scaffold on 2026-09-22:** SDK 10.0.301 is installed and every project targets
+  `net10.0`, set once in `Directory.Build.props`. The .NET 8 fallback this map allowed was not needed.
 - Frameworks: ASP.NET Core 10 (HTTP API + static file hosting), ASP.NET Core Identity (accounts),
   ASP.NET Core SignalR (the persistent push channel), Entity Framework Core 10 (persistence and
   migrations); Vite (client build), Tailwind CSS (styling), shadcn/ui (component source copied into
   the repository), TanStack Query (server-state cache), dnd-kit (card drag-and-drop).
-- Build / test / lint: `dotnet build Uniqua.Projector.sln` · `dotnet test Uniqua.Projector.sln` ·
+- Build / test / lint: `dotnet build Uniqua.Projector.slnx` · `dotnet test Uniqua.Projector.slnx` ·
   `dotnet format --verify-no-changes`; the client adds `npm --prefix src/Uniqua.Projector.Web run build`
-  and `npm --prefix src/Uniqua.Projector.Web run lint`.
+  and `npm --prefix src/Uniqua.Projector.Web run lint`. The solution file is `.slnx` — the XML
+  solution format `dotnet new sln` produces by default on .NET 10 — not the classic `.sln` this map
+  assumed before scaffold. Package versions are centralised in `Directory.Packages.props`.
 - Licensing: every dependency above is permissively licensed (MIT / Apache-2.0 / BSD-style). No
   copyleft component is part of this foundation, and none may be introduced without replacing it.
 

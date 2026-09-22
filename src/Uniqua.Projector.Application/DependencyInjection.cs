@@ -1,0 +1,16 @@
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Uniqua.Projector.Application;
+
+/// <summary>
+/// The Application layer's single registration surface. Every use case this layer adds is
+/// registered here and nowhere else, so <c>Program.cs</c> never names an Application type.
+/// </summary>
+public static class DependencyInjection
+{
+    public static IServiceCollection AddApplication(this IServiceCollection services)
+    {
+        // Use cases are registered here as features land.
+        return services;
+    }
+}

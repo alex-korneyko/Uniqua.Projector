@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Uniqua.Projector.Api/Uniqua.Projector.Api.csproj" />
+    <Project Path="src/Uniqua.Projector.Application/Uniqua.Projector.Application.csproj" />
+    <Project Path="src/Uniqua.Projector.Domain/Uniqua.Projector.Domain.csproj" />
+    <Project Path="src/Uniqua.Projector.Infrastructure/Uniqua.Projector.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Uniqua.Projector.Api.IntegrationTests/Uniqua.Projector.Api.IntegrationTests.csproj" />
+    <Project Path="tests/Uniqua.Projector.Domain.Tests/Uniqua.Projector.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

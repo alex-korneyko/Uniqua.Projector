@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/Uniqua.Projector.Web/package-lock.json
+
+      # The client is built first: the API serves its output from wwwroot, so a server build
+      # without it would not be the artifact that ships.
+      - name: Install client dependencies
+        run: npm --prefix src/Uniqua.Projector.Web ci
+
+      - name: Lint client
+        run: npm --prefix src/Uniqua.Projector.Web run lint
+
+      - name: Build client
+        run: npm --prefix src/Uniqua.Projector.Web run build
+
+      - name: Build server
+        run: dotnet build Uniqua.Projector.slnx --configuration Release
+
+      - name: Verify formatting
+        run: dotnet format --verify-no-changes
+
+      # The integration tests start their own SQL Server through Testcontainers; the Docker daemon
+      # on the GitHub-hosted runner is what they bind to, so no service container is declared here.
+      - name: Test
+        run: dotnet test Uniqua.Projector.slnx --configuration Release --no-build
