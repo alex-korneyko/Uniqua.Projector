@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
 
 namespace Uniqua.Projector.Api.IntegrationTests.Quality;
@@ -71,6 +72,30 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
         Assert.Equal(2, await factory.ScalarAsync<int>(
             $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
         factory.Clock.Reset();
+    }
+
+    // ---- AC-12: the per-source failed-sign-in cap, counted before verification (N-01) -----------
+
+    [Fact]
+    public async Task Parallel_attempts_from_one_source_are_each_counted_even_when_none_wait_for_the_other()
+    {
+        // The reservation happens before SignIn.ExecuteAsync runs, not after it returns — so a
+        // batch fired without waiting for one another to finish (the shape a client that hangs up
+        // takes: it never observes its own response) still exhausts the cap exactly once. If the
+        // slot were instead taken from the result of verification, a burst like this could race
+        // past the cap because every attempt would still see the pre-burst count when it checked.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountUnderGuessingAsync(0);
+        var client = await factory.AWritingClientAsync();
+
+        const int burst = SignInRateLimit.PermittedFailuresPerWindow + 5;
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, burst).Select(_ =>
+            client.PostAsJsonAsync(Sessions, new { email = account.Email, password = "not-the-password" })));
+
+        var capped = responses.Count(response => response.StatusCode == HttpStatusCode.TooManyRequests);
+
+        Assert.Equal(burst - SignInRateLimit.PermittedFailuresPerWindow, capped);
     }
 
     // ---- AC-05b: the refusal that costs the same either way -------------------------------------

@@ -33,6 +33,7 @@ public static class DependencyInjection
         services.AddAuthorization();
 
         services.AddSingleton<RegistrationRateLimit>();
+        services.AddSingleton<SignInRateLimit>();
 
         // A failing sweep must never take the application down with it, which is why the service
         // swallows its own failures rather than relying on the host to be forgiving.

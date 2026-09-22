@@ -254,6 +254,29 @@ paths:
                 code: "accounts.credentials_invalid"
         "403":
           $ref: "#/components/responses/AntiforgeryFailed"
+        "429":
+          description: |
+            AC-12 / AC-05b, ADR 0010's amendment (review 2026-09-22-2 N-01) — more than 20 failed
+            sign-ins came from this request source within the past 15 minutes. Reserved before the
+            password is checked, so this refusal never verifies one; applies identically whether the
+            submitted address is registered or not. The request source is the client address as
+            reported by this instance's own reverse proxy, trusted only when the request arrived
+            from the proxy (spec §6.1), the same key the registration rate limit uses.
+          headers:
+            Retry-After:
+              description: seconds until a further sign-in from this source is accepted
+              schema: { type: integer, minimum: 1 }
+              example: 412
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/accounts/sign-in-rate-limited"
+                title: "Sign-in is temporarily limited"
+                status: 429
+                detail: "Too many failed sign-in attempts have come from here recently."
+                code: "accounts.sign_in_rate_limited"
+                retry_after_seconds: 412
 
   /api/v1/sessions/current:
     delete:
@@ -378,7 +401,7 @@ components:
         retry_after_seconds:
           type: integer
           minimum: 1
-          description: present only on `accounts.registration_rate_limited` (AC-01b)
+          description: present only on `accounts.registration_rate_limited` (AC-01b) and `accounts.sign_in_rate_limited` (AC-12, AC-05b)
 
     # The account as it is shown back to itself. Every property traces to an AspNetUsers column.
     # Deliberately absent: PasswordHash (never a readable form), AccessFailedCount and

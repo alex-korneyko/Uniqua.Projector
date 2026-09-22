@@ -83,8 +83,26 @@ public static class AccountEndpoints
             CreateSessionRequest request,
             HttpContext context,
             SignIn signIn,
+            SignInRateLimit limit,
+            ILogger<SignInRateLimit> logger,
             CancellationToken cancellationToken) =>
         {
+            var source = RequestSource.Of(context, logger);
+
+            // Reserved before the password is verified at all (review 2026-09-22-2 N-01): a client
+            // that hangs up, or several running in parallel, still consume the slot they took,
+            // because none of that changes what the reservation itself already recorded.
+            var decision = limit.Reserve(source);
+            if (!decision.IsPermitted)
+            {
+                logger.LogWarning(
+                    "module=accounts event=sign_in_rate_limited source={Source}", source);
+
+                await context.WriteAccountProblemAsync(
+                    "accounts.sign_in_rate_limited", decision.RetryAfterSeconds);
+                return;
+            }
+
             var result = await signIn.ExecuteAsync(
                 request.Email ?? string.Empty, request.Password ?? string.Empty, cancellationToken);
 
@@ -93,10 +111,14 @@ public static class AccountEndpoints
                 // Whatever happened — wrong password, unknown address, or an attempt AC-12 held
                 // back for thirty seconds — this is the same call producing the same response. The
                 // delay is spent before we get here and leaves no trace in what is written, which
-                // is what keeps it from announcing that the account is under attack.
+                // is what keeps it from announcing that the account is under attack. The reserved
+                // slot is left exactly as it is: a failure is what the cap exists to count.
                 await context.WriteAccountProblemAsync(result.Error!);
                 return;
             }
+
+            // A correct password is never counted against the cap, from any source (AC-12).
+            limit.Release(source, decision);
 
             SessionCookie.Issue(context, result.Value.SessionId);
 

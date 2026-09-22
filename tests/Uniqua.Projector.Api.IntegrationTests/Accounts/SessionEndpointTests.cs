@@ -160,6 +160,98 @@ public sealed class SessionEndpointTests(ApiFactory factory)
             value => value.StartsWith($"{SessionCookie.Name}=", StringComparison.Ordinal));
     }
 
+    // ---- AC-12 / AC-05b: the per-source failed-sign-in cap (review 2026-09-22-2 N-01) -----------
+
+    [Fact]
+    public async Task The_21st_failure_from_one_source_is_refused_without_a_verification()
+    {
+        // The slot is reserved before the password is checked, so the 21st attempt never reaches
+        // SignIn.ExecuteAsync at all — provable because AccessFailedCount, which only Identity's
+        // verification path writes, stays at 20 rather than climbing to 21.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        var accessFailedBeforeTheCap = await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'");
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+
+        var problem = JsonDocument.Parse(await capped.Content.ReadAsStringAsync()).RootElement;
+        Assert.Equal("accounts.sign_in_rate_limited", problem.GetProperty("code").GetString());
+
+        var retryAfterSeconds = problem.GetProperty("retry_after_seconds").GetInt32();
+        Assert.InRange(retryAfterSeconds, 1, (int)SignInRateLimit.Window.TotalSeconds);
+        Assert.Equal(retryAfterSeconds, capped.Headers.RetryAfter?.Delta?.TotalSeconds);
+
+        // No verification ran for the 21st attempt — the count did not move past what the first
+        // 20 real verifications already wrote.
+        Assert.Equal(accessFailedBeforeTheCap, await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
+    }
+
+    [Fact]
+    public async Task A_correct_password_from_a_different_source_is_still_accepted_immediately()
+    {
+        // AC-12: the cap is per source, never per account, so the owner signing in from anywhere
+        // else is unaffected by an attacker's source having exhausted its own cap.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        var attacker = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            await attacker.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+        }
+        Assert.Equal(
+            HttpStatusCode.TooManyRequests,
+            (await attacker.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" })).StatusCode);
+
+        var owner = await ClientAsync();
+        var response = await owner.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_unregistered_address_is_capped_identically()
+    {
+        // AC-05b: the cap must not become a second oracle that answers "is this address real" by
+        // behaving differently for one that never was.
+        factory.Clock.Reset();
+        var unknown = $"{Guid.NewGuid():N}@example.test";
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = unknown, password = "any-password-at-all" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions, new { email = unknown, password = "any-password-at-all" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+        Assert.Equal(
+            "accounts.sign_in_rate_limited",
+            JsonDocument.Parse(await capped.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("code").GetString());
+    }
+
     // ---- AC-08: signing out --------------------------------------------------------------------
 
     [Fact]

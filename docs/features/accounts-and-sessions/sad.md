@@ -537,8 +537,8 @@ Three of the rows below are inherited from `architecture-map.md` §Conventions v
 | Error handling | RFC 9457 `ProblemDetails` from one exception handler. A refusal carries exactly the plain-language reason its acceptance criterion specifies — no more (AC-05 must not reveal which of address or password was wrong) | architecture-map §Conventions |
 | ID strategy | `Guid.CreateVersion7()` for account and session identifiers — time-ordered, and it leaks no record counts | architecture-map §Conventions |
 | Password hashing | The Identity hasher, with parameters tuned so one verification costs ≥ 100 ms on the §6 reference machine; guarded by a unit test over the parameters | spec §6 |
-| Guessing protection | A progressive per-account delay computed from Identity's consecutive-failure counter, with the framework's own lockout switched off | ADR 0010 |
-| Rate limiting | No more than 5 registrations per minute per request source — the client address as reported by the reverse proxy, trusted only when the request arrives from the proxy | spec §6.1, §7 |
+| Guessing protection | A progressive per-account delay computed from Identity's consecutive-failure counter, with the framework's own lockout switched off, plus a cap of 20 failed sign-ins per request source per 15-minute sliding window — reserved before the password is verified and released only on success, so it still holds against a client that hangs up instead of waiting for the delay | ADR 0010 |
+| Rate limiting | No more than 5 registrations per minute per request source, and no more than 20 failed sign-ins per request source per 15 minutes — the client address as reported by the reverse proxy, trusted only when the request arrives from the proxy | spec §6.1, §7 |
 | Internationalisation | N/A — single language | — |
 | Observability | The §7 metrics; server-side timing on the sign-in, registration and session-recognition paths | §7 |
 | Secrets | The data-protection key ring lives in the database; this project has no secret manager, which is why the certificate-encrypted variant was rejected | ADR 0009, §11 |

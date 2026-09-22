@@ -1,0 +1,134 @@
+using System.Collections.Concurrent;
+using Uniqua.Projector.Application.Accounts.Ports;
+
+namespace Uniqua.Projector.Api.Accounts;
+
+/// <summary>
+/// The per-source-sliding-window bookkeeping shared by <see cref="RegistrationRateLimit"/> (AC-01b)
+/// and <see cref="SignInRateLimit"/> (AC-12, AC-05b, review 2026-09-22-2 N-01). Both limits reserve
+/// a slot for an attempt about to be made, before anything the attempt might do, and hand the slot
+/// back through <see cref="Release"/> when the outcome says it should not have counted after all —
+/// what counts as "should not have counted" differs between the two callers, which is why the
+/// decision to release is theirs and not this type's.
+/// </summary>
+/// <remarks>
+/// The counter is per process and in memory, pruned lazily rather than on a timer, exactly as
+/// <c>RegistrationRateLimit</c> did before this type was extracted (review 2026-09-22-2 N-01,
+/// folding R-25's fix into the shared type rather than duplicating it).
+/// </remarks>
+internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow, TimeSpan window)
+{
+    private readonly ConcurrentDictionary<string, List<DateTimeOffset>> _entries = new();
+
+    private long _lastPrunedAtTicks;
+
+    /// <summary>How many sources currently hold a slot. For tests and for anyone watching memory.</summary>
+    public int TrackedSourceCount => _entries.Count;
+
+    /// <summary>
+    /// Holds one of this source's slots for an attempt about to be made, or says how long until one
+    /// frees up.
+    /// </summary>
+    /// <remarks>
+    /// The slot is taken <em>before</em> the caller does whatever might make it count, so several
+    /// concurrent or abandoned attempts from one source cannot all pass a check none of them has yet
+    /// recorded. A refusal from the limit itself is never recorded here: counting those would let a
+    /// caller who keeps retrying push their own wait further out, which punishes the impatient
+    /// rather than the abusive.
+    /// </remarks>
+    public RateLimitDecision Reserve(string source)
+    {
+        var now = clock.UtcNow;
+        PruneIfDue(now);
+
+        var windowOpenedAt = now - window;
+        var entries = _entries.GetOrAdd(source, _ => []);
+
+        lock (entries)
+        {
+            if (!_entries.TryGetValue(source, out var current) || !ReferenceEquals(current, entries))
+            {
+                // A prune removed this list between the lookup and the lock; a slot taken in it
+                // would be lost, so start again on the list that is actually held.
+                return Reserve(source);
+            }
+
+            entries.RemoveAll(recorded => recorded <= windowOpenedAt);
+
+            if (entries.Count < permittedPerWindow)
+            {
+                entries.Add(now);
+                return RateLimitDecision.Permitted(now);
+            }
+
+            // The wait until the oldest entry in the window drops out of it, which is the first
+            // instant this source will genuinely be allowed to try again. Rounded up, so a caller
+            // that obeys it is never refused a second time for being a fraction early.
+            var until = entries.Min() + window - now;
+            var seconds = Math.Max(1, (int)Math.Ceiling(until.TotalSeconds));
+
+            return RateLimitDecision.Refused(seconds);
+        }
+    }
+
+    /// <summary>
+    /// Hands back the slot <see cref="Reserve"/> took, because the caller's outcome says it should
+    /// not have counted after all.
+    /// </summary>
+    public void Release(string source, RateLimitDecision reservation)
+    {
+        if (!reservation.IsPermitted || !_entries.TryGetValue(source, out var entries))
+        {
+            return;
+        }
+
+        lock (entries)
+        {
+            entries.Remove(reservation.ReservedAt);
+        }
+    }
+
+    /// <summary>
+    /// Forgets sources whose window has closed, at most once per window, so a long-running instance
+    /// does not keep one entry per address it ever saw: IPv6 address rotation alone would make that
+    /// unbounded.
+    /// </summary>
+    private void PruneIfDue(DateTimeOffset now)
+    {
+        var last = Interlocked.Read(ref _lastPrunedAtTicks);
+        if (now.UtcTicks - last < window.Ticks
+            || Interlocked.CompareExchange(ref _lastPrunedAtTicks, now.UtcTicks, last) != last)
+        {
+            return;
+        }
+
+        var windowOpenedAt = now - window;
+
+        foreach (var (source, entries) in _entries)
+        {
+            lock (entries)
+            {
+                entries.RemoveAll(recorded => recorded <= windowOpenedAt);
+                if (entries.Count is 0)
+                {
+                    // Only this exact list, so a slot reserved concurrently is never thrown away.
+                    _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries));
+                }
+            }
+        }
+    }
+}
+
+/// <summary>Whether an attempt is allowed, and how long until it would be.</summary>
+/// <param name="IsPermitted">Whether the attempt may proceed.</param>
+/// <param name="RetryAfterSeconds">
+/// Seconds until the caller may try again — a positive number whenever the attempt was refused, so
+/// a refusal can always answer "when may I try again".
+/// </param>
+/// <param name="ReservedAt">The instant of the slot a permitted attempt holds, so it can be released.</param>
+public readonly record struct RateLimitDecision(bool IsPermitted, int RetryAfterSeconds, DateTimeOffset ReservedAt)
+{
+    public static RateLimitDecision Permitted(DateTimeOffset reservedAt) => new(true, 0, reservedAt);
+
+    public static RateLimitDecision Refused(int retryAfterSeconds) => new(false, retryAfterSeconds, default);
+}

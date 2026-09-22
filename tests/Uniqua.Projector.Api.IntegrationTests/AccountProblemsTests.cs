@@ -41,6 +41,9 @@ public sealed class AccountProblemsTests
     [InlineData("accounts.registration_rate_limited", 429,
         "Registration is temporarily limited",
         "Too many accounts have been created from here in the past minute.")]
+    [InlineData("accounts.sign_in_rate_limited", 429,
+        "Sign-in is temporarily limited",
+        "Too many failed sign-in attempts have come from here recently.")]
     public void Each_contract_code_is_published_exactly_as_the_contract_states(
         string code, int status, string title, string detail)
     {
@@ -64,6 +67,7 @@ public sealed class AccountProblemsTests
             "accounts.session_not_recognised",
             "accounts.antiforgery_failed",
             "accounts.registration_rate_limited",
+            "accounts.sign_in_rate_limited",
             // Not in contracts/openapi.yaml — see AccountProblems for the finding raised to the
             // api stage. The domain needs a display-name-shape refusal and the contract has none.
             "accounts.display_name_invalid",
@@ -123,13 +127,15 @@ public sealed class AccountProblemsTests
     }
 
     [Fact]
-    public void Only_the_rate_limit_refusal_carries_a_retry_hint()
+    public void Only_the_rate_limit_refusals_carry_a_retry_hint()
     {
+        string[] rateLimited = ["accounts.registration_rate_limited", "accounts.sign_in_rate_limited"];
+
         Assert.All(
-            AccountProblems.Codes.Where(code => code != "accounts.registration_rate_limited"),
+            AccountProblems.Codes.Where(code => !rateLimited.Contains(code)),
             code => Assert.False(AccountProblems.For(code).CarriesRetryAfter));
 
-        Assert.True(AccountProblems.For("accounts.registration_rate_limited").CarriesRetryAfter);
+        Assert.All(rateLimited, code => Assert.True(AccountProblems.For(code).CarriesRetryAfter));
     }
 
     [Fact]

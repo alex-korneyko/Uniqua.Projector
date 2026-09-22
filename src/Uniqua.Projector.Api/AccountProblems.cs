@@ -37,6 +37,9 @@ public static class AccountProblems
         Row("accounts.registration_rate_limited", 429, "Registration is temporarily limited",
             "Too many accounts have been created from here in the past minute.",
             carriesRetryAfter: true),
+        Row("accounts.sign_in_rate_limited", 429, "Sign-in is temporarily limited",
+            "Too many failed sign-in attempts have come from here recently.",
+            carriesRetryAfter: true),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>
