@@ -11,3 +11,6 @@ node_modules/
 
 # Client build output served by the API
 src/Uniqua.Projector.Api/wwwroot/
+
+# Per-machine settings (appsettings.{Environment}.{MachineName}.json) stay on the machine
+src/Uniqua.Projector.Api/appsettings.*.*.json

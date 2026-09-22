@@ -71,9 +71,12 @@ public static class ProblemDetailsSetup
 }
 
 /// <summary>
-/// Turns an unhandled exception into a 500 ProblemDetails without leaking the exception itself.
+/// Turns an unhandled exception into a 500 ProblemDetails without leaking the exception itself —
+/// the exception goes to the log instead, under the same traceId the response carries.
 /// </summary>
-internal sealed class UnhandledExceptionHandler(IProblemDetailsService problemDetailsService)
+internal sealed class UnhandledExceptionHandler(
+    IProblemDetailsService problemDetailsService,
+    ILogger<UnhandledExceptionHandler> logger)
     : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(
@@ -81,6 +84,17 @@ internal sealed class UnhandledExceptionHandler(IProblemDetailsService problemDe
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // The caller is told nothing about what failed, and that is deliberate — but somebody has
+        // to be told, or a 500 leaves no trace at all and the only way to learn what threw is to
+        // reproduce it. The traceId written into the body below is repeated here, so a report of
+        // one failure names exactly one log line.
+        logger.LogError(
+            exception,
+            "module=api event=unhandled_exception method={Method} path={Path} traceId={TraceId}",
+            httpContext.Request.Method,
+            httpContext.Request.Path,
+            httpContext.TraceIdentifier);
+
         httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext

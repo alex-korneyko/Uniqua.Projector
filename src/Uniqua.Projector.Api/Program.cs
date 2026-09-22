@@ -9,6 +9,13 @@ using Uniqua.Projector.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var env = builder.Environment;
+builder.Configuration
+    .AddJsonFile($"appsettings.{env.EnvironmentName}.{Environment.MachineName}.json",
+        optional: true, reloadOnChange: true)
+    .AddEnvironmentVariables()
+    .AddCommandLine(args);
+
 // Each layer is wired through its own AddXxx extension; this file names no type from inside a layer.
 builder.Services.AddProblemDetailsHandling();
 builder.Services.AddAntiforgeryGuard();
