@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
 using Uniqua.Projector.Application.Accounts;
@@ -259,6 +260,52 @@ public sealed class SessionRecognitionTests(ApiFactory factory)
         client.DefaultRequestHeaders.Add("Cookie", $"{SessionCookie.Name}={reference}");
 
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(Me)).StatusCode);
+    }
+
+    // ---- N-05: the store itself is unreachable, not merely silent ------------------------------
+
+    [Fact]
+    public async Task An_unavailable_session_store_fails_closed_and_never_shows_the_account_view()
+    {
+        // Review 2026-09-22 (re-review) N-05. A throwing reader is not "no session found" — it is
+        // the store itself failing — so this must never collapse into the ordinary 401 refusal
+        // (which the UI reads as "visitor", inviting a sign-in) nor, worse, a 200. AC-10's silence
+        // about *why* a session was not recognised only covers the four refusal causes; an
+        // unavailable store is a different outcome and the client's `failed` status (never
+        // `account`) is what carries that distinction (src/Uniqua.Projector.Web/src/features/auth/useSession.ts).
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+
+        await using var brokenFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<ISessionReader>();
+                services.AddScoped<ISessionReader, ThrowingSessionReader>();
+            }));
+
+        var client = brokenFactory.CreateClient();
+        client.DefaultRequestHeaders.Add(
+            "Cookie", $"{SessionCookie.Name}={ProtectedReference(account.SessionId)}");
+
+        var response = await client.GetAsync(Me);
+
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.True((int)response.StatusCode is < 200 or >= 300);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadAsStringAsync();
+        var problem = JsonDocument.Parse(body).RootElement;
+
+        // Never the account shape: no "id" the way a 200 from /me would carry.
+        Assert.False(problem.TryGetProperty("id", out _));
+        Assert.DoesNotContain(account.Email, body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>A store that cannot be reached at all, standing in for a genuine outage.</summary>
+    private sealed class ThrowingSessionReader : ISessionReader
+    {
+        public Task<Session?> FindAsync(Guid sessionId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("The session store is unavailable.");
     }
 
     // ---- The handler holds no arithmetic of its own ---------------------------------------------

@@ -77,7 +77,7 @@ happens when someone guesses at a password — behaves exactly as the repository
 - A session exactly at 14 days idle and one minute past it; one at 90 days old and one minute past it (AC-07, AC-07b) → live, dead, live, dead.
 - A cookie whose session record was never written, and one whose record says revoked (AC-10) → both refused, the sign-in form presented.
 - Two sessions of one account, one signed out (AC-08) → one revoked, the other still recognised.
-- The store unavailable on an ordinary read → fail closed: the request is not recognised and the sign-in form is presented, because recognition is a positive assertion and an absent answer is not one.
+- The store unavailable on an ordinary read (AC-10) → fails closed: the failure view with retry is shown, never the account view. Recognition is a positive assertion; an outage answers neither "recognised" nor "not recognised", so it must never collapse into the sign-in form's ordinary "visitor" refusal, which would misreport a live session as one that was never signed in.
 
 ## Test data
 
