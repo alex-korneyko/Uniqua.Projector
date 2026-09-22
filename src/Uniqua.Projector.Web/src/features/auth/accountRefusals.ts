@@ -50,7 +50,13 @@ export function describeRefusal(error: unknown): Refusal {
       }
 
     case 'accounts.registration_rate_limited':
-      return { message: rateLimitMessage(error), field: null }
+      return { message: rateLimitMessage(error, 'Registration is temporarily limited from here.'), field: null }
+
+    case 'accounts.sign_in_rate_limited':
+      // AC-12: the cap on failed sign-ins per source. Its own statement and reason, never the
+      // credentials wording — a rate limit is not a claim about what was typed — and the form
+      // stays usable: the visitor may still retry once the wait is up, or from another source.
+      return { message: rateLimitMessage(error, 'Sign-in is temporarily limited from here.'), field: null }
 
     case 'accounts.antiforgery_failed':
       // Nothing the visitor typed was wrong, so this is not a message about a field.
@@ -104,9 +110,12 @@ function withRetry(message: string): string {
   return /try again/i.test(message) ? message : `${message} Please try again.`
 }
 
-/** AC-01b asks that the visitor be told when they may try again, so the number is shown. */
-function rateLimitMessage(error: ApiError): string {
-  const statement = statementAndReason(error, 'Registration is temporarily limited from here.')
+/**
+ * AC-01b / AC-12 both ask that the visitor be told when they may try again, so the number is
+ * shown — once, whichever of the two rate limits sent it.
+ */
+function rateLimitMessage(error: ApiError, fallback: string): string {
+  const statement = statementAndReason(error, fallback)
 
   if (/try again/i.test(statement)) {
     // The server already named the wait; a second sentence would say it twice.

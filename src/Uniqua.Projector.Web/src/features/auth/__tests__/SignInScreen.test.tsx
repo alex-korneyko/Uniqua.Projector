@@ -259,6 +259,50 @@ describe('when the credentials are accepted', () => {
   })
 })
 
+// ---- 5. the sign-in rate limit (AC-12) -----------------------------------------------------------
+
+describe('when sign-ins from this source are rate limited', () => {
+  const signInRateLimited = {
+    code: 'accounts.sign_in_rate_limited',
+    title: 'Sign-in is temporarily limited',
+    detail: 'Too many failed sign-in attempts have come from here recently.',
+    status: 429,
+    retry_after_seconds: 412,
+  }
+
+  it('shows the statement and the reason, names the wait once, and keeps the form usable', async () => {
+    fetchMock.mockResolvedValue(problem(429, signInRateLimited))
+
+    renderScreen()
+    await submit('someone@example.test', 'not-the-password')
+
+    const message = await screen.findByRole('alert')
+    expect(message).toHaveTextContent('Sign-in is temporarily limited.')
+    expect(message).toHaveTextContent('Too many failed sign-in attempts have come from here recently.')
+    // The wait is named once, not zero times and not twice.
+    expect(message.textContent?.match(/412 seconds/g)).toHaveLength(1)
+
+    // Never the credentials wording: a rate limit is not a claim about what was typed.
+    expect(message.textContent).not.toContain('The address or the password is incorrect.')
+
+    expect(submitButton()).toBeEnabled()
+    expect(emailField()).not.toBeDisabled()
+    expect(passwordField()).not.toBeDisabled()
+  })
+
+  it('does not end an existing session', async () => {
+    fetchMock.mockResolvedValue(problem(429, signInRateLimited))
+
+    renderScreen()
+    client.setQueryDefaults(sessionQueryKey, { gcTime: Infinity })
+    client.setQueryData(sessionQueryKey, { id: 'already-signed-in', display_name: 'Someone Real' })
+    await submit('someone@example.test', 'not-the-password')
+
+    await screen.findByRole('alert')
+    expect(client.getQueryData(sessionQueryKey)).toMatchObject({ id: 'already-signed-in' })
+  })
+})
+
 // ---- Failures that are not refusals -------------------------------------------------------------
 
 describe('when the server cannot be reached', () => {
