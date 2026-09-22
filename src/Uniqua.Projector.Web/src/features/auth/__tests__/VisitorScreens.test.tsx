@@ -97,11 +97,20 @@ describe('a first-time arrival', () => {
     fetchMock.mockResolvedValue(notRecognised())
     renderApp()
 
+    // Landing on the sign-in form is not itself a "switch" — focus stays wherever the browser put
+    // it, not forced onto the heading.
+    await signInButton()
+    expect(screen.getByRole('heading', { name: 'Sign in' })).not.toHaveFocus()
+
     await userEvent.click(await screen.findByRole('button', { name: /no account yet/i }))
     expect(await screen.findByText('Create an account')).toBeInTheDocument()
+    // N-12: switching unmounted the focused toggle and left focus on <body>. Focus now follows
+    // the new screen, landing on its heading.
+    expect(screen.getByRole('heading', { name: 'Create an account' })).toHaveFocus()
 
     await userEvent.click(screen.getByRole('button', { name: /already have an account/i }))
     expect(await signInButton()).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toHaveFocus()
   })
 })
 

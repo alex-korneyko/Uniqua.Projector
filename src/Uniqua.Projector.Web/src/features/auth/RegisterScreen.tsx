@@ -30,9 +30,15 @@ const displayNameMaxLength = 50
 interface RegisterScreenProps {
   /** Shown inside the card, under the form — the way to sign in instead, where it cannot fall below the fold. */
   alternative?: ReactNode
+  /**
+   * True when this screen replaced the other one under the visitor's hands (N-12), so focus
+   * should move to its heading. False on the landing's first mount, where nothing was switched
+   * away from and focus should stay wherever the browser already put it.
+   */
+  autoFocusHeading?: boolean
 }
 
-export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
+export function RegisterScreen({ alternative, autoFocusHeading = false }: RegisterScreenProps = {}) {
   const queryClient = useQueryClient()
 
   const [email, setEmail] = useState('')
@@ -40,9 +46,19 @@ export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
   const [displayName, setDisplayName] = useState('')
   const [refusal, setRefusal] = useState<Refusal | null>(null)
 
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const displayNameRef = useRef<HTMLInputElement>(null)
+
+  // N-12: claim focus on mount, but only when this mount is the result of switching from the
+  // sign-in screen. The landing's first mount leaves focus alone.
+  useEffect(() => {
+    if (autoFocusHeading) {
+      headingRef.current?.focus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, for this mount only
+  }, [])
 
   const register = useMutation({
     mutationFn: registerAccount,
@@ -82,7 +98,9 @@ export function RegisterScreen({ alternative }: RegisterScreenProps = {}) {
     <main className="mx-auto flex min-h-dvh max-w-md items-center p-4">
       <Card className="w-full">
         <CardHeader>
-          <CardTitle>Create an account</CardTitle>
+          <CardTitle ref={headingRef} tabIndex={-1}>
+            Create an account
+          </CardTitle>
           <CardDescription>No invitation needed — this takes one step.</CardDescription>
         </CardHeader>
 

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { createSession } from '@/api/accounts'
 import { Button } from '@/components/ui/button'
@@ -35,14 +35,31 @@ import { sessionQueryKey } from '@/features/auth/useSession'
 interface SignInScreenProps {
   /** Shown inside the card, under the form — the way to create an account instead, where it cannot fall below the fold. */
   alternative?: ReactNode
+  /**
+   * True when this screen replaced the other one under the visitor's hands (N-12), so focus
+   * should move to its heading. False on the landing's first mount, where nothing was switched
+   * away from and focus should stay wherever the browser already put it.
+   */
+  autoFocusHeading?: boolean
 }
 
-export function SignInScreen({ alternative }: SignInScreenProps = {}) {
+export function SignInScreen({ alternative, autoFocusHeading = false }: SignInScreenProps = {}) {
   const queryClient = useQueryClient()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [refusal, setRefusal] = useState<Refusal | null>(null)
+
+  const headingRef = useRef<HTMLHeadingElement>(null)
+
+  // N-12: claim focus on mount, but only when this mount is the result of switching from the
+  // registration screen. The landing's first mount leaves focus alone.
+  useEffect(() => {
+    if (autoFocusHeading) {
+      headingRef.current?.focus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, for this mount only
+  }, [])
 
   const signIn = useMutation({
     mutationFn: createSession,
@@ -60,7 +77,9 @@ export function SignInScreen({ alternative }: SignInScreenProps = {}) {
     <main className="mx-auto flex min-h-dvh max-w-md items-center p-4">
       <Card className="w-full">
         <CardHeader>
-          <CardTitle>Sign in</CardTitle>
+          <CardTitle ref={headingRef} tabIndex={-1}>
+            Sign in
+          </CardTitle>
           <CardDescription>Welcome back.</CardDescription>
         </CardHeader>
 

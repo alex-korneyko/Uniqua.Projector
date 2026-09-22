@@ -16,18 +16,31 @@ import { SignInScreen } from '@/features/auth/SignInScreen'
 export function VisitorScreens() {
   const [screen, setScreen] = useState<'signIn' | 'register'>('signIn')
 
+  // N-12: switching between the two screens unmounts the toggle button that had focus, so focus
+  // falls to <body> unless something claims it. The landing's first mount is not a switch — only
+  // an actual toggle click should move focus, so this tracks that rather than deriving it from
+  // `screen`.
+  const [hasSwitched, setHasSwitched] = useState(false)
+
+  function switchTo(next: 'signIn' | 'register') {
+    setHasSwitched(true)
+    setScreen(next)
+  }
+
   return screen === 'signIn' ? (
     <SignInScreen
+      autoFocusHeading={hasSwitched}
       alternative={
-        <Button variant="ghost" onClick={() => setScreen('register')}>
+        <Button variant="ghost" onClick={() => switchTo('register')}>
           No account yet? Create one
         </Button>
       }
     />
   ) : (
     <RegisterScreen
+      autoFocusHeading={hasSwitched}
       alternative={
-        <Button variant="ghost" onClick={() => setScreen('signIn')}>
+        <Button variant="ghost" onClick={() => switchTo('signIn')}>
           I already have an account
         </Button>
       }
