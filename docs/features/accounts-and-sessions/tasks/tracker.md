@@ -6,7 +6,7 @@
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
 | T1 | Identity account model + identity-schema migration | migration | Alex Korneiko | M | — | done |
-| T2 | Session entity owning the 14-day and 90-day rules | domain | Alex Korneiko | S | — | todo |
+| T2 | Session entity owning the 14-day and 90-day rules | domain | Alex Korneiko | S | — | done |
 | T3 | Account entity, sentinel errors, progressive-delay rule | domain | Alex Korneiko | M | — | todo |
 | T4 | Sessions table migration with its three indexes | migration | Alex Korneiko | S | T1, T2 | todo |
 | T5 | Data-protection key-ring migration | migration | Alex Korneiko | S | T4 | todo |
