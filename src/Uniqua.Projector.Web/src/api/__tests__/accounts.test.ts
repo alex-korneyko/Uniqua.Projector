@@ -130,6 +130,7 @@ describe('a refusal', () => {
     fetchMock.mockResolvedValue(
       jsonResponse(409, {
         code: 'accounts.email_taken',
+        title: 'That address is already registered',
         detail: 'An email address identifies exactly one account.',
         status: 409,
       }),
@@ -145,6 +146,8 @@ describe('a refusal', () => {
     expect((failure as ApiError).code).toBe('accounts.email_taken')
     expect((failure as ApiError).status).toBe(409)
     expect((failure as ApiError).detail).toBe('An email address identifies exactly one account.')
+    // The title is the plain statement AC-03 asks for; dropping it lost exactly that.
+    expect((failure as ApiError).title).toBe('That address is already registered')
   })
 
   it('carries the retry hint when the server sent one', async () => {

@@ -192,6 +192,7 @@ describe('when the address or the name is already taken', () => {
     fetchMock.mockResolvedValue(
       problem(409, {
         code: 'accounts.email_taken',
+        title: 'That address is already registered',
         detail: 'An email address identifies exactly one account.',
       }),
     )
@@ -199,9 +200,10 @@ describe('when the address or the name is already taken', () => {
     renderScreen()
     await fillAndSubmit()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'An email address identifies exactly one account.',
-    )
+    // AC-03: the statement first ("already registered"), then the reason.
+    const message = await screen.findByRole('alert')
+    expect(message).toHaveTextContent(/that address is already registered/i)
+    expect(message).toHaveTextContent('An email address identifies exactly one account.')
     expectEverythingKept()
   })
 
@@ -209,6 +211,7 @@ describe('when the address or the name is already taken', () => {
     fetchMock.mockResolvedValue(
       problem(409, {
         code: 'accounts.display_name_taken',
+        title: 'That display name is taken',
         detail: 'A display name identifies exactly one account to the people who see it.',
       }),
     )
@@ -216,9 +219,7 @@ describe('when the address or the name is already taken', () => {
     renderScreen()
     await fillAndSubmit()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'A display name identifies exactly one account to the people who see it.',
-    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(/that display name is taken/i)
     expectEverythingKept()
     await waitFor(() => expect(displayNameField()).toHaveFocus())
   })
@@ -227,6 +228,7 @@ describe('when the address or the name is already taken', () => {
     fetchMock.mockResolvedValue(
       problem(409, {
         code: 'accounts.email_taken',
+        title: 'That address is already registered',
         detail: 'An email address identifies exactly one account.',
       }),
     )
@@ -246,6 +248,7 @@ describe('when registration is temporarily limited', () => {
     fetchMock.mockResolvedValue(
       problem(429, {
         code: 'accounts.registration_rate_limited',
+        title: 'Registration is temporarily limited',
         detail: 'Too many accounts have been created from here in the past minute.',
         retry_after_seconds: 37,
       }),
@@ -255,14 +258,35 @@ describe('when registration is temporarily limited', () => {
     await fillAndSubmit()
 
     const message = await screen.findByRole('alert')
+    expect(message).toHaveTextContent(/registration is temporarily limited/i)
     expect(message).toHaveTextContent(/37 seconds/)
     expectEverythingKept()
+  })
+
+  it('names the wait once, even when the server already did', async () => {
+    // The contract's own example detail ends in "Try again in 37 seconds." — appending the
+    // client's sentence as well would say it twice.
+    fetchMock.mockResolvedValue(
+      problem(429, {
+        code: 'accounts.registration_rate_limited',
+        title: 'Registration is temporarily limited',
+        detail: 'Too many accounts have been created from here. Try again in 37 seconds.',
+        retry_after_seconds: 37,
+      }),
+    )
+
+    renderScreen()
+    await fillAndSubmit()
+
+    const message = await screen.findByRole('alert')
+    expect(message.textContent?.match(/try again/gi)).toHaveLength(1)
   })
 
   it('still says something useful when the server sent no number', async () => {
     fetchMock.mockResolvedValue(
       problem(429, {
         code: 'accounts.registration_rate_limited',
+        title: 'Registration is temporarily limited',
         detail: 'Too many accounts have been created from here in the past minute.',
       }),
     )
@@ -325,6 +349,7 @@ describe('when something unexpected happens', () => {
     fetchMock.mockResolvedValue(
       problem(403, {
         code: 'accounts.antiforgery_failed',
+        title: 'The request could not be verified',
         detail: 'The request could not be verified as coming from this application.',
       }),
     )
@@ -333,6 +358,7 @@ describe('when something unexpected happens', () => {
     await fillAndSubmit()
 
     const message = await screen.findByRole('alert')
+    expect(message).toHaveTextContent('coming from this application')
     expect(message.textContent).toMatch(/try again/i)
     expectEverythingKept()
   })

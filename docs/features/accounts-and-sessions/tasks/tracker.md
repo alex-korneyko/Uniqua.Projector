@@ -33,7 +33,7 @@
 | T26 | Return the stored address from register and sign-in, declare display_name_invalid, and prove the id is stable across the account's life | ports | Alex Korneiko | S | T22, T24 | done |
 | T27 | Move Api registrations into AddAccountsApi, require TrustedProxies outside Development, and prove a trusted proxy's forwarded address is honoured | wiring | Alex Korneiko | S | T24, T26 | done |
 | T28 | Raise the 48-hour cleanup alert as an error log so sad §7 monitoring can fire | infra | Alex Korneiko | S | — | done |
-| T29 | Render a refusal's title as its statement and its detail as the reason | ui | Alex Korneiko | S | — | todo |
+| T29 | Render a refusal's title as its statement and its detail as the reason | ui | Alex Korneiko | S | — | done |
 | T30 | Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session | ui | Alex Korneiko | S | — | todo |
 | T31 | Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords | ui | Alex Korneiko | S | T29, T30 | todo |
 | T32 | Define the theme tokens the vendored components read | ui | Alex Korneiko | S | — | todo |

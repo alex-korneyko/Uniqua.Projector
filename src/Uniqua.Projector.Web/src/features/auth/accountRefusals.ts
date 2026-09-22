@@ -15,7 +15,9 @@ export interface Refusal {
  *
  * The server's wording is preferred wherever it sent some: it is the contract's, it is the one
  * place refusals are worded, and paraphrasing it here would put the same sentence in two
- * repositories. The local strings exist only for the cases the contract does not describe — a
+ * repositories. The problem's title is the plain statement an acceptance criterion asks for
+ * ("That address is already registered", AC-03) and its detail is the reason, so both are shown,
+ * statement first. The local strings exist only for the cases the contract does not describe — a
  * gateway answering instead of the application, or no answer at all.
  */
 export function describeRefusal(error: unknown): Refusal {
@@ -30,20 +32,20 @@ export function describeRefusal(error: unknown): Refusal {
 
   switch (error.code) {
     case 'accounts.password_invalid':
-      return { message: error.detail ?? 'That password is not usable.', field: 'password' }
+      return { message: statementAndReason(error, 'That password is not usable.'), field: 'password' }
 
     case 'accounts.email_invalid':
-      return { message: error.detail ?? 'That address is not usable.', field: 'email' }
+      return { message: statementAndReason(error, 'That address is not usable.'), field: 'email' }
 
     case 'accounts.email_taken':
-      return { message: error.detail ?? 'That address is already registered.', field: 'email' }
+      return { message: statementAndReason(error, 'That address is already registered.'), field: 'email' }
 
     case 'accounts.display_name_invalid':
-      return { message: error.detail ?? 'That display name is not usable.', field: 'displayName' }
+      return { message: statementAndReason(error, 'That display name is not usable.'), field: 'displayName' }
 
     case 'accounts.display_name_taken':
       return {
-        message: error.detail ?? 'That display name is already taken.',
+        message: statementAndReason(error, 'That display name is already taken.'),
         field: 'displayName',
       }
 
@@ -53,7 +55,7 @@ export function describeRefusal(error: unknown): Refusal {
     case 'accounts.antiforgery_failed':
       // Nothing the visitor typed was wrong, so this is not a message about a field.
       return {
-        message: 'We could not verify that request. Please try again.',
+        message: withRetry(statementAndReason(error, 'We could not verify that request.')),
         field: null,
       }
 
@@ -61,7 +63,7 @@ export function describeRefusal(error: unknown): Refusal {
       // AC-05 / AC-05b: one message, naming neither of the two, and no field — highlighting one
       // would answer the question the wording is careful not to.
       return {
-        message: error.detail ?? 'The address or the password is incorrect.',
+        message: statementAndReason(error, 'The address or the password is incorrect.'),
         field: null,
       }
 
@@ -72,16 +74,51 @@ export function describeRefusal(error: unknown): Refusal {
   }
 }
 
+/**
+ * The title as the statement, then the detail as the reason — or whichever of the two the server
+ * sent. A detail that already begins with the title is shown alone rather than saying it twice.
+ */
+function statementAndReason(error: ApiError, fallback: string): string {
+  const title = error.title?.trim()
+  const detail = error.detail?.trim()
+
+  if (!title) {
+    return detail || fallback
+  }
+
+  if (!detail) {
+    return asSentence(title)
+  }
+
+  return detail.toLowerCase().startsWith(title.toLowerCase())
+    ? detail
+    : `${asSentence(title)} ${detail}`
+}
+
+function asSentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
+/** Adds the plain retry, unless the message already tells the visitor to try again. */
+function withRetry(message: string): string {
+  return /try again/i.test(message) ? message : `${message} Please try again.`
+}
+
 /** AC-01b asks that the visitor be told when they may try again, so the number is shown. */
 function rateLimitMessage(error: ApiError): string {
-  const detail = error.detail ?? 'Registration is temporarily limited from here.'
+  const statement = statementAndReason(error, 'Registration is temporarily limited from here.')
+
+  if (/try again/i.test(statement)) {
+    // The server already named the wait; a second sentence would say it twice.
+    return statement
+  }
 
   if (error.retryAfterSeconds === undefined || error.retryAfterSeconds <= 0) {
     // The contract says the number is present on this code, but a client that printed
     // "try again in undefined seconds" when it was not would be worse than one that says less.
-    return `${detail} Please try again shortly.`
+    return `${statement} Please try again shortly.`
   }
 
   const unit = error.retryAfterSeconds === 1 ? 'second' : 'seconds'
-  return `${detail} Try again in ${error.retryAfterSeconds} ${unit}.`
+  return `${statement} Try again in ${error.retryAfterSeconds} ${unit}.`
 }

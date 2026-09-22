@@ -28,19 +28,24 @@ const antiforgeryHeaderName = 'X-XSRF-TOKEN'
 export class ApiError extends Error {
   readonly status: number
   readonly code: string | undefined
+  /** The plain statement of what happened — "That address is already registered". */
+  readonly title: string | undefined
+  /** Why, in the contract's words — "An email address identifies exactly one account." */
   readonly detail: string | undefined
   readonly retryAfterSeconds: number | undefined
 
   constructor(
     status: number,
     code: string | undefined,
+    title: string | undefined,
     detail: string | undefined,
     retryAfterSeconds: number | undefined,
   ) {
-    super(detail ?? `The request failed with status ${status}.`)
+    super(detail ?? title ?? `The request failed with status ${status}.`)
     this.name = 'ApiError'
     this.status = status
     this.code = code
+    this.title = title
     this.detail = detail
     this.retryAfterSeconds = retryAfterSeconds
   }
@@ -129,6 +134,7 @@ async function asApiError(response: Response): Promise<ApiError> {
   try {
     const problem = (await response.json()) as {
       code?: string
+      title?: string
       detail?: string
       retry_after_seconds?: number
     }
@@ -136,11 +142,12 @@ async function asApiError(response: Response): Promise<ApiError> {
     return new ApiError(
       response.status,
       problem.code,
+      problem.title,
       problem.detail,
       problem.retry_after_seconds,
     )
   } catch {
-    return new ApiError(response.status, undefined, undefined, undefined)
+    return new ApiError(response.status, undefined, undefined, undefined, undefined)
   }
 }
 
