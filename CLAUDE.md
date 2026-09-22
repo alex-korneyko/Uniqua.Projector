@@ -97,3 +97,7 @@ Every dependency must be MIT, Apache-2.0, or BSD-style. Do not introduce a GPL, 
 otherwise copyleft component into this repository. If a copyleft library is the obvious technical
 fit, say so explicitly and propose a permissive or commercial alternative instead of adding it.
 Package versions are managed centrally in `Directory.Packages.props`.
+
+One recorded exception: `lightningcss` (MPL-2.0), a build-time tool of Vite and Tailwind that is never
+shipped (`docs/adr/0011`). Its scope is exactly that — file-level weak copyleft in a build-time tool this
+repository neither modifies nor ships — and it is not a precedent for anything linked or distributed.

@@ -35,8 +35,11 @@ frontend: "react 19 + vite + tailwind + shadcn/ui"
   and `npm --prefix src/Uniqua.Projector.Web run lint`. The solution file is `.slnx` — the XML
   solution format `dotnet new sln` produces by default on .NET 10 — not the classic `.sln` this map
   assumed before scaffold. Package versions are centralised in `Directory.Packages.props`.
-- Licensing: every dependency above is permissively licensed (MIT / Apache-2.0 / BSD-style). No
-  copyleft component is part of this foundation, and none may be introduced without replacing it.
+- Licensing: every dependency above is permissively licensed (MIT / Apache-2.0 / BSD-style), with one
+  recorded exception: `lightningcss` (MPL-2.0), a build-time CSS tool that Vite 8 and `@tailwindcss/vite`
+  depend on and that is never shipped — see
+  [ADR 0011](adr/0011-accept-lightningcss-as-a-build-time-licence-exception.md). No other copyleft
+  component is part of this foundation, and none may be introduced without replacing it.
 
 ## C4 — system as it is
 
