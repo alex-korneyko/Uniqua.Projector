@@ -1,4 +1,5 @@
 using Uniqua.Projector.Api;
+using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Application;
 using Uniqua.Projector.Infrastructure;
 
@@ -6,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Each layer is wired through its own AddXxx extension; this file names no type from inside a layer.
 builder.Services.AddProblemDetailsHandling();
+builder.Services.AddAntiforgeryGuard();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
@@ -13,6 +15,10 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+
+// Every state-changing request must prove it came from this application, before it reaches any
+// endpoint that could act on it (sad.md §8).
+app.UseAntiforgeryGuard();
 
 // Serves the built React client from wwwroot, so client and API share one origin — the cookie
 // authentication decision in docs/adr/ depends on this.

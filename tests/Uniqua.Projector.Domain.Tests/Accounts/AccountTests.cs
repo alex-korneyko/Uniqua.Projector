@@ -148,14 +148,14 @@ public sealed class AccountTests
     }
 
     [Fact]
-    public void The_credentials_refusal_names_neither_the_address_nor_the_password()
+    public void The_credentials_refusal_commits_to_neither_the_address_nor_the_password()
     {
-        // AC-05 / AC-05b: one message for a wrong password and for an unknown address, so the
-        // refusal cannot be used to discover which addresses are registered.
-        var detail = AccountErrors.CredentialsInvalid.Detail.ToLowerInvariant();
+        // AC-05: "says only that the address or the password is incorrect, without revealing which
+        // of the two was wrong". Naming both is how it reveals neither, so the test is that the
+        // sentence offers them as alternatives and never settles on one.
+        var detail = AccountErrors.CredentialsInvalid.Detail;
 
-        Assert.DoesNotContain("password", detail);
-        Assert.DoesNotContain("address", detail);
-        Assert.DoesNotContain("email", detail);
+        Assert.Equal("The address or the password is incorrect.", detail);
+        Assert.Contains(" or ", detail, StringComparison.Ordinal);
     }
 }

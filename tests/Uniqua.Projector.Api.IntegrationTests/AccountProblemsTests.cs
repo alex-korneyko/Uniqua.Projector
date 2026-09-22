@@ -1,0 +1,140 @@
+using System.Text.RegularExpressions;
+using Uniqua.Projector.Api;
+using Uniqua.Projector.Domain.Accounts;
+
+namespace Uniqua.Projector.Api.IntegrationTests;
+
+/// <summary>
+/// T11 — the wording table. These assertions are the contract, copied from the examples in
+/// contracts/openapi.yaml by hand on purpose: if someone edits a title or a detail in the
+/// application, this test is what notices that the published contract no longer describes what
+/// ships. No application boot is needed, so the whole table is checked in milliseconds.
+/// </summary>
+public sealed class AccountProblemsTests
+{
+    /// <summary>The contract's own pattern for the `code` extension member.</summary>
+    private static readonly Regex CodePattern = new(@"^[a-z_]+\.[a-z_]+$");
+
+    [Theory]
+    // code, status, title, detail — each row transcribed from a contracts/openapi.yaml example.
+    [InlineData("accounts.password_invalid", 400,
+        "The password is not usable",
+        "A password must be at least 8 characters long.")]
+    [InlineData("accounts.email_invalid", 400,
+        "The address is not usable",
+        "That is not an email address we can use.")]
+    [InlineData("accounts.email_taken", 409,
+        "That address is already registered",
+        "An email address identifies exactly one account.")]
+    [InlineData("accounts.display_name_taken", 409,
+        "That display name is taken",
+        "A display name identifies exactly one account to the people who see it.")]
+    [InlineData("accounts.credentials_invalid", 401,
+        "The address or the password is incorrect",
+        "The address or the password is incorrect.")]
+    [InlineData("accounts.session_not_recognised", 401,
+        "Not signed in",
+        "Sign in to continue.")]
+    [InlineData("accounts.antiforgery_failed", 403,
+        "The request could not be verified",
+        "The request could not be verified as coming from this application.")]
+    [InlineData("accounts.registration_rate_limited", 429,
+        "Registration is temporarily limited",
+        "Too many accounts have been created from here in the past minute.")]
+    public void Each_contract_code_is_published_exactly_as_the_contract_states(
+        string code, int status, string title, string detail)
+    {
+        var problem = AccountProblems.For(code);
+
+        Assert.Equal(status, problem.Status);
+        Assert.Equal(title, problem.Title);
+        Assert.StartsWith(detail, problem.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_table_covers_every_code_the_contract_declares_and_nothing_undeclared()
+    {
+        string[] declared =
+        [
+            "accounts.password_invalid",
+            "accounts.email_invalid",
+            "accounts.email_taken",
+            "accounts.display_name_taken",
+            "accounts.credentials_invalid",
+            "accounts.session_not_recognised",
+            "accounts.antiforgery_failed",
+            "accounts.registration_rate_limited",
+            // Not in contracts/openapi.yaml — see AccountProblems for the finding raised to the
+            // api stage. The domain needs a display-name-shape refusal and the contract has none.
+            "accounts.display_name_invalid",
+        ];
+
+        Assert.Equal(declared.Order(), AccountProblems.Codes.Order());
+    }
+
+    [Fact]
+    public void Every_code_matches_the_contracts_pattern()
+    {
+        Assert.All(AccountProblems.Codes, code => Assert.Matches(CodePattern, code));
+    }
+
+    [Fact]
+    public void Every_problem_type_is_an_absolute_uri_naming_its_own_code()
+    {
+        Assert.All(AccountProblems.Codes, code =>
+        {
+            var problem = AccountProblems.For(code);
+            Assert.True(Uri.IsWellFormedUriString(problem.Type, UriKind.Absolute), problem.Type);
+            // accounts.email_taken -> .../problems/accounts/email-taken
+            var expectedSuffix = "/problems/" + code.Replace('.', '/').Replace('_', '-');
+            Assert.EndsWith(expectedSuffix, problem.Type, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
+    public void The_wording_a_domain_sentinel_carries_is_the_wording_that_ships()
+    {
+        // The sentence exists once. Domain owns it (so a use case can state its own refusal) and
+        // this table owns the HTTP projection around it; this assertion is what stops the two
+        // drifting into two different sentences for one refusal.
+        AccountError[] sentinels =
+        [
+            AccountErrors.PasswordInvalid,
+            AccountErrors.EmailInvalid,
+            AccountErrors.EmailTaken,
+            AccountErrors.DisplayNameTaken,
+            AccountErrors.CredentialsInvalid,
+            AccountErrors.DisplayNameInvalid,
+        ];
+
+        Assert.All(sentinels, sentinel =>
+            Assert.Equal(sentinel.Detail, AccountProblems.For(sentinel.Code).Detail));
+    }
+
+    [Fact]
+    public void The_two_sign_in_refusals_are_one_entry_so_they_cannot_read_differently()
+    {
+        // AC-05 (wrong password) and AC-05b (unregistered address) are the same refusal. They are
+        // not two table rows that happen to match — there is one row, so nothing can make them
+        // diverge later.
+        Assert.Same(
+            AccountProblems.For("accounts.credentials_invalid"),
+            AccountProblems.For("accounts.credentials_invalid"));
+    }
+
+    [Fact]
+    public void Only_the_rate_limit_refusal_carries_a_retry_hint()
+    {
+        Assert.All(
+            AccountProblems.Codes.Where(code => code != "accounts.registration_rate_limited"),
+            code => Assert.False(AccountProblems.For(code).CarriesRetryAfter));
+
+        Assert.True(AccountProblems.For("accounts.registration_rate_limited").CarriesRetryAfter);
+    }
+
+    [Fact]
+    public void An_unknown_code_is_a_programming_error_rather_than_a_silent_generic_problem()
+    {
+        Assert.Throws<KeyNotFoundException>(() => AccountProblems.For("accounts.not_a_real_code"));
+    }
+}

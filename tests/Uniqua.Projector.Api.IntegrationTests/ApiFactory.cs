@@ -20,6 +20,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     private readonly MsSqlContainer _database = new MsSqlBuilder(SqlServerImage).Build();
 
+    public ApiFactory()
+    {
+        // Every cookie this application sets is Secure, and the antiforgery system refuses to
+        // issue a token over a plain request rather than quietly downgrading. So the harness
+        // speaks https: the test server performs no real TLS, but Request.IsHttps is true, which
+        // is what the production policy is actually asserting. The alternative — relaxing the
+        // policy to SameAsRequest — would make the tests pass by weakening what ships.
+        ClientOptions.BaseAddress = new Uri("https://localhost");
+    }
+
     /// <summary>
     /// The container's connection string, so a test can interrogate the physical schema directly.
     /// A migration's promise is about the shape of the store, and the EF Core model that produced
