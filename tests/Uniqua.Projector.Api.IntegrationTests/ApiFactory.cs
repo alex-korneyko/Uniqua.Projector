@@ -57,4 +57,19 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("ConnectionStrings:Default", _database.GetConnectionString());
         builder.UseEnvironment("Testing");
     }
+
+    /// <summary>
+    /// A second, wholly separate application over an existing database — a redeploy staged inside
+    /// a test. It shares nothing with the instance that started the container except the
+    /// connection string, which is the point: anything it can still read is something that
+    /// genuinely lives in the store rather than in the first process.
+    /// </summary>
+    public sealed class Replacement(string connectionString) : WebApplicationFactory<Program>
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseSetting("ConnectionStrings:Default", connectionString);
+            builder.UseEnvironment("Testing");
+        }
+    }
 }

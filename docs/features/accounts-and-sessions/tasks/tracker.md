@@ -9,7 +9,7 @@
 | T2 | Session entity owning the 14-day and 90-day rules | domain | Alex Korneiko | S | — | done |
 | T3 | Account entity, sentinel errors, progressive-delay rule | domain | Alex Korneiko | M | — | done |
 | T4 | Sessions table migration with its three indexes | migration | Alex Korneiko | S | T1, T2 | done |
-| T5 | Data-protection key-ring migration | migration | Alex Korneiko | S | T4 | todo |
+| T5 | Data-protection key-ring migration | migration | Alex Korneiko | S | T4 | done |
 | T6 | Session ports + EF Core implementation | infra | Alex Korneiko | M | T2, T4 | todo |
 | T7 | Identity behind IAccountStore, lockout off, hashing tuned | infra | Alex Korneiko | M | T1, T3 | todo |
 | T8 | RegisterAccount use case | app | Alex Korneiko | M | T3, T6, T7 | todo |
