@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Uniqua.Projector.Domain.Accounts;
 using Uniqua.Projector.Infrastructure.Accounts;
 
 namespace Uniqua.Projector.Infrastructure;
@@ -13,6 +14,9 @@ namespace Uniqua.Projector.Infrastructure;
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     : IdentityDbContext<ProjectorUser, IdentityRole<Guid>, Guid>(options)
 {
+    /// <summary>The session records ADR 0008 chose over self-contained cookie tickets.</summary>
+    public DbSet<Session> Sessions => Set<Session>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
