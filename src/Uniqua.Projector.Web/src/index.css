@@ -16,8 +16,11 @@
   --color-card: oklch(1 0 0);
   --color-card-foreground: oklch(0.145 0 0);
   --color-destructive: oklch(0.577 0.245 27.325);
-  --color-input: oklch(0.922 0 0);
-  --color-ring: oklch(0.708 0 0);
+  /* Darkened from the initial 0.922/0.708 ramp picks (about 1.26:1 / 2.6:1 against
+     --color-background) to clear WCAG 1.4.11's 3:1 floor for a non-text UI component
+     (review-2026-09-22-2 N-13; checked by src/test/themeTokens.test.ts). */
+  --color-input: oklch(0.62 0 0);
+  --color-ring: oklch(0.55 0 0);
   --radius: 0.5rem;
 }
 
