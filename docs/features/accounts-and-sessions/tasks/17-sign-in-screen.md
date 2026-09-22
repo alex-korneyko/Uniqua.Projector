@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T17 — Build the sign-in screen with one indistinguishable refusal

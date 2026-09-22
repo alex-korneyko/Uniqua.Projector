@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T10 — Implement the SignOut use case and declare the session-revocation notifier port

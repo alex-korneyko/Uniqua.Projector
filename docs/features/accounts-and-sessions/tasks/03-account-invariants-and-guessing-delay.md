@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T3 — Build the Account entity, its sentinel errors and the progressive-delay rule

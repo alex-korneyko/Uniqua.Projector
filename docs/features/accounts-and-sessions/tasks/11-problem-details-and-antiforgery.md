@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T11 — Set up the single ProblemDetails handler and the antiforgery requirement

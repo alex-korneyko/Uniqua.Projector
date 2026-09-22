@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-09, N-10"
-status: "todo"
+status: "done"
 ---
 
 # T37 — Seed the failure compare-and-set with the count already read, and return the count actually written under contention

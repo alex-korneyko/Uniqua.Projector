@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T13 — Expose POST /api/v1/accounts with the per-source registration rate limit

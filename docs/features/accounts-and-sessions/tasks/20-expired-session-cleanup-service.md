@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T20 — Add the expired-session cleanup hosted service with its startup and daily runs

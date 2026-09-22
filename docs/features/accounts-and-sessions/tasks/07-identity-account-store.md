@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T7 — Put ASP.NET Core Identity behind IAccountStore, with lockout off and hashing tuned

@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-11"
-status: "todo"
+status: "done"
 ---
 
 # T42 — Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal

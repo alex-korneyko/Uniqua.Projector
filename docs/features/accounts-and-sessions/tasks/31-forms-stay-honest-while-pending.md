@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-20, R-21, R-22"
-status: "todo"
+status: "done"
 ---
 
 # T31 — Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords

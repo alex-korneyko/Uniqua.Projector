@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-19"
-status: "todo"
+status: "done"
 ---
 
 # T32 — Define the theme tokens the vendored components read

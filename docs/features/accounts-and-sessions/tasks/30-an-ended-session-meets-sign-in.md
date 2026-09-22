@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-08, R-09"
-status: "todo"
+status: "done"
 ---
 
 # T30 — Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session

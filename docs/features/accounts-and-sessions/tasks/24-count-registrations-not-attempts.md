@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-11, R-25"
-status: "todo"
+status: "done"
 ---
 
 # T24 — Count only accepted registrations against the per-source limit and prune stale sources

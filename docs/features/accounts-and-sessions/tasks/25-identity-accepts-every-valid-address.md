@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-14"
-status: "todo"
+status: "done"
 ---
 
 # T25 — Accept every address MailAddress accepts and stop mapping unexpected Identity errors to a uniqueness refusal

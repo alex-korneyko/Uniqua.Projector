@@ -49,7 +49,7 @@
 | T42 | Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal | tests | Alex Korneiko | S | T35, T37, T38 | done |
 | T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | done |
 | T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | done |
-| T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | todo |
+| T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | done |
 
 **Total:** 45 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review), ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).
 

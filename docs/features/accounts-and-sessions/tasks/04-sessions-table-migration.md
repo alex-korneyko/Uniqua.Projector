@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T4 — Map the Session entity and generate the sessions-table migration with its three indexes

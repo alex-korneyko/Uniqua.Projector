@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-05"
-status: "todo"
+status: "done"
 ---
 
 # T39 — Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves

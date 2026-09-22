@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-08"
-status: "todo"
+status: "done"
 ---
 
 # T41 — Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert

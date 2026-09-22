@@ -20,7 +20,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-01"
-status: "todo"
+status: "done"
 ---
 
 # T35 — Cap failed sign-ins per request source, counted before the verification, so hanging up no longer escapes the AC-12 delay

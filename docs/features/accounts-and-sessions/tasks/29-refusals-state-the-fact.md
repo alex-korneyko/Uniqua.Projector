@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-10"
-status: "todo"
+status: "done"
 ---
 
 # T29 — Render a refusal's title as its statement and its detail as the reason

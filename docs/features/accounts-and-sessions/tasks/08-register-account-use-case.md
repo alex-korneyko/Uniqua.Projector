@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T8 — Implement the RegisterAccount use case: create the account and open its session in one step

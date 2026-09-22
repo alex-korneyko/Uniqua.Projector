@@ -14,3 +14,6 @@ src/Uniqua.Projector.Api/wwwroot/
 
 # Per-machine settings (appsettings.{Environment}.{MachineName}.json) stay on the machine
 src/Uniqua.Projector.Api/appsettings.*.*.json
+
+# Crash dumps written by Git for Windows tools (grep.exe.stackdump and the like)
+*.stackdump

@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T6 — Declare the session ports and implement them over EF Core

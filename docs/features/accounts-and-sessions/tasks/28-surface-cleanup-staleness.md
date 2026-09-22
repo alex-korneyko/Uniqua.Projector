@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-26"
-status: "todo"
+status: "done"
 ---
 
 # T28 — Raise the 48-hour cleanup alert as an error log so sad §7 monitoring can fire

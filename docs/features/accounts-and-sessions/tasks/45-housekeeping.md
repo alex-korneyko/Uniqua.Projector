@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-14"
-status: "todo"
+status: "done"
 ---
 
 # T45 — Remove the tracked crash dump and bring every task file status in line with the tracker

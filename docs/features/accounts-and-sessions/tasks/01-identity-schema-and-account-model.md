@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T1 — Declare the Identity account model and generate the identity-schema migration

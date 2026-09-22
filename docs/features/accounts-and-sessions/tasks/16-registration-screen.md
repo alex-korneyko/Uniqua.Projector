@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T16 — Build the registration screen with every refusal state the contract can return

@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-03, N-04, N-07"
-status: "todo"
+status: "done"
 ---
 
 # T40 — Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question

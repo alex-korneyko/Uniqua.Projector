@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T12 — Recognise a session on every request: the authentication handler, the cookie and the key ring

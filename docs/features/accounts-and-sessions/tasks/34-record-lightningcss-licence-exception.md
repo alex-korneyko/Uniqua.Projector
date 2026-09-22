@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-29"
-status: "todo"
+status: "done"
 ---
 
 # T34 — Record lightningcss (MPL-2.0, build-time only) as a licence exception

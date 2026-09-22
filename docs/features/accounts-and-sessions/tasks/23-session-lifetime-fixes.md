@@ -14,7 +14,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-06, R-07"
-status: "todo"
+status: "done"
 ---
 
 # T23 — Make the session cookie persistent and add the activity-stamp slack after the 14 days, not before

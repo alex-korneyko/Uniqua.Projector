@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T18 — Write the three quality-scenario test suites, including the anti-lockout regression

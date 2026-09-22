@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-01 (UI half)"
-status: "todo"
+status: "done"
 ---
 
 # T36 — Render the sign-in-rate-limited refusal on the sign-in screen with its statement and wait

@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-04"
-status: "todo"
+status: "done"
 ---
 
 # T22 — Hold refusals for unregistered addresses on the same curve, so the wait does not reveal registration

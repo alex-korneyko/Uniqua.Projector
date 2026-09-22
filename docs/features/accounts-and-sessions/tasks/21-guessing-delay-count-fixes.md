@@ -18,7 +18,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-01, R-02, R-03, R-05"
-status: "todo"
+status: "done"
 ---
 
 # T21 — Serve the AC-12 delay from the attempt being made, reset the stored count after the quiet period, and record a failure before waiting

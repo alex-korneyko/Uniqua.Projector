@@ -16,7 +16,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-02, N-06"
-status: "todo"
+status: "done"
 ---
 
 # T38 — Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem

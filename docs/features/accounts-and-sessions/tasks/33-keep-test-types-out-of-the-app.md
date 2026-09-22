@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-28"
-status: "todo"
+status: "done"
 ---
 
 # T33 — Type-check tests in their own program and drop vitest globals

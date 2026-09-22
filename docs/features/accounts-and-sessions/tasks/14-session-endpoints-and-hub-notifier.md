@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T14 — Expose the sign-in and sign-out endpoints and the Api-side revocation notifier

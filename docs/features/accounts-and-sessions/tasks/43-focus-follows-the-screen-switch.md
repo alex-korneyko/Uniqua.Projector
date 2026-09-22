@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-12"
-status: "todo"
+status: "done"
 ---
 
 # T43 — Move keyboard focus to the new form when switching between sign-in and registration

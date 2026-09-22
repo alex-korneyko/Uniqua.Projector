@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 — R-15, R-16"
-status: "todo"
+status: "done"
 ---
 
 # T26 — Return the stored address from register and sign-in, declare display_name_invalid, and prove the id is stable across the account's life

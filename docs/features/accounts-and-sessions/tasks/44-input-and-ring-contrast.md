@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-22 (re-review) — N-13"
-status: "todo"
+status: "done"
 ---
 
 # T44 — Darken the input border and focus-ring tokens to at least 3:1 against the background

@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
+status: "done"
 ---
 
 # T15 — Build the web API client, the session bootstrap and the signed-in shell with sign-out
