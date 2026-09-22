@@ -9,4 +9,11 @@ namespace Uniqua.Projector.Application.Accounts.Ports;
 public interface IClock
 {
     DateTimeOffset UtcNow { get; }
+
+    /// <summary>
+    /// Waits. It belongs on this port for the same reason the present does: AC-12's delay reaches
+    /// 30 seconds, and a test that proved it by actually waiting would be a test nobody runs.
+    /// Asking the port to wait lets a test assert the duration that was requested.
+    /// </summary>
+    Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken);
 }

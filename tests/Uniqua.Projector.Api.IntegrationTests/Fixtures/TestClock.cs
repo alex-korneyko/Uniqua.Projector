@@ -11,7 +11,26 @@ public sealed class TestClock : IClock
 {
     private DateTimeOffset _now = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
+    private readonly List<TimeSpan> _delays = [];
+
     public DateTimeOffset UtcNow => _now;
+
+    /// <summary>
+    /// Every delay the application asked for, in order. The wait is recorded rather than served,
+    /// so a test can assert that the 10th consecutive failure was held for 30 seconds without
+    /// spending 30 seconds finding out.
+    /// </summary>
+    public IReadOnlyList<TimeSpan> RequestedDelays => _delays;
+
+    public TimeSpan LongestRequestedDelay => _delays.Count is 0 ? TimeSpan.Zero : _delays.Max();
+
+    public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+    {
+        _delays.Add(duration);
+        return Task.CompletedTask;
+    }
+
+    public void ClearRequestedDelays() => _delays.Clear();
 
     /// <summary>Puts the clock at an instant.</summary>
     public void Set(DateTimeOffset now) => _now = now;
@@ -20,5 +39,10 @@ public sealed class TestClock : IClock
     public DateTimeOffset Advance(TimeSpan by) => _now += by;
 
     /// <summary>Returns the clock to its starting instant, so one test cannot skew the next.</summary>
-    public void Reset() => _now = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+    public void Reset()
+    {
+        _delays.Clear();
+        _now = new DateTimeOffset(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
+    }
+
 }

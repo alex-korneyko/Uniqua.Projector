@@ -237,4 +237,7 @@ internal sealed class DummyCredential(IOptions<PasswordHasherOptions> options)
 internal sealed class SystemClock : IClock
 {
     public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+
+    public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken) =>
+        duration <= TimeSpan.Zero ? Task.CompletedTask : Task.Delay(duration, cancellationToken);
 }
