@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -59,7 +60,25 @@ internal sealed class IdentityAccountStore(
             LockoutEnabled = false,
         };
 
-        var created = await users.CreateAsync(user, password);
+        IdentityResult created;
+        try
+        {
+            created = await users.CreateAsync(user, password);
+        }
+        catch (DbUpdateException failure) when (UniquenessRefusal(failure) is { } refusal)
+        {
+            // The probes in the use case can be stale: two visitors submitting the same address at
+            // once both pass them, and Identity's own validators pass too, because they probe the
+            // same way. The unique index is the only authority that cannot be raced, so its
+            // refusal is translated into the error the probe would have returned rather than
+            // being allowed to surface as a database failure.
+            logger.LogInformation(
+                "module=accounts event=account_creation_refused reason={Reason} source=unique_index",
+                refusal.Code);
+
+            return Result<StoredAccount, AccountError>.Failure(refusal);
+        }
+
         if (created.Succeeded)
         {
             return Result<StoredAccount, AccountError>.Success(Project(user));
@@ -162,6 +181,30 @@ internal sealed class IdentityAccountStore(
         user.DisplayName,
         user.AccessFailedCount,
         user.LastFailedAttemptAt);
+
+    /// <summary>
+    /// Which uniqueness rule the database refused on, or <c>null</c> if the failure was something
+    /// else entirely and must not be swallowed. The index name is what distinguishes them, since
+    /// both violations arrive as the same SQL Server error number.
+    /// </summary>
+    private static AccountError? UniquenessRefusal(DbUpdateException failure)
+    {
+        // 2601 duplicate key in a unique index, 2627 unique constraint violation.
+        if (failure.InnerException is not SqlException { Number: 2601 or 2627 } violation)
+        {
+            return null;
+        }
+
+        if (violation.Message.Contains("DisplayNameIndex", StringComparison.Ordinal))
+        {
+            return AccountErrors.DisplayNameTaken;
+        }
+
+        return violation.Message.Contains("EmailIndex", StringComparison.Ordinal)
+            || violation.Message.Contains("UserNameIndex", StringComparison.Ordinal)
+                ? AccountErrors.EmailTaken
+                : null;
+    }
 
     private static bool IsDuplicateEmail(IdentityError error) =>
         error.Code is nameof(IdentityErrorDescriber.DuplicateEmail)

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Uniqua.Projector.Application.Accounts;
 
 namespace Uniqua.Projector.Application;
 
@@ -10,7 +11,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
-        // Use cases are registered here as features land.
+        services.AddScoped<RegisterAccount>();
+
         return services;
     }
 }

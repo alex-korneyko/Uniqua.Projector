@@ -90,6 +90,8 @@ public static class DependencyInjection
         // One implementation, registered against both ports: they are two views of one table, and
         // keeping them separate interfaces is what stops the recognition path acquiring the write
         // path's needs.
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
+
         services.AddScoped<SessionStore>();
         services.AddScoped<ISessionReader>(services => services.GetRequiredService<SessionStore>());
         services.AddScoped<ISessionStore>(services => services.GetRequiredService<SessionStore>());

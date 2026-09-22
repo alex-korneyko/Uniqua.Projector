@@ -12,7 +12,7 @@
 | T5 | Data-protection key-ring migration | migration | Alex Korneiko | S | T4 | done |
 | T6 | Session ports + EF Core implementation | infra | Alex Korneiko | M | T2, T4 | done |
 | T7 | Identity behind IAccountStore, lockout off, hashing tuned | infra | Alex Korneiko | M | T1, T3 | done |
-| T8 | RegisterAccount use case | app | Alex Korneiko | M | T3, T6, T7 | todo |
+| T8 | RegisterAccount use case | app | Alex Korneiko | M | T3, T6, T7 | done |
 | T9 | SignIn use case with the progressive delay | app | Alex Korneiko | M | T3, T6, T7 | todo |
 | T10 | SignOut use case + revocation port | app | Alex Korneiko | S | T6 | todo |
 | T11 | ProblemDetails handler + antiforgery | wiring | Alex Korneiko | S | — | done |
