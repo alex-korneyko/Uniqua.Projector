@@ -24,7 +24,7 @@
 | T17 | Sign-in screen, one indistinguishable refusal | ui | Alex Korneiko | S | T15 | todo |
 | T18 | Three quality-scenario suites + anti-lockout regression | tests | Alex Korneiko | M | T9, T12, T13, T14 | todo |
 | T19 | The four session rules, written down | docs | Alex Korneiko | S | T12, T14 | todo |
-| T20 | Expired-session cleanup hosted service | infra | Alex Korneiko | S | T4, T6 | todo |
+| T20 | Expired-session cleanup hosted service | infra | Alex Korneiko | S | T4, T6 | done |
 
 **Total:** 20 tasks, ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).
 

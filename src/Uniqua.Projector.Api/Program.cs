@@ -54,6 +54,12 @@ builder.Services.AddSingleton<RegistrationRateLimit>();
 
 // Registered BEFORE AddApplication, whose own registration is a TryAdd — so this is the one that
 // wins and the no-op default stands down without that file having to know this one exists.
+// A failing sweep must never take the application down with it, which is why the service swallows
+// its own failures rather than relying on the host to be forgiving.
+builder.Services.AddSingleton<ExpiredSessionCleanupService>();
+builder.Services.AddHostedService(
+    provider => provider.GetRequiredService<ExpiredSessionCleanupService>());
+
 builder.Services.AddSingleton<HubSessionRevocationNotifier>();
 builder.Services.AddSingleton<ISessionRevocationNotifier>(
     provider => provider.GetRequiredService<HubSessionRevocationNotifier>());
