@@ -1,0 +1,109 @@
+using Uniqua.Projector.Application.Accounts;
+
+namespace Uniqua.Projector.Api.Accounts;
+
+/// <summary>
+/// The account and session endpoints. Each one translates: it reads the request, calls a use case,
+/// and turns the outcome into the contract's response. No endpoint in this file decides what is
+/// legal and none builds an error body — the wording table in
+/// <see cref="AccountProblems"/> is the only thing that shapes a refusal (sad §8).
+/// </summary>
+public static class AccountEndpoints
+{
+    public static IEndpointRouteBuilder MapAccountEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapCurrentAccount();
+
+        endpoints.MapPost("/api/v1/accounts", async (
+            RegisterAccountRequest request,
+            HttpContext context,
+            RegisterAccount register,
+            RegistrationRateLimit limit,
+            ILogger<RegistrationRateLimit> logger,
+            CancellationToken cancellationToken) =>
+        {
+            var source = RequestSource.Of(context, logger);
+
+            // Before the use case, so a refused registration cannot have touched the store — which
+            // is flow 3's postcondition of "no account, no session, no counter".
+            var decision = limit.Check(source);
+            if (!decision.IsPermitted)
+            {
+                // sad §7 asks for the source on this line. The submitted address is never logged.
+                logger.LogWarning(
+                    "module=accounts event=registration_rate_limited source={Source}", source);
+
+                await context.WriteAccountProblemAsync(
+                    "accounts.registration_rate_limited", decision.RetryAfterSeconds);
+                return;
+            }
+
+            var result = await register.ExecuteAsync(
+                request.Email ?? string.Empty,
+                request.Password ?? string.Empty,
+                request.DisplayName ?? string.Empty,
+                cancellationToken);
+
+            if (!result.IsSuccess)
+            {
+                await context.WriteAccountProblemAsync(result.Error!);
+                return;
+            }
+
+            // AC-01: the session is carried back immediately, so nothing asks them to sign in.
+            SessionCookie.Issue(context, result.Value.SessionId);
+
+            context.Response.StatusCode = StatusCodes.Status201Created;
+            await context.Response.WriteAsJsonAsync(
+                new AccountView(
+                    result.Value.AccountId, request.Email ?? string.Empty, result.Value.DisplayName),
+                cancellationToken);
+        })
+        // security: [] — the one endpoint a stranger has to be able to reach.
+        .AllowAnonymous()
+        .WithName("registerAccount");
+
+        return endpoints;
+    }
+}
+
+/// <summary>The registration body, exactly as the contract's RegisterAccountRequest states it.</summary>
+/// <param name="Email">Normalised by the application; the normalised form carries the unique index.</param>
+/// <param name="Password">Bounded by the acceptance criteria, not by a column. Only the hash is stored.</param>
+/// <param name="DisplayName">What other board members see (AC-11).</param>
+public sealed record RegisterAccountRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("email")] string? Email,
+    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password,
+    [property: System.Text.Json.Serialization.JsonPropertyName("display_name")] string? DisplayName);
+
+/// <summary>
+/// Where a request came from, for the purpose of rate-limiting it.
+/// </summary>
+public static class RequestSource
+{
+    /// <summary>
+    /// The key AC-01b's limit counts against.
+    /// </summary>
+    /// <remarks>
+    /// The forwarded headers middleware has already decided whether to believe a proxy's report:
+    /// it rewrites <c>RemoteIpAddress</c> only for a request that arrived from a configured proxy,
+    /// and leaves the connection's own address otherwise. So reading the connection address here
+    /// is exactly "the proxy's report only when the request came from the proxy" — anyone else
+    /// presenting a forwarded header is ignored, without which the limit would be decorative.
+    /// </remarks>
+    public static string Of(HttpContext context, ILogger logger)
+    {
+        if (context.Connection.RemoteIpAddress is { } address)
+        {
+            return address.ToString();
+        }
+
+        // Every visitor then shares one key, which spec §6.1 names as a failure mode rather than a
+        // detail — so it is said loudly instead of passed over.
+        logger.LogError(
+            "module=accounts event=request_source_unknown "
+            + "consequence=registration_limit_shared_by_all_callers");
+
+        return "unknown";
+    }
+}

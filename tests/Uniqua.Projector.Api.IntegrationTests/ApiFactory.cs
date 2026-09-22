@@ -79,6 +79,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
             // EF Core picks up interceptors registered in the application's service provider.
             services.AddSingleton<IInterceptor>(Commands);
+
+            // Test-only, and only here: it lets each test present its own apparent TCP peer so
+            // the per-source registration limit does not make the suite share one counter.
+            services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, TestPeerAddress>();
         });
     }
 

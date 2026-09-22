@@ -17,7 +17,7 @@
 | T10 | SignOut use case + revocation port | app | Alex Korneiko | S | T6 | done |
 | T11 | ProblemDetails handler + antiforgery | wiring | Alex Korneiko | S | — | done |
 | T12 | Session recognition handler, cookie, key ring, `/me` | ports | Alex Korneiko | M | T2, T5, T6, T11 | done |
-| T13 | `POST /api/v1/accounts` + registration rate limit | ports | Alex Korneiko | M | T8, T11, T12 | todo |
+| T13 | `POST /api/v1/accounts` + registration rate limit | ports | Alex Korneiko | M | T8, T11, T12 | done |
 | T14 | Sign-in / sign-out endpoints + hub notifier | ports | Alex Korneiko | M | T9, T10, T11, T12 | todo |
 | T15 | Web API client, session bootstrap, signed-in shell | ui | Alex Korneiko | M | — | todo |
 | T16 | Registration screen, all six states | ui | Alex Korneiko | M | T15 | todo |
