@@ -40,9 +40,9 @@
 | T33 | Type-check tests in their own program and drop vitest globals | config | Alex Korneiko | S | — | done |
 | T34 | Record lightningcss (MPL-2.0, build-time only) as a licence exception | docs | Alex Korneiko | S | — | done |
 | T35 | Cap failed sign-ins per request source, counted before the verification, so hanging up no longer escapes the AC-12 delay | ports | Alex Korneiko | S | — | done |
-| T36 | Render the sign-in-rate-limited refusal on the sign-in screen with its statement and wait | ui | Alex Korneiko | S | T35 | todo |
+| T36 | Render the sign-in-rate-limited refusal on the sign-in screen with its statement and wait | ui | Alex Korneiko | S | T35 | done |
 | T37 | Seed the failure compare-and-set with the count already read, and return the count actually written under contention | infra | Alex Korneiko | S | — | done |
-| T38 | Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem | ports | Alex Korneiko | S | T35 | todo |
+| T38 | Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem | ports | Alex Korneiko | S | T35 | done |
 | T39 | Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves | tests | Alex Korneiko | S | — | done |
 | T40 | Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question | docs | Alex Korneiko | S | T35, T39 | todo |
 | T41 | Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert | infra | Alex Korneiko | S | — | done |
