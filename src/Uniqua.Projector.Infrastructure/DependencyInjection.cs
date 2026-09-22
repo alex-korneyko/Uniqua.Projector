@@ -63,6 +63,12 @@ public static class DependencyInjection
             // The address is Identity's login key and must identify exactly one account (AC-03).
             options.User.RequireUniqueEmail = true;
 
+            // UserName holds the address, and the Account entity is what decides whether an
+            // address is valid (AC-02b). Identity's default character list refuses addresses the
+            // entity accepts — an apostrophe, a non-ASCII letter — so it is stood down: an empty
+            // list means "no restriction" to Identity's user validator.
+            options.User.AllowedUserNameCharacters = string.Empty;
+
             // The password bounds belong to the Account entity (AC-02), so Identity's own
             // validators are stood down rather than duplicating — and disagreeing with — them.
             options.Password.RequiredLength = Account.MinPasswordLength;

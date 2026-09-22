@@ -374,6 +374,26 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
         Assert.Equal(1, limit.TrackedSourceCount);
     }
 
+    [Theory]
+    [InlineData("o'brien")]
+    [InlineData("zoë")]
+    [InlineData("first+tag")]
+    public async Task Every_address_the_account_accepts_can_be_registered(string localPartPrefix)
+    {
+        // Review 2026-09-22 R-14 (AC-02b, AC-11b). The account decides what an address is; the
+        // store must not refuse a valid one on its own character rules, and above all must not
+        // report that refusal as "display name taken", which sends the visitor to change the wrong
+        // field.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var email = $"{localPartPrefix}.{Guid.NewGuid():N}@example.test";
+
+        var response = await client.PostAsJsonAsync(
+            Accounts, new { email, password = GoodPassword, display_name = NewDisplayName() });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     private static string NewEmail() => $"{Guid.NewGuid():N}@example.test";

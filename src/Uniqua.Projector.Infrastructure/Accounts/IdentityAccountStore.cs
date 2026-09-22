@@ -96,20 +96,27 @@ internal sealed class IdentityAccountStore(
             return Result<StoredAccount, AccountError>.Success(Project(user));
         }
 
-        // The unique indexes are the authority on whether an address or a name is taken, so the
-        // refusal is translated from what the store actually said rather than from a prior probe
-        // that another request could have invalidated in between.
-        var error = created.Errors.Any(IsDuplicateEmail)
-            ? AccountErrors.EmailTaken
-            : created.Errors.Any(IsDuplicateName)
-                ? AccountErrors.DisplayNameTaken
-                : AccountErrors.EmailTaken;
+        // The unique indexes are the authority on whether an address is taken, so the refusal is
+        // translated from what the store actually said rather than from a prior probe that
+        // another request could have invalidated in between. A taken display name never arrives
+        // here: Identity knows nothing of display names, so that refusal comes from the probe
+        // above or from the unique index.
+        if (created.Errors.Any(IsDuplicateEmail))
+        {
+            // module=accounts, and no address: a creation failure names the reason, never the value.
+            logger.LogInformation(
+                "module=accounts event=account_creation_refused reason={Reason}",
+                AccountErrors.EmailTaken.Code);
 
-        // module=accounts, and no address: a creation failure names the reason, never the value.
-        logger.LogInformation(
-            "module=accounts event=account_creation_refused reason={Reason}", error.Code);
+            return Result<StoredAccount, AccountError>.Failure(AccountErrors.EmailTaken);
+        }
 
-        return Result<StoredAccount, AccountError>.Failure(error);
+        // Anything else is a configuration or programming fault, not something the visitor did.
+        // Reporting it as a uniqueness refusal would send them to change a field that was fine,
+        // so it surfaces as a server error — with the error codes only, never the values.
+        throw new InvalidOperationException(
+            "Identity refused to create an account for a reason the account rules do not cover: "
+            + string.Join(", ", created.Errors.Select(error => error.Code)));
     }
 
     public async Task<bool> VerifyPasswordAsync(
@@ -263,9 +270,6 @@ internal sealed class IdentityAccountStore(
     private static bool IsDuplicateEmail(IdentityError error) =>
         error.Code is nameof(IdentityErrorDescriber.DuplicateEmail)
             or nameof(IdentityErrorDescriber.DuplicateUserName);
-
-    private static bool IsDuplicateName(IdentityError error) =>
-        error.Code == nameof(IdentityErrorDescriber.InvalidUserName);
 }
 
 /// <summary>
