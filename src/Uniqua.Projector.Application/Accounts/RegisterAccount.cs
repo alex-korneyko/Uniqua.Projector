@@ -69,7 +69,8 @@ public sealed class RegisterAccount(
                 var session = await sessions.OpenAsync(stored.Value.Id, token);
 
                 return Result<RegisteredAccount, AccountError>.Success(
-                    new RegisteredAccount(stored.Value.Id, stored.Value.DisplayName, session.Id));
+                    new RegisteredAccount(
+                        stored.Value.Id, stored.Value.Email, stored.Value.DisplayName, session.Id));
             },
             cancellationToken);
     }
@@ -77,6 +78,7 @@ public sealed class RegisterAccount(
 
 /// <summary>What registration hands back: enough to show the account itself and nothing more.</summary>
 /// <param name="AccountId">The stable identity AC-13 promises.</param>
+/// <param name="Email">The address as the account holds it, which is what every response shows.</param>
 /// <param name="DisplayName">Shown straight back, so AC-01 needs no second round trip.</param>
 /// <param name="SessionId">The reference the session cookie will carry.</param>
-public sealed record RegisteredAccount(Guid AccountId, string DisplayName, Guid SessionId);
+public sealed record RegisteredAccount(Guid AccountId, string Email, string DisplayName, Guid SessionId);

@@ -93,8 +93,10 @@ paths:
           description: |
             The submission is malformed (sad.md §6 flow 3, inner branches). `accounts.password_invalid`
             for AC-02 (shorter than 8 or longer than 128 characters); `accounts.email_invalid` for AC-02b
-            (the address cannot be an email address). Nothing is written — no account, no session, no
-            counter (flow 3 postcondition).
+            (the address cannot be an email address); `accounts.display_name_invalid` when the display
+            name is empty or longer than 50 characters (AC-01 / AC-11 bound it at 1..50 — reconciled
+            from the implementation, review 2026-09-22 R-15). Nothing is written — no account, no
+            session, no counter (flow 3 postcondition).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -113,6 +115,13 @@ paths:
                     status: 400
                     detail: "That is not an email address we can use."
                     code: "accounts.email_invalid"
+                display_name_invalid:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/display-name-invalid"
+                    title: "A display name is not usable"
+                    status: 400
+                    detail: "A display name must be between 1 and 50 characters long."
+                    code: "accounts.display_name_invalid"
         "403":
           $ref: "#/components/responses/AntiforgeryFailed"
         "409":

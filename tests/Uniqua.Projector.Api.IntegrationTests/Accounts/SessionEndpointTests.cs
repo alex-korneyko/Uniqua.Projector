@@ -291,6 +291,92 @@ public sealed class SessionEndpointTests(ApiFactory factory)
             StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- The account shown back, the same way everywhere (review 2026-09-22 R-15, R-16) --------
+
+    [Fact]
+    public async Task Signing_in_shows_the_address_exactly_as_the_account_holds_it()
+    {
+        // The contract's Account.email is the account's address. Echoing what was typed at sign-in
+        // (another case, stray spaces) would show the same account two ways depending on the path.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Sessions, new { email = $"  {account.Email.ToUpperInvariant()} ", password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(
+            await EmailFromMeAsync(SessionCookieFrom(response)),
+            await EmailInAsync(response));
+    }
+
+    [Fact]
+    public async Task Registering_shows_the_address_exactly_as_the_account_holds_it()
+    {
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var email = $"{Guid.NewGuid():N}@example.test";
+
+        var response = await client.PostAsJsonAsync(
+            Accounts, new { email = $"  {email}  ", password = GoodPassword, display_name = $"se-{Guid.NewGuid():N}" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(
+            await EmailFromMeAsync(SessionCookieFrom(response)),
+            await EmailInAsync(response));
+    }
+
+    [Fact]
+    public async Task An_account_keeps_one_identity_through_its_whole_life()
+    {
+        // AC-13, as test-plan.md row AC-13 describes it: the id is unchanged across sign-out,
+        // failed attempts and a fresh sign-in, so anything keyed to it (board membership, cards)
+        // survives every one of them.
+        factory.Clock.Reset();
+        var email = $"{Guid.NewGuid():N}@example.test";
+        var client = await ClientAsync();
+
+        var registered = await client.PostAsJsonAsync(
+            Accounts, new { email, password = GoodPassword, display_name = $"se-{Guid.NewGuid():N}" });
+        Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
+        var id = await IdInAsync(registered);
+        var firstSession = SessionCookieFrom(registered);
+
+        var signedIn = await ClientAsync(firstSession);
+        Assert.Equal(id, await IdInAsync(await signedIn.GetAsync(Me)));
+        Assert.Equal(HttpStatusCode.NoContent, (await signedIn.DeleteAsync(CurrentSession)).StatusCode);
+
+        var visitor = await ClientAsync();
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await visitor.PostAsJsonAsync(Sessions, new { email, password = "not-the-password" })).StatusCode);
+        }
+
+        var again = await visitor.PostAsJsonAsync(Sessions, new { email, password = GoodPassword });
+        Assert.Equal(HttpStatusCode.Created, again.StatusCode);
+        Assert.Equal(id, await IdInAsync(again));
+
+        var secondSession = await ClientAsync(SessionCookieFrom(again));
+        Assert.Equal(id, await IdInAsync(await secondSession.GetAsync(Me)));
+    }
+
+    private async Task<string?> EmailFromMeAsync(string sessionCookie)
+    {
+        var client = await ClientAsync(sessionCookie);
+        return await EmailInAsync(await client.GetAsync(Me));
+    }
+
+    private static async Task<string?> EmailInAsync(HttpResponseMessage response) =>
+        JsonDocument.Parse(await response.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("email").GetString();
+
+    private static async Task<string?> IdInAsync(HttpResponseMessage response) =>
+        JsonDocument.Parse(await response.Content.ReadAsStringAsync())
+            .RootElement.GetProperty("id").GetString();
+
     // ---- Helpers ------------------------------------------------------------------------------
 
     /// <summary>Headers a client could read a difference out of. Date and traceId are not those.</summary>

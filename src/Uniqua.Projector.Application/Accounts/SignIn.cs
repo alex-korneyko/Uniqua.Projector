@@ -67,7 +67,7 @@ public sealed class SignIn(
         var session = await sessions.OpenAsync(account.Id, cancellationToken);
 
         return Result<SignedIn, AccountError>.Success(
-            new SignedIn(account.Id, account.DisplayName, session.Id));
+            new SignedIn(account.Id, account.Email, account.DisplayName, session.Id));
     }
 
     private static Result<SignedIn, AccountError> Refused() =>
@@ -76,6 +76,10 @@ public sealed class SignIn(
 
 /// <summary>What a sign-in hands back — the same shape registration returns, for the same reason.</summary>
 /// <param name="AccountId">The stable identity AC-13 promises.</param>
+/// <param name="Email">
+/// The address as the account holds it — not as it was typed at sign-in, which may differ in case
+/// and spacing and would show one account two ways.
+/// </param>
 /// <param name="DisplayName">Shown straight back (AC-11), so nothing has to display the address.</param>
 /// <param name="SessionId">The reference the session cookie will carry.</param>
-public sealed record SignedIn(Guid AccountId, string DisplayName, Guid SessionId);
+public sealed record SignedIn(Guid AccountId, string Email, string DisplayName, Guid SessionId);

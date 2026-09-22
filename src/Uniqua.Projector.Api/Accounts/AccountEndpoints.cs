@@ -72,7 +72,7 @@ public static class AccountEndpoints
             context.Response.StatusCode = StatusCodes.Status201Created;
             await context.Response.WriteAsJsonAsync(
                 new AccountView(
-                    result.Value.AccountId, request.Email ?? string.Empty, result.Value.DisplayName),
+                    result.Value.AccountId, result.Value.Email, result.Value.DisplayName),
                 cancellationToken);
         })
         // security: [] — the one endpoint a stranger has to be able to reach.
@@ -103,7 +103,7 @@ public static class AccountEndpoints
             context.Response.StatusCode = StatusCodes.Status201Created;
             await context.Response.WriteAsJsonAsync(
                 new AccountView(
-                    result.Value.AccountId, request.Email ?? string.Empty, result.Value.DisplayName),
+                    result.Value.AccountId, result.Value.Email, result.Value.DisplayName),
                 cancellationToken);
         })
         // security: [] — signing in is what a visitor with no session comes here to do.

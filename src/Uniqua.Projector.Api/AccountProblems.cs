@@ -14,14 +14,6 @@ namespace Uniqua.Projector.Api;
 /// Nothing outside this file decides what an error body says. An endpoint hands a code to the
 /// handler; it never builds a shape of its own (sad.md § 8).
 /// </para>
-/// <para>
-/// <strong>Finding raised to the api stage.</strong> <c>accounts.display_name_invalid</c> is not in
-/// contracts/openapi.yaml. The domain needs a display-name-shape refusal (AC-01 / AC-11 bound the
-/// name at 1..50) and the contract declares no code for one, leaving only the request schema's
-/// <c>maxLength: 50</c>. It is published here following the contract's own naming so nothing is
-/// silently dropped; the contract needs either this ninth code or an explicit decision that schema
-/// validation is the only guard.
-/// </para>
 /// </remarks>
 public static class AccountProblems
 {
