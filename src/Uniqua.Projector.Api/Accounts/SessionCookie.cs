@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.DataProtection;
+using Uniqua.Projector.Domain.Accounts;
 
 namespace Uniqua.Projector.Api.Accounts;
 
@@ -25,11 +26,20 @@ public static class SessionCookie
     public const string ProtectorPurpose = "Uniqua.Projector.Accounts.SessionCookie";
 
     /// <summary>Sets the cookie for a session.</summary>
-    public static void Issue(HttpContext context, Guid sessionId) =>
+    public static void Issue(HttpContext context, Guid sessionId)
+    {
+        var attributes = Attributes(context);
+
+        // AC-06: a cookie with no lifetime is a browser-session cookie and dies when the browser
+        // closes. It is given the longest life a session can have; whether the session is still
+        // good is decided on every request by the server-side rules, never by the cookie.
+        attributes.MaxAge = Session.AbsoluteLifetime;
+
         context.Response.Cookies.Append(
             Name,
             Protector(context).Protect(sessionId.ToString()),
-            Attributes(context));
+            attributes);
+    }
 
     /// <summary>
     /// Clears the cookie. The attributes have to match the ones it was set with, or the browser

@@ -44,11 +44,26 @@ public sealed class SessionTests
     }
 
     [Fact]
-    public void A_session_idle_for_exactly_14_days_is_expired()
+    public void A_request_the_hourly_stamp_skipped_still_buys_a_full_14_days()
     {
+        // Review 2026-09-22 R-07. The stamp is written at most once an hour, so the last request
+        // can be up to 59 minutes newer than LastSeenAt. spec §6 lets the ending be up to an hour
+        // *late*; measuring 14 days from the stamp made it up to an hour *early* instead.
+        var session = Session.Open(Account, Opened);
+        var unstampedRequest = Opened + TimeSpan.FromMinutes(59);
+        Assert.False(session.ShouldStampActivity(unstampedRequest));
+
+        Assert.False(session.IsExpired(unstampedRequest + TimeSpan.FromDays(14) - TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public void No_session_outlives_14_days_and_an_hour_since_its_last_stamp()
+    {
+        // The other edge of spec §6's accuracy row: at most one hour late, never indefinite.
         var session = Session.Open(Account, Opened);
 
-        Assert.True(session.IsExpired(Opened + TimeSpan.FromDays(14)));
+        Assert.True(session.IsExpired(Opened + TimeSpan.FromDays(14) + TimeSpan.FromHours(1)));
+        Assert.Equal(TimeSpan.FromDays(14) + TimeSpan.FromHours(1), Session.IdleExpiryAfterLastStamp);
     }
 
     [Fact]
@@ -61,7 +76,7 @@ public sealed class SessionTests
 
         // 14 days after the *original* open, but only 1 day since the last request.
         Assert.False(session.IsExpired(Opened + TimeSpan.FromDays(14)));
-        Assert.True(session.IsExpired(thirteenDaysIn + TimeSpan.FromDays(14)));
+        Assert.True(session.IsExpired(thirteenDaysIn + Session.IdleExpiryAfterLastStamp));
     }
 
     // ---- AC-07b: 90 days absolute, however actively used --------------------------------------

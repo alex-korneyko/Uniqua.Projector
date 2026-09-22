@@ -29,8 +29,9 @@ public sealed class SessionLifetimeTests(ApiFactory factory)
     [Fact]
     public async Task A_session_one_minute_past_the_idle_boundary_is_not_recognised()
     {
-        // AC-07. The fixture sits a minute past 14 days precisely so the test is about the
-        // boundary rather than about a session that has obviously been abandoned.
+        // AC-07. The fixture sits a minute past the boundary (14 days and the hour spec §6 allows
+        // since the last stamp) precisely so the test is about the boundary rather than about a
+        // session that has obviously been abandoned.
         factory.Clock.Reset();
         var account = await factory.AnAccountAsync();
         var sessionId = await factory.AnIdleSessionAsync(account);
@@ -48,7 +49,7 @@ public sealed class SessionLifetimeTests(ApiFactory factory)
         var account = await factory.AnAccountAsync();
         var sessionId = await factory.ALiveSessionAsync(account);
 
-        factory.Clock.Advance(Session.IdleLifetime - TimeSpan.FromMinutes(1));
+        factory.Clock.Advance(Session.IdleExpiryAfterLastStamp - TimeSpan.FromMinutes(1));
 
         var response = await factory.ClientCarrying(sessionId).GetAsync(Me);
 

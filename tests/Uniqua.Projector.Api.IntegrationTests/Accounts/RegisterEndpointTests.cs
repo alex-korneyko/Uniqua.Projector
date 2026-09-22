@@ -310,6 +310,28 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
         factory.Clock.Reset();
     }
 
+    [Fact]
+    public async Task Registering_issues_a_cookie_that_survives_closing_the_browser()
+    {
+        // AC-06: "close the browser entirely and return the next day". A cookie with neither
+        // Max-Age nor Expires is a browser-session cookie and is discarded on exit, whatever the
+        // server still thinks of the session. The server-side rules still decide validity; the
+        // cookie only has to live as long as the longest a session can.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Accounts, new { email = NewEmail(), password = GoodPassword, display_name = NewDisplayName() });
+
+        var setCookie = response.Headers.GetValues("Set-Cookie")
+            .First(value => value.StartsWith($"{SessionCookie.Name}=", StringComparison.Ordinal));
+
+        Assert.Contains(
+            $"max-age={(long)Domain.Accounts.Session.AbsoluteLifetime.TotalSeconds}",
+            setCookie,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     private static string NewEmail() => $"{Guid.NewGuid():N}@example.test";

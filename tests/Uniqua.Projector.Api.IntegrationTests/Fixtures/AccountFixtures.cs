@@ -52,13 +52,13 @@ public static class AccountFixtures
     }
 
     /// <summary>
-    /// A session one minute past the AC-07 boundary: idle for 14 days and a minute, so it must not
-    /// be recognised.
+    /// A session one minute past the AC-07 boundary: its last stamp is 14 days, an hour and a
+    /// minute old, so it must not be recognised.
     /// </summary>
     public static async Task<Guid> AnIdleSessionAsync(this ApiFactory factory, TestAccount account)
     {
         var sessionId = await factory.ALiveSessionAsync(account);
-        var idleFor = Session.IdleLifetime + TimeSpan.FromMinutes(1);
+        var idleFor = Session.IdleExpiryAfterLastStamp + TimeSpan.FromMinutes(1);
 
         await factory.ExecuteAsync(
             $"""

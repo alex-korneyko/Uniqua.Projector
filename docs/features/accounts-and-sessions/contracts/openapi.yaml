@@ -78,8 +78,10 @@ paths:
               description: |
                 The session cookie — httpOnly, secure, same-site (sad.md §8). Its value is the opaque
                 `Sessions.Id` reference; it is never readable by page scripts and never appears in a body.
+                `Max-Age` is the 90-day absolute lifetime so the cookie survives closing the browser
+                (AC-06); whether the session is still good is decided server-side on every request.
               schema: { type: string }
-              example: "projector_session=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax"
+              example: "projector_session=<opaque>; Max-Age=7776000; Path=/; HttpOnly; Secure; SameSite=Lax"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
@@ -216,9 +218,9 @@ paths:
           description: Session opened (AC-04).
           headers:
             Set-Cookie:
-              description: The session cookie — httpOnly, secure, same-site (sad.md §8).
+              description: The session cookie — httpOnly, secure, same-site (sad.md §8), with `Max-Age` set to the 90-day absolute lifetime so it survives closing the browser (AC-06).
               schema: { type: string }
-              example: "projector_session=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax"
+              example: "projector_session=<opaque>; Max-Age=7776000; Path=/; HttpOnly; Secure; SameSite=Lax"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }

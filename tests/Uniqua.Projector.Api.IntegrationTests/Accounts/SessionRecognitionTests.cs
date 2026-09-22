@@ -124,31 +124,34 @@ public sealed class SessionRecognitionTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task A_session_idle_for_fourteen_days_is_not_recognised()
+    public async Task A_session_idle_for_fourteen_days_and_an_hour_is_not_recognised()
     {
-        // AC-07.
+        // AC-07, at the latest instant spec §6's accuracy row allows: at most an hour late.
         factory.Clock.Reset();
         var account = await ARegisteredAccountAsync();
         var client = ClientCarrying(account.SessionId);
 
-        factory.Clock.Advance(Session.IdleLifetime);
+        factory.Clock.Advance(Session.IdleExpiryAfterLastStamp);
 
         await AssertNotRecognisedAsync(client);
         factory.Clock.Reset();
     }
 
     [Fact]
-    public async Task A_session_idle_for_fourteen_days_and_thirty_minutes_is_not_recognised()
+    public async Task A_request_the_hourly_stamp_skipped_still_counts_as_activity()
     {
-        // The spec §6 accuracy row allows the ending to be up to an hour late, because the last
-        // stamp may be that stale. It does not allow it to be early or indefinite.
+        // Review 2026-09-22 R-07, end to end. A request 59 minutes after the stamp is not written,
+        // but the session must still live 14 days from *that* request, not from the stamp — the
+        // accuracy row allows ending late, never early.
         factory.Clock.Reset();
         var account = await ARegisteredAccountAsync();
         var client = ClientCarrying(account.SessionId);
 
-        factory.Clock.Advance(Session.IdleLifetime + TimeSpan.FromMinutes(30));
+        factory.Clock.Advance(TimeSpan.FromMinutes(59));
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(Me)).StatusCode);
 
-        await AssertNotRecognisedAsync(client);
+        factory.Clock.Advance(Session.IdleLifetime - TimeSpan.FromMinutes(1));
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync(Me)).StatusCode);
         factory.Clock.Reset();
     }
 
@@ -196,7 +199,7 @@ public sealed class SessionRecognitionTests(ApiFactory factory)
             await BodyOfRefusalAsync(ClientCarrying(revoked.SessionId)),
         };
 
-        factory.Clock.Advance(Session.IdleLifetime);
+        factory.Clock.Advance(Session.IdleExpiryAfterLastStamp);
         bodies.Add(await BodyOfRefusalAsync(idleClient));
         factory.Clock.Reset();
 

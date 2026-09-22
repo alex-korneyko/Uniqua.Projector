@@ -268,6 +268,29 @@ public sealed class SessionEndpointTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.OK, (await stillSignedIn.GetAsync(Me)).StatusCode);
     }
 
+    [Fact]
+    public async Task Signing_in_issues_a_cookie_that_survives_closing_the_browser()
+    {
+        // AC-06: "close the browser entirely and return the next day". A cookie with neither
+        // Max-Age nor Expires is a browser-session cookie and is discarded on exit, whatever the
+        // server still thinks of the session. The server-side rules still decide validity; the
+        // cookie only has to live as long as the longest a session can.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = GoodPassword });
+
+        var setCookie = response.Headers.GetValues("Set-Cookie")
+            .First(value => value.StartsWith($"{SessionCookie.Name}=", StringComparison.Ordinal));
+
+        Assert.Contains(
+            $"max-age={(long)Domain.Accounts.Session.AbsoluteLifetime.TotalSeconds}",
+            setCookie,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Helpers ------------------------------------------------------------------------------
 
     /// <summary>Headers a client could read a difference out of. Date and traceId are not those.</summary>

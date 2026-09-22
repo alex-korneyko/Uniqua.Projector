@@ -25,6 +25,15 @@ public sealed class Session
     /// </summary>
     public static readonly TimeSpan ActivityStampInterval = TimeSpan.FromHours(1);
 
+    /// <summary>
+    /// How long after its last stamp a session is still recognised: <see cref="IdleLifetime"/>
+    /// plus <see cref="ActivityStampInterval"/>. The last request can be up to an interval newer
+    /// than the stamp, so measuring 14 days from the stamp would end a session up to an hour
+    /// <em>before</em> 14 days of real inactivity. Adding the interval spends spec §6's allowance
+    /// the way it is written — at most an hour late, never early.
+    /// </summary>
+    public static readonly TimeSpan IdleExpiryAfterLastStamp = IdleLifetime + ActivityStampInterval;
+
     /// <summary>Only the store materialises a session this way.</summary>
     private Session()
     {
@@ -64,7 +73,7 @@ public sealed class Session
     /// never reads as an expiry, which is what keeps a backwards clock from signing everyone out.
     /// </summary>
     public bool IsExpired(DateTimeOffset now) =>
-        now - LastSeenAt >= IdleLifetime || now - CreatedAt >= AbsoluteLifetime;
+        now - LastSeenAt >= IdleExpiryAfterLastStamp || now - CreatedAt >= AbsoluteLifetime;
 
     /// <summary>Ends the session. Calling it again keeps the first instant.</summary>
     public void Revoke(DateTimeOffset at) => RevokedAt ??= at;
