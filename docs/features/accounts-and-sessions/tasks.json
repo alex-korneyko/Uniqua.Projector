@@ -291,6 +291,235 @@
         "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/ExpiredSessionCleanupTests.cs"
       ],
       "file": "docs/features/accounts-and-sessions/tasks/20-expired-session-cleanup-service.md"
+    },
+    {
+      "id": "T21",
+      "title": "Serve the AC-12 delay from the attempt being made, reset the stored count after the quiet period, and record a failure before waiting",
+      "layer": "app",
+      "deps": [],
+      "acs": ["AC-12"],
+      "dod": "With 5 prior failures the next wrong attempt is held >= 2 s and with 9 prior failures >= 30 s; after 15 quiet minutes a failure stores count 1, so the next typo is free; a failure is persisted even when the client abandons the delayed request; the 5-minute ceiling is recorded in spec §6 and ADR 0010; tests assert real floors (no `>= 0`).",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs",
+        "src/Uniqua.Projector.Application/Accounts/SignIn.cs",
+        "src/Uniqua.Projector.Application/Accounts/Ports/IAccountStore.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/IdentityAccountStore.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Accounts/GuessingDelayTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignInTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs",
+        "docs/features/accounts-and-sessions/spec.md",
+        "docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md",
+        "docs/session-rules.md"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/21-guessing-delay-count-fixes.md",
+      "origin": "review-2026-09-22: R-01, R-02, R-03, R-05"
+    },
+    {
+      "id": "T22",
+      "title": "Hold refusals for unregistered addresses on the same curve, so the wait does not reveal registration",
+      "layer": "app",
+      "deps": ["T21"],
+      "acs": ["AC-05b", "AC-12"],
+      "dod": "After N wrong attempts against an unregistered address, the (N+1)th is held by the same GuessingDelay curve a registered address gets; the counter is in memory, keyed by a hash of the normalised address, never persisted; an integration test compares both paths after 5 failures.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/SignIn.cs",
+        "src/Uniqua.Projector.Application/Accounts/Ports/IUnknownAddressAttempts.cs",
+        "src/Uniqua.Projector.Infrastructure/Accounts/InMemoryUnknownAddressAttempts.cs",
+        "src/Uniqua.Projector.Infrastructure/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/22-delay-unknown-addresses.md",
+      "origin": "review-2026-09-22: R-04"
+    },
+    {
+      "id": "T23",
+      "title": "Make the session cookie persistent and add the activity-stamp slack after the 14 days, not before",
+      "layer": "domain",
+      "deps": [],
+      "acs": ["AC-06", "AC-07"],
+      "dod": "Set-Cookie from register and sign-in carries a Max-Age equal to Session.AbsoluteLifetime (asserted); a session whose last real request was 14 days ago but whose stamp is up to 59 minutes older is still recognised, and none survives past 14 d + 1 h of inactivity (Domain boundary tests); openapi examples show Max-Age.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SessionCookie.cs",
+        "src/Uniqua.Projector.Domain/Accounts/Session.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Accounts/SessionTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/23-session-lifetime-fixes.md",
+      "origin": "review-2026-09-22: R-06, R-07"
+    },
+    {
+      "id": "T24",
+      "title": "Count only accepted registrations against the per-source limit and prune stale sources",
+      "layer": "ports",
+      "deps": [],
+      "acs": ["AC-01b"],
+      "dod": "Five refused submissions followed by a valid one from the same source returns 201; the sixth accepted registration within a minute is still 429 with Retry-After; entries older than the window are pruned so the dictionary does not grow without bound (tested).",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/RegistrationRateLimit.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/24-count-registrations-not-attempts.md",
+      "origin": "review-2026-09-22: R-11, R-25"
+    },
+    {
+      "id": "T25",
+      "title": "Accept every address MailAddress accepts and stop mapping unexpected Identity errors to a uniqueness refusal",
+      "layer": "infra",
+      "deps": ["T21"],
+      "acs": ["AC-02b", "AC-11b"],
+      "dod": "Registering o'brien@example.test and an address with non-ASCII letters succeeds; InvalidUserName is never reported as display_name_taken; an Identity error that is neither duplicate is thrown, not mapped to email_taken.",
+      "files_hint": [
+        "src/Uniqua.Projector.Infrastructure/Accounts/IdentityAccountStore.cs",
+        "src/Uniqua.Projector.Infrastructure/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/IdentityAccountStoreTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/25-identity-accepts-every-valid-address.md",
+      "origin": "review-2026-09-22: R-14"
+    },
+    {
+      "id": "T26",
+      "title": "Return the stored address from register and sign-in, declare display_name_invalid, and prove the id is stable across the account's life",
+      "layer": "ports",
+      "deps": ["T22", "T24"],
+      "acs": ["AC-01", "AC-04", "AC-13"],
+      "dod": "Signing in with a differently-cased, padded address returns the email exactly as /me returns it; openapi.yaml declares accounts.display_name_invalid; one test registers, signs out, fails 3 times and signs in again, asserting the same id at every step.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Accounts/RegisterAccount.cs",
+        "src/Uniqua.Projector.Application/Accounts/SignIn.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/26-contract-fidelity-and-stable-identity.md",
+      "origin": "review-2026-09-22: R-15, R-16"
+    },
+    {
+      "id": "T27",
+      "title": "Move Api registrations into AddAccountsApi, require TrustedProxies outside Development, and prove a trusted proxy's forwarded address is honoured",
+      "layer": "wiring",
+      "deps": ["T24", "T26"],
+      "acs": ["AC-01b"],
+      "dod": "Program.cs names no inner-layer type (only AddXxx calls); outside Development the app refuses to start when TrustedProxies is empty; with TrustedProxies set to the test peer, two different X-Forwarded-For values get separate counters (tested).",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Program.cs",
+        "src/Uniqua.Projector.Api/DependencyInjection.cs",
+        "src/Uniqua.Projector.Api/appsettings.json",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/27-accounts-api-wiring-and-trusted-proxies.md",
+      "origin": "review-2026-09-22: R-13, R-17, R-23"
+    },
+    {
+      "id": "T28",
+      "title": "Raise the 48-hour cleanup alert as an error log so sad §7 monitoring can fire",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "When HasNotSucceededRecently is true after a run, the service logs an error naming the last success; a test with a failing sweep and an advanced clock observes that log entry.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/ExpiredSessionCleanupService.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/ExpiredSessionCleanupTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/28-surface-cleanup-staleness.md",
+      "origin": "review-2026-09-22: R-26"
+    },
+    {
+      "id": "T29",
+      "title": "Render a refusal's title as its statement and its detail as the reason",
+      "layer": "ui",
+      "deps": [],
+      "acs": ["AC-03", "AC-11b", "AC-01b"],
+      "dod": "The taken-address, taken-name and rate-limit refusals read 'already registered', 'taken' and 'temporarily limited'; antiforgery_failed shows the server's detail; the retry sentence appears exactly once even when the detail already names the wait.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/api/accounts.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/accountRefusals.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/RegisterScreen.test.tsx",
+        "src/Uniqua.Projector.Web/src/api/__tests__/accounts.test.ts"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/29-refusals-state-the-fact.md",
+      "origin": "review-2026-09-22: R-10"
+    },
+    {
+      "id": "T30",
+      "title": "Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session",
+      "layer": "ui",
+      "deps": [],
+      "acs": ["AC-07", "AC-07b", "AC-10"],
+      "dod": "A composed AccountShell + VisitorScreens test: a 401 on /me refetch while an account is cached shows the sign-in form; sign-out shows the sign-in form; a first visit with no session shows registration; the switch between the two is inside the card; a 401 from a non-/me query clears the session.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/VisitorScreens.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/useSession.ts",
+        "src/Uniqua.Projector.Web/src/api/queryClient.ts",
+        "src/Uniqua.Projector.Web/src/main.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/AccountShell.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/VisitorScreens.test.tsx"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/30-an-ended-session-meets-sign-in.md",
+      "origin": "review-2026-09-22: R-08, R-09"
+    },
+    {
+      "id": "T31",
+      "title": "Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords",
+      "layer": "ui",
+      "deps": ["T29", "T30"],
+      "acs": ["AC-01", "AC-04", "AC-08"],
+      "dod": "A 201 writes the returned Account into the session cache before invalidating, so the form never re-enables into a visitor state; the registration password has no maxLength; sign-out is disabled and labelled 'Signing out…' while pending (all tested).",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/auth/RegisterScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/SignInScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/AccountShell.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/useSession.ts",
+        "src/Uniqua.Projector.Web/src/features/auth/__tests__/"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/31-forms-stay-honest-while-pending.md",
+      "origin": "review-2026-09-22: R-20, R-21, R-22"
+    },
+    {
+      "id": "T32",
+      "title": "Define the theme tokens the vendored components read",
+      "layer": "ui",
+      "deps": [],
+      "acs": [],
+      "dod": "--color-destructive, --color-card, --color-card-foreground, --color-input and --color-ring are defined in @theme; a production build emits CSS for text-destructive, bg-card, border-input and ring-ring.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/index.css"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/32-theme-tokens-for-vendored-components.md",
+      "origin": "review-2026-09-22: R-19"
+    },
+    {
+      "id": "T33",
+      "title": "Type-check tests in their own program and drop vitest globals",
+      "layer": "config",
+      "deps": [],
+      "acs": [],
+      "dod": "tsconfig.app.json excludes __tests__ and src/test and has no test types; tsconfig.test.json carries them; vitest runs without globals: true; tsc -b, lint and the web suite stay green.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/tsconfig.app.json",
+        "src/Uniqua.Projector.Web/tsconfig.test.json",
+        "src/Uniqua.Projector.Web/tsconfig.json",
+        "src/Uniqua.Projector.Web/vite.config.ts",
+        "src/Uniqua.Projector.Web/src/test/setup.ts"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/33-keep-test-types-out-of-the-app.md",
+      "origin": "review-2026-09-22: R-28"
+    },
+    {
+      "id": "T34",
+      "title": "Record lightningcss (MPL-2.0, build-time only) as a licence exception",
+      "layer": "docs",
+      "deps": [],
+      "acs": [],
+      "dod": "An Accepted ADR names lightningcss, its MPL-2.0 licence, the path that brings it in (@tailwindcss/vite), why it never ships in the bundle, and the condition that would revisit it; architecture-map links it.",
+      "files_hint": [
+        "docs/adr/0011-accept-lightningcss-as-a-build-time-licence-exception.md",
+        "docs/architecture-map.md"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/34-record-lightningcss-licence-exception.md",
+      "origin": "review-2026-09-22: R-29"
     }
   ]
 }
