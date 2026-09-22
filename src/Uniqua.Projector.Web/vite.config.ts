@@ -1,5 +1,7 @@
 import path from 'node:path'
-import { defineConfig } from 'vite'
+// vitest/config re-exports Vite's own defineConfig, widened to accept the `test` block below —
+// so there is still exactly one configuration and not a second one for tests to drift from.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -10,6 +12,16 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, './src') },
+  },
+  // Component tests run in this same config, so a test resolves '@/...' and processes CSS exactly
+  // as the built client does. A second, parallel build configuration for tests is a place for the
+  // two to disagree.
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    css: true,
+    include: ['src/**/*.test.{ts,tsx}'],
   },
   build: {
     outDir: '../Uniqua.Projector.Api/wwwroot',
