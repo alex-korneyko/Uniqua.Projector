@@ -393,6 +393,46 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task More_than_five_parallel_reservations_from_one_source_permit_exactly_five()
+    {
+        // N-11: the limit is enforced by a lock inside SlidingWindowLimiter.Reserve (shared with
+        // SignInRateLimit since T35), not by the sequential-request tests above, which can never
+        // exercise a race. A fixed test clock keeps every call in the same window, so this is
+        // purely a concurrency proof, not a timing one.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+        var source = $"198.51.100.{Random.Shared.Next(1, 254)}";
+
+        var decisions = await Task.WhenAll(Enumerable.Range(0, 25)
+            .Select(_ => Task.Run(() => limit.Reserve(source))));
+
+        Assert.Equal(RegistrationRateLimit.PermittedPerWindow, decisions.Count(decision => decision.IsPermitted));
+    }
+
+    [Fact]
+    public void Releasing_a_refused_reservation_frees_no_slot()
+    {
+        // N-11: Release must be a no-op for a refusal — RateLimitDecision.Refused carries a
+        // default ReservedAt, so releasing it must not free a slot another registration could
+        // then take.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+        var source = $"198.51.100.{Random.Shared.Next(1, 254)}";
+
+        for (var accepted = 0; accepted < RegistrationRateLimit.PermittedPerWindow; accepted++)
+        {
+            Assert.True(limit.Reserve(source).IsPermitted);
+        }
+
+        var refused = limit.Reserve(source);
+        Assert.False(refused.IsPermitted);
+
+        limit.Release(source, refused);
+
+        Assert.False(limit.Reserve(source).IsPermitted);
+    }
+
+    [Fact]
     public void Sources_whose_window_has_closed_are_forgotten()
     {
         // Review 2026-09-22 R-25: without pruning, the limiter keeps one entry per source address

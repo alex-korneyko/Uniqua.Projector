@@ -1,8 +1,15 @@
+using System.Collections;
 using System.Diagnostics;
+using System.Linq.Expressions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
 using Uniqua.Projector.Application.Accounts.Ports;
 using Uniqua.Projector.Domain.Accounts;
+using Uniqua.Projector.Infrastructure.Accounts;
 
 namespace Uniqua.Projector.Api.IntegrationTests.Accounts;
 
@@ -359,6 +366,200 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
 
         Assert.False(refused.IsSuccess);
         Assert.Same(AccountErrors.EmailTaken, refused.Error);
+    }
+
+    // ---- N-11: an unexpected Identity error is a fault, never a uniqueness refusal --------------
+
+    [Fact]
+    public async Task An_unexpected_identity_error_surfaces_as_a_fault_not_a_uniqueness_refusal()
+    {
+        // Neither probe nor unique index caught anything, yet Identity's own CreateAsync still
+        // failed — for a reason the account rules do not cover (a configuration or programming
+        // fault). That must never be reported to a visitor as "email taken" or "display name
+        // taken": IdentityAccountStore.CreateAsync throws instead, which the application's one
+        // exception handler turns into a 500 problem (proven generically by
+        // ProblemDetailsTests.An_unmapped_failure_reveals_nothing_about_the_exception_behind_it).
+        // A real Identity misconfiguration is not reachable through Account.Create's own
+        // validation, so the failure is forced with a test double store rather than real input.
+        var store = StoreOverAFakeThatFailsCreateWith(
+            new IdentityError { Code = "ConcurrencyFailure", Description = "stale row version" });
+
+        var account = Account.Create(
+            $"{Guid.NewGuid():N}@example.test", GoodPassword, $"name-{Guid.NewGuid():N}");
+        Assert.True(account.IsSuccess);
+
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.CreateAsync(account.Value, GoodPassword, CancellationToken.None));
+
+        Assert.Contains("ConcurrencyFailure", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccountErrors.EmailTaken.Code, failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(AccountErrors.DisplayNameTaken.Code, failure.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// <see cref="IdentityAccountStore"/> over a <see cref="UserManager{TUser}"/> whose only store
+    /// is <see cref="FailingUserStore"/>: no database, no validators, so
+    /// <see cref="UserManager{TUser}.CreateAsync(TUser, string)"/> reaches the store's
+    /// <c>CreateAsync</c> directly and returns exactly the failure handed in.
+    /// </summary>
+    private static IAccountStore StoreOverAFakeThatFailsCreateWith(IdentityError failure)
+    {
+        var users = new UserManager<ProjectorUser>(
+            new FailingUserStore(failure),
+            Options.Create(new IdentityOptions()),
+            new PasswordHasher<ProjectorUser>(),
+            [],
+            [],
+            new UpperInvariantLookupNormalizer(),
+            new IdentityErrorDescriber(),
+            new ServiceCollection().BuildServiceProvider(),
+            NullLogger<UserManager<ProjectorUser>>.Instance);
+
+        return new IdentityAccountStore(
+            users,
+            new PasswordHasher<ProjectorUser>(),
+            new DummyCredential(Options.Create(new PasswordHasherOptions())),
+            new TestClock(),
+            NullLogger<IdentityAccountStore>.Instance);
+    }
+
+    /// <summary>
+    /// The minimum <see cref="IUserStore{TUser}"/> surface <see cref="IdentityAccountStore"/>
+    /// touches on the way to <c>CreateAsync</c> — enough to hold a user in memory, never a
+    /// database — whose <c>CreateAsync</c> always returns one configured failure.
+    /// </summary>
+    private sealed class FailingUserStore(IdentityError failure) :
+        IUserStore<ProjectorUser>, IUserPasswordStore<ProjectorUser>, IQueryableUserStore<ProjectorUser>
+    {
+        // IdentityAccountStore.CreateAsync probes IsDisplayNameTakenAsync via `users.Users
+        // .AsNoTracking().AnyAsync(...)` before it ever reaches CreateAsync below — EF Core's
+        // AnyAsync throws against a plain in-memory IQueryable, so this needs the async-provider
+        // shim (EmptyAsyncQueryable) rather than `Enumerable.Empty<ProjectorUser>().AsQueryable()`.
+        public IQueryable<ProjectorUser> Users { get; } = new EmptyAsyncQueryable<ProjectorUser>();
+
+        public Task<IdentityResult> CreateAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(IdentityResult.Failed(failure));
+
+        public Task<IdentityResult> UpdateAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(IdentityResult.Success);
+
+        public Task<IdentityResult> DeleteAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(IdentityResult.Success);
+
+        public Task<ProjectorUser?> FindByIdAsync(string userId, CancellationToken cancellationToken) =>
+            Task.FromResult<ProjectorUser?>(null);
+
+        public Task<ProjectorUser?> FindByNameAsync(
+            string normalizedUserName, CancellationToken cancellationToken) =>
+            Task.FromResult<ProjectorUser?>(null);
+
+        public Task<string> GetUserIdAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(user.Id.ToString());
+
+        public Task<string?> GetUserNameAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(user.UserName);
+
+        public Task SetUserNameAsync(
+            ProjectorUser user, string? userName, CancellationToken cancellationToken)
+        {
+            user.UserName = userName;
+            return Task.CompletedTask;
+        }
+
+        public Task<string?> GetNormalizedUserNameAsync(
+            ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(user.NormalizedUserName);
+
+        public Task SetNormalizedUserNameAsync(
+            ProjectorUser user, string? normalizedName, CancellationToken cancellationToken)
+        {
+            user.NormalizedUserName = normalizedName;
+            return Task.CompletedTask;
+        }
+
+        public Task SetPasswordHashAsync(
+            ProjectorUser user, string? passwordHash, CancellationToken cancellationToken)
+        {
+            user.PasswordHash = passwordHash;
+            return Task.CompletedTask;
+        }
+
+        public Task<string?> GetPasswordHashAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(user.PasswordHash);
+
+        public Task<bool> HasPasswordAsync(ProjectorUser user, CancellationToken cancellationToken) =>
+            Task.FromResult(user.PasswordHash is not null);
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Always empty, and answerable through EF Core's <c>*Async</c> LINQ operators
+    /// (<see cref="IAsyncQueryProvider"/>), which a plain <c>Enumerable.Empty&lt;T&gt;().AsQueryable()</c>
+    /// is not — <c>AnyAsync</c> against it throws rather than returning <see langword="false"/>.
+    /// Every EF Core query shape the store might someday send is out of scope on purpose: this
+    /// double exists only to let <c>Users</c> answer "is anything here" with "no".
+    /// </summary>
+    private sealed class EmptyAsyncQueryable<T> : IQueryable<T>, IAsyncEnumerable<T>
+    {
+        private readonly IQueryable<T> _empty = Enumerable.Empty<T>().AsQueryable();
+
+        public Type ElementType => _empty.ElementType;
+
+        public Expression Expression => _empty.Expression;
+
+        public IQueryProvider Provider { get; }
+
+        public EmptyAsyncQueryable() => Provider = new EmptyAsyncQueryProvider(_empty.Provider);
+
+        public IEnumerator<T> GetEnumerator() => _empty.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
+            new EmptyAsyncEnumerator();
+
+        private sealed class EmptyAsyncEnumerator : IAsyncEnumerator<T>
+        {
+            public T Current => throw new InvalidOperationException("The sequence is empty.");
+
+            public ValueTask<bool> MoveNextAsync() => ValueTask.FromResult(false);
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    /// <summary>The synchronous provider <see cref="EmptyAsyncQueryable{T}"/> hands EF Core's async operators.</summary>
+    private sealed class EmptyAsyncQueryProvider(IQueryProvider inner) : IAsyncQueryProvider
+    {
+        public IQueryable CreateQuery(Expression expression) => inner.CreateQuery(expression);
+
+        public IQueryable<TElement> CreateQuery<TElement>(Expression expression) =>
+            new EmptyAsyncQueryable<TElement>();
+
+        public object Execute(Expression expression) => inner.Execute(expression)!;
+
+        public TResult Execute<TResult>(Expression expression) => inner.Execute<TResult>(expression);
+
+        // Every EF Core `*Async` extension (AnyAsync, SingleOrDefaultAsync, ...) against an empty
+        // source resolves to the same constant its synchronous counterpart would (false, null,
+        // ...), so running the expression synchronously and wrapping the result is exact here —
+        // not merely a stand-in.
+        public TResult ExecuteAsync<TResult>(Expression expression, CancellationToken cancellationToken = default)
+        {
+            var resultType = typeof(TResult).IsGenericType
+                ? typeof(TResult).GetGenericArguments()[0]
+                : typeof(TResult);
+
+            var executed = inner.Execute(expression);
+
+            var fromResult = typeof(Task).GetMethod(nameof(Task.FromResult))!
+                .MakeGenericMethod(resultType);
+
+            return (TResult)fromResult.Invoke(null, [executed])!;
+        }
     }
 
     /// <summary>

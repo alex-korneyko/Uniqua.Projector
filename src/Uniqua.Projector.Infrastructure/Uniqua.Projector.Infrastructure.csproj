@@ -14,4 +14,13 @@
   <PropertyGroup>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!--
+      T42 (review 2026-09-22-2 N-11): IdentityAccountStoreTests builds IdentityAccountStore
+      directly, over a fake UserManager store, to prove the throw for an unexpected Identity
+      error — a case the public IAccountStore surface gives no other way to force.
+    -->
+    <InternalsVisibleTo Include="Uniqua.Projector.Api.IntegrationTests" />
+  </ItemGroup>
+
 </Project>
