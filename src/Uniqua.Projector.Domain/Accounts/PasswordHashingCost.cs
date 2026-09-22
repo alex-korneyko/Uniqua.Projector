@@ -15,10 +15,17 @@ namespace Uniqua.Projector.Domain.Accounts;
 public static class PasswordHashingCost
 {
     /// <summary>
-    /// PBKDF2-HMAC-SHA512 iterations, measured on the spec §6 reference machine as the count that
-    /// puts one verification above <see cref="MinimumVerificationTime"/>.
+    /// PBKDF2-HMAC-SHA512 iterations.
     /// </summary>
-    public const int IterationCount = 600_000;
+    /// <remarks>
+    /// spec §6 states two figures that pull against each other: a verification must cost at least
+    /// 100 ms, and signing in must stay inside a 600 ms p95. The count is chosen to satisfy the
+    /// first with room to spare while leaving most of the second for everything else — at 600_000,
+    /// which an earlier revision used, one verification alone cost about 640 ms and the sign-in
+    /// budget was already gone. 210_000 is also current public guidance for this algorithm, so the
+    /// number is not merely the largest one that fitted.
+    /// </remarks>
+    public const int IterationCount = 210_000;
 
     /// <summary>The floor spec §6 states.</summary>
     public static readonly TimeSpan MinimumVerificationTime = TimeSpan.FromMilliseconds(100);

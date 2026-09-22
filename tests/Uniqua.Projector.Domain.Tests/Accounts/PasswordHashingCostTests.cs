@@ -11,12 +11,15 @@ namespace Uniqua.Projector.Domain.Tests.Accounts;
 public sealed class PasswordHashingCostTests
 {
     [Fact]
-    public void The_configured_iteration_count_is_the_one_the_cost_floor_was_measured_at()
+    public void The_configured_iteration_count_is_the_one_both_spec_six_figures_were_reconciled_at()
     {
-        // Measured on the spec §6 reference machine: this count is what put a single PBKDF2
-        // verification above the 100 ms floor. IdentityAccountStoreTests times a real
-        // verification; this test is what fails if someone lowers the number without re-measuring.
-        Assert.Equal(600_000, PasswordHashingCost.IterationCount);
+        // spec §6 asks for at least 100 ms per verification AND a 600 ms p95 to sign in. This
+        // count clears the first with room to spare and leaves most of the second for everything
+        // else. IdentityAccountStoreTests times a real verification against the floor;
+        // LatencyBudgetTests measures the sign-in path against the ceiling. Changing this number
+        // means re-running both, which is why it is pinned here rather than left in a
+        // configuration file nobody reads.
+        Assert.Equal(210_000, PasswordHashingCost.IterationCount);
     }
 
     [Fact]
