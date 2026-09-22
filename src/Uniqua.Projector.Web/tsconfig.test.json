@@ -1,0 +1,11 @@
+{
+  // The test program: the app's settings, plus the test-only types, over the test files alone.
+  // Kept apart so describe/expect and jest-dom matchers are never ambient in shipped code.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "types": ["vite/client", "@testing-library/jest-dom/vitest"]
+  },
+  "include": ["src/**/__tests__/**/*", "src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**/*"],
+  "exclude": []
+}

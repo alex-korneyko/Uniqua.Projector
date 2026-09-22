@@ -37,7 +37,7 @@
 | T30 | Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session | ui | Alex Korneiko | S | — | done |
 | T31 | Keep register, sign-in and sign-out pending until the session is known, and stop truncating passwords | ui | Alex Korneiko | S | T29, T30 | done |
 | T32 | Define the theme tokens the vendored components read | ui | Alex Korneiko | S | — | done |
-| T33 | Type-check tests in their own program and drop vitest globals | config | Alex Korneiko | S | — | todo |
+| T33 | Type-check tests in their own program and drop vitest globals | config | Alex Korneiko | S | — | done |
 | T34 | Record lightningcss (MPL-2.0, build-time only) as a licence exception | docs | Alex Korneiko | S | — | todo |
 
 **Total:** 34 tasks (T21–T34 are follow-ups from review 2026-09-22), ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).

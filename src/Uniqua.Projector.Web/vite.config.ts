@@ -26,7 +26,7 @@ export default defineConfig({
   // two to disagree.
   test: {
     environment: 'jsdom',
-    globals: true,
+    // No globals: every test imports describe/it/expect from 'vitest', so none is ambient.
     setupFiles: ['./src/test/setup.ts'],
     css: true,
     include: ['src/**/*.test.{ts,tsx}'],
