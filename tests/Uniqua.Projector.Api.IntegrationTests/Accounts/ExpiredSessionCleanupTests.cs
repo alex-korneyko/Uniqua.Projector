@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Uniqua.Projector.Api.Accounts;
@@ -95,10 +96,10 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task A_long_gap_since_the_last_success_is_derivable_rather_than_alerted_on_here()
+    public async Task A_long_gap_since_the_last_success_is_derivable()
     {
-        // sad §7 wants the condition observable; escalating it is the alert's job, not this
-        // service's. So the figure is exposed and the judgement is left outside.
+        // The §7 figure itself, exposed for anything that wants to read it (a health check, a
+        // dashboard). The alert below is raised from the same property.
         factory.Clock.Reset();
         var cleanup = Cleanup();
         await RunSweepAsync();
@@ -108,6 +109,31 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
         factory.Clock.Advance(TimeSpan.FromHours(49));
         Assert.True(cleanup.HasNotSucceededRecently);
 
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public async Task A_run_that_leaves_the_sweep_stale_raises_the_section_7_alert()
+    {
+        // Review 2026-09-22 R-26. sad §6 flow 7: "No run has succeeded for more than 48 hours →
+        // raise the section 7 alert". The operator is the escalation path, so the alert is an
+        // error-level line an operator's log search can key on.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+        using var cleanup = new ExpiredSessionCleanupService(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(), factory.Clock, logger);
+
+        Assert.True(await cleanup.RunOnceAsync(_ => Task.FromResult(0), CancellationToken.None));
+        Assert.DoesNotContain(logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+
+        factory.Clock.Advance(TimeSpan.FromHours(49));
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("the database is unavailable"),
+            CancellationToken.None));
+
+        var alert = Assert.Single(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+        Assert.Equal(LogLevel.Error, alert.Level);
         factory.Clock.Reset();
     }
 

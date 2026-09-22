@@ -28,8 +28,8 @@ public sealed class ExpiredSessionCleanupService(
     public static readonly TimeSpan Interval = TimeSpan.FromDays(1);
 
     /// <summary>
-    /// How long without a successful sweep is worth someone's attention. sad §7 wants the
-    /// condition observable; escalating it belongs to an alert, not to this service.
+    /// How long without a successful sweep is worth someone's attention — sad §7's alert
+    /// threshold, raised by <see cref="RaiseAlertIfStale"/> after every run.
     /// </summary>
     public static readonly TimeSpan HealthyInterval = TimeSpan.FromHours(48);
 
@@ -99,6 +99,25 @@ public sealed class ExpiredSessionCleanupService(
         {
             // Released even on failure, so one bad run cannot lock the sweep out for good.
             _guard.Release();
+
+            RaiseAlertIfStale();
+        }
+    }
+
+    /// <summary>
+    /// sad §6 flow 7: "No run has succeeded for more than 48 hours — raise the section 7 alert".
+    /// There is no queue to replay and no retry to lean on; the operator is the escalation path,
+    /// so this is an error-level line with a stable event name for a log search to key on.
+    /// </summary>
+    private void RaiseAlertIfStale()
+    {
+        if (HasNotSucceededRecently)
+        {
+            logger.LogError(
+                "module=accounts event=session_cleanup_stale last_succeeded_at={LastSucceededAt} "
+                + "threshold_hours={ThresholdHours}",
+                LastSucceededAt?.ToString("O") ?? "never",
+                HealthyInterval.TotalHours);
         }
     }
 
