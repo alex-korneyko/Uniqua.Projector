@@ -265,7 +265,7 @@ architecture-map §Conventions), not as migration rows. **PII guard: every addre
   hashed by the real hasher. Fluent overrides for address and display name, so AC-03 and AC-11b each get a
   second account that collides on exactly one field.
 - `ALiveSession(account)` — `CreatedAt = now`, `LastSeenAt = now`, `RevokedAt = null`.
-- `AnIdleSession(account)` — `LastSeenAt = now − 14 days − 1 minute`: the AC-07 boundary.
+- `AnIdleSession(account)` — `LastSeenAt = now − 14 days − 1 hour − 1 minute`: the AC-07 boundary, measured 14 days plus the 1-hour activity-stamp slack after the last stamp (sad.md flow 5, `Session.IdleExpiryAfterLastStamp`).
 - `AnAgedSession(account)` — `CreatedAt = now − 90 days − 1 minute`, `LastSeenAt = now`: the AC-07b
   boundary, where the session is actively used and must still be refused.
 - `ARevokedSession(account)` — `RevokedAt = now`: AC-08 / AC-10.

@@ -48,7 +48,7 @@ the owner wants to learn.
 **Positive**
 - The most defensible possible answer to the question this project will actually be asked.
 - One authentication mechanism covers both the HTTP API and the push channel, with no second code path.
-- Identity brings password hashing, lockout after repeated attempts and password reset without custom code.
+- Identity brings password hashing, lockout after repeated attempts and password reset without custom code. **See `docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md`: the accounts-and-sessions feature supersedes the "lockout after repeated attempts" consequence with a progressive per-account delay, because a lockout triggered by a stranger would be unrecoverable in a feature that ships with no password-recovery path. The rest of this decision — Identity plus an httpOnly cookie on one origin — stands.**
 
 **Negative**
 - The client and the API must share an origin, so the API serves the built client and the tempting

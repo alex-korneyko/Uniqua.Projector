@@ -47,7 +47,7 @@ happens when someone guesses at a password — behaves exactly as the repository
 | AC-05b error | an unregistered address still costs a full password verification | integration | a dummy credential is verified, so the two refusals take a comparable time and the wait reveals nothing |
 | AC-05b error | the sign-in form shows one message for both refusals | component | the same rendered text in both cases, with nothing that distinguishes them |
 | AC-06 happy path | a session opened before the instance restarted is still recognised | integration | the session is recognised after a restart, because the key ring lives in the store and not in the process |
-| AC-07 domain invariant | a session idle for 14 days is expired | unit | the entity reports it dead one minute past the boundary and live one minute before it |
+| AC-07 domain invariant | a session idle for 14 days is expired | unit | the entity reports it dead one minute past 14 days + 1 hour after the last activity stamp, and live one minute before that boundary — the extra hour is the activity-stamp slack spec §6 allows (sad.md flow 5, `Session.IdleExpiryAfterLastStamp`) |
 | AC-07 domain invariant | an idle session is no longer recognised | integration | against a controllable clock, the request is not recognised and the sign-in form is presented |
 | AC-07 domain invariant | an ordinary read counts as activity and is stamped at most once an hour | integration | the first read moves last-seen-at, a second read within the hour does not, and the session's life is extended either way |
 | AC-07b domain invariant | a session opened 90 days ago is expired however recently it was seen | unit | the entity reports it dead on the absolute ceiling even with last-seen-at set to now |
@@ -74,7 +74,7 @@ happens when someone guesses at a password — behaves exactly as the repository
 - Display name at 50 and 51 characters (AC-01) → accepted, refused.
 - An address that cannot be an address, and an address differing from a registered one only in case or surrounding whitespace (AC-02b, AC-03) → the first refused as unusable, the second refused as already registered.
 - Sign-in with an address no account was ever registered with (AC-05b) → the wrong-password refusal, word for word and in a comparable time.
-- A session exactly at 14 days idle and one minute past it; one at 90 days old and one minute past it (AC-07, AC-07b) → live, dead, live, dead.
+- A session exactly at 14 days + 1 hour idle (measured from the last activity stamp) and one minute past it; one at 90 days old and one minute past it (AC-07, AC-07b) → live, dead, live, dead.
 - A cookie whose session record was never written, and one whose record says revoked (AC-10) → both refused, the sign-in form presented.
 - Two sessions of one account, one signed out (AC-08) → one revoked, the other still recognised.
 - The store unavailable on an ordinary read (AC-10) → fails closed: the failure view with retry is shown, never the account view. Recognition is a positive assertion; an outage answers neither "recognised" nor "not recognised", so it must never collapse into the sign-in form's ordinary "visitor" refusal, which would misreport a live session as one that was never signed in.

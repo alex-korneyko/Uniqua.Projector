@@ -143,11 +143,16 @@ src/Uniqua.Projector.Application/Accounts/
 ├── SignIn.cs               # use case: verify, apply the progressive delay, open a session
 ├── SignOut.cs              # use case: revoke this session, then announce it through a port
 └── Ports/                  # ISessionStore, ISessionReader, IAccountStore, IClock,
-                           # ISessionRevocationNotifier - declared here, implemented in Api
+                           # ISessionRevocationNotifier, IUnknownAddressAttempts - declared here;
+                           # ISessionRevocationNotifier is implemented in Api, the rest in
+                           # Infrastructure
 
 src/Uniqua.Projector.Infrastructure/Accounts/
 ├── SessionStore.cs         # EF Core implementation of the session ports
 ├── IdentityAccountStore.cs # ASP.NET Core Identity behind IAccountStore
+├── InMemoryUnknownAddressAttempts.cs  # IUnknownAddressAttempts: in-process counter behind an
+                                       # unregistered address's AC-05b delay curve (ADR 0010
+                                       # amendment, N-03) - accepted residual risk, not durable
 └── Migrations/             # accounts, sessions, data-protection keys
 
 src/Uniqua.Projector.Api/Accounts/
@@ -384,7 +389,7 @@ sequenceDiagram
             Spa-->>Account: Presents the sign-in form
         else Still live
             Api->>Infra: Stamp this request as activity on the session
-            Note over Infra,Db: persists last-seen-at on the session - written at most once an hour, which is the 1 hour of slack spec section 6 allows on expiry accuracy
+            Note over Infra,Db: persists last-seen-at on the session - written at most once an hour, which is the 1 hour of slack spec section 6 allows on expiry accuracy. Because the stamp can lag the true last request by up to that hour, the Session entity measures the AC-07 idle rule from the stamp plus the hour rather than from the stamp alone (Session.IdleExpiryAfterLastStamp) - so recognition is never wrong early, only late by at most the same hour the stamp already spends (review 2026-09-22-2 N-04)
             Infra->>Db: Update last-seen-at
             Db-->>Infra: Updated
             Api-->>Spa: Recognised, the request proceeds
@@ -493,7 +498,7 @@ sequenceDiagram
 
 **Flagged for the stages that follow — flags only, nothing was decided here.**
 
-- **The hourly activity stamp (flow 5) is a real trade-off with no decision record.** Writing `last-seen-at` at most once an hour is what keeps an ordinary read inside the 30 ms budget, and it spends exactly the 1 hour of slack spec §6 allows on expiry accuracy. It was confirmed during this pass but is not written down anywhere as a decision — a candidate for `/sdd:decide-adr`, alongside ADR 0008 whose per-request lookup it protects.
+- **The hourly activity stamp (flow 5) is a real trade-off, now recorded where it is spent.** Writing `last-seen-at` at most once an hour is what keeps an ordinary read inside the 30 ms budget, and it spends exactly the 1 hour of slack spec §6 allows on expiry accuracy — by making the AC-07 idle boundary 14 days plus that hour after the stamp, never 14 days flat, so the entity is never wrong early (review 2026-09-22-2 N-04, recorded in the flow 5 note above and in `Session.IdleExpiryAfterLastStamp`).
 - **`Operator` (flow 7) is a participant §5 does not declare.** It stands for whoever answers the §7 alert; the feature has no on-call role and none is invented here. The cleanup hosted service, the other participant flow 7 introduced, was added to the §5 Api decomposition during this pass.
 - **Participant naming diverges from the `sequences` default.** These flows name the real containers from §5 — «Web client», «HTTP API» and the rest — rather than the generic `<ui>` / `<service>` / `<data-store>` placeholders the stage normally uses, because the two flows already in this section set that convention and design has already named every container. Recorded so the divergence is a choice rather than an oversight.
 - **Two spec §8 open questions are visible in these flows but not closed by them.** Flow 2 already carries the first — how sign-out reaches an already-open live-update connection. Flow 5 touches the second: it counts an ordinary read as activity, and says nothing about traffic on a live-update connection, which §8's default treats as the one exception. Both are due before roadmap step 8.
