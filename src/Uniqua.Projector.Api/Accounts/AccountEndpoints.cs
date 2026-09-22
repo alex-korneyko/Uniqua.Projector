@@ -1,4 +1,6 @@
 using Uniqua.Projector.Application.Accounts;
+using Uniqua.Projector.Domain;
+using Uniqua.Projector.Domain.Accounts;
 
 namespace Uniqua.Projector.Api.Accounts;
 
@@ -26,7 +28,9 @@ public static class AccountEndpoints
 
             // Before the use case, so a refused registration cannot have touched the store — which
             // is flow 3's postcondition of "no account, no session, no counter".
-            var decision = limit.Check(source);
+            // The slot is reserved rather than merely checked, so concurrent submissions from one
+            // source cannot overrun it.
+            var decision = limit.Reserve(source);
             if (!decision.IsPermitted)
             {
                 // sad §7 asks for the source on this line. The submitted address is never logged.
@@ -38,14 +42,26 @@ public static class AccountEndpoints
                 return;
             }
 
-            var result = await register.ExecuteAsync(
-                request.Email ?? string.Empty,
-                request.Password ?? string.Empty,
-                request.DisplayName ?? string.Empty,
-                cancellationToken);
+            Result<RegisteredAccount, AccountError> result;
+            try
+            {
+                result = await register.ExecuteAsync(
+                    request.Email ?? string.Empty,
+                    request.Password ?? string.Empty,
+                    request.DisplayName ?? string.Empty,
+                    cancellationToken);
+            }
+            catch
+            {
+                limit.Release(source, decision);
+                throw;
+            }
 
             if (!result.IsSuccess)
             {
+                // AC-01b counts accounts registered. A refused submission created none, so the
+                // visitor correcting it keeps every slot they had.
+                limit.Release(source, decision);
                 await context.WriteAccountProblemAsync(result.Error!);
                 return;
             }

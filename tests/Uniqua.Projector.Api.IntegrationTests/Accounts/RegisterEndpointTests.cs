@@ -332,6 +332,48 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Refused_registrations_do_not_use_up_the_limit()
+    {
+        // AC-01b's Given is "5 accounts have already been registered from the same request
+        // source". A visitor corrected and resubmitting five times (AC-02, AC-03, AC-11b promise
+        // exactly that path) has registered nothing, and must not be told to wait.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        for (var refused = 0; refused < RegistrationRateLimit.PermittedPerWindow; refused++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Accounts, new { email = NewEmail(), password = "short", display_name = NewDisplayName() });
+
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        var accepted = await client.PostAsJsonAsync(
+            Accounts, new { email = NewEmail(), password = GoodPassword, display_name = NewDisplayName() });
+
+        Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+    }
+
+    [Fact]
+    public void Sources_whose_window_has_closed_are_forgotten()
+    {
+        // Review 2026-09-22 R-25: without pruning, the limiter keeps one entry per source address
+        // ever seen, which IPv6 address rotation makes unbounded.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+
+        for (var source = 0; source < 50; source++)
+        {
+            Assert.True(limit.Reserve($"198.51.100.{source}").IsPermitted);
+        }
+
+        clock.Advance(RegistrationRateLimit.Window + TimeSpan.FromSeconds(1));
+        Assert.True(limit.Reserve("203.0.113.9").IsPermitted);
+
+        Assert.Equal(1, limit.TrackedSourceCount);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     private static string NewEmail() => $"{Guid.NewGuid():N}@example.test";
