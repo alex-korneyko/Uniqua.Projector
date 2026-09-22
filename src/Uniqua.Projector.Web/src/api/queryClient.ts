@@ -40,8 +40,8 @@ function endSessionIfUnrecognised(client: QueryClient, error: unknown) {
     && error.code === sessionNotRecognised
     && client.getQueryData(sessionQueryKey) != null
   ) {
-    // null, not removed: null is "a known account whose session ended", which is what makes the
-    // visitor screens open on sign-in rather than on registration.
+    // null, not removed: null is "known to be signed out", so the shell shows the visitor screens
+    // at once instead of checking again first.
     client.setQueryData(sessionQueryKey, null)
   }
 }

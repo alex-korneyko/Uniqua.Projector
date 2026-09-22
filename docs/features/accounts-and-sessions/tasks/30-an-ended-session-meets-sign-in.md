@@ -30,6 +30,11 @@ status: "todo"
 - AC-07b — verbatim in [spec.md §5](../spec.md)
 - AC-10 — verbatim in [spec.md §5](../spec.md)
 
+> **Superseded in part, 2026-09-22 (spec §8):** the owner decided that *every* visitor sees the sign-in
+> form first, not only one whose session ended. The DoD's "a first visit with no session shows
+> registration" no longer holds; a first visit shows sign-in, with registration one click away inside
+> the card.
+
 ## Definition of Done
 
 - [ ] A composed AccountShell + VisitorScreens test: a 401 on /me refetch while an account is cached shows the sign-in form; sign-out shows the sign-in form; a first visit with no session shows registration; the switch between the two is inside the card; a 401 from a non-/me query clears the session.

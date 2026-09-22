@@ -13,9 +13,10 @@ import { VisitorScreens } from '@/features/auth/VisitorScreens'
  * one query client, the real shell and the real visitor screens. Review 2026-09-22 R-08 and R-09
  * found both halves wrong and invisible to the suites that test the pieces apart.
  *
- * AC-07, AC-07b and AC-10 all end "presents the sign-in form": someone whose session has ended
- * already has an account. A first-time arrival from the public link does not, which is why
- * registration stays the first screen for them (AC-01).
+ * Every visitor is met by the sign-in form first — the owner's decision of 2026-09-22 (spec §8).
+ * Most arrivals already have an account, and AC-07, AC-07b and AC-10 all end "presents the
+ * sign-in form". A stranger from the public link reaches registration unaided through the link
+ * inside the same card (AC-01), one click away.
  */
 
 const anAccount = {
@@ -69,7 +70,9 @@ function renderApp() {
 
   return render(
     <QueryClientProvider client={client}>
-      <AccountShell>{(visitor) => <VisitorScreens ended={visitor.ended} />}</AccountShell>
+      <AccountShell>
+        <VisitorScreens />
+      </AccountShell>
     </QueryClientProvider>,
   )
 }
@@ -77,16 +80,28 @@ function renderApp() {
 const signInButton = () => screen.findByRole('button', { name: /^sign in$/i })
 
 describe('a first-time arrival', () => {
-  it('is offered registration, with the way to sign in inside the card', async () => {
+  it('is met by the sign-in form, with the way to register inside the card', async () => {
     fetchMock.mockResolvedValue(notRecognised())
 
     renderApp()
 
-    expect(await screen.findByText('Create an account')).toBeInTheDocument()
+    expect(await signInButton()).toBeInTheDocument()
+    expect(screen.queryByText('Create an account')).not.toBeInTheDocument()
     // Inside <main>, not below a full-height one where it sits under the fold.
     expect(
-      within(screen.getByRole('main')).getByRole('button', { name: /already have an account/i }),
+      within(screen.getByRole('main')).getByRole('button', { name: /no account yet/i }),
     ).toBeInTheDocument()
+  })
+
+  it('reaches registration in one click, and can go back (AC-01)', async () => {
+    fetchMock.mockResolvedValue(notRecognised())
+    renderApp()
+
+    await userEvent.click(await screen.findByRole('button', { name: /no account yet/i }))
+    expect(await screen.findByText('Create an account')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /already have an account/i }))
+    expect(await signInButton()).toBeInTheDocument()
   })
 })
 
@@ -149,9 +164,7 @@ describe('a wrong password at sign-in', () => {
     // reset the form under the visitor's hands.
     fetchMock.mockResolvedValue(notRecognised())
     renderApp()
-    await userEvent.click(
-      await screen.findByRole('button', { name: /already have an account/i }),
-    )
+    await signInButton()
 
     fetchMock.mockResolvedValue(
       jsonResponse(401, {

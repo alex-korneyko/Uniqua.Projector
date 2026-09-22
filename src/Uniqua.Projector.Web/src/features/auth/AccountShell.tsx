@@ -7,10 +7,9 @@ interface AccountShellProps {
   /**
    * What a visitor is shown — the sign-in and registration screens. Passed in rather than imported
    * so this shell owns only the decision about which state we are in, and the screens can be
-   * tested and built without it. A function receives what the shell knows about the visitor —
-   * whether their session on this client just ended — so the screens need not ask again.
+   * tested and built without it.
    */
-  children: ReactNode | ((visitor: { ended: boolean }) => ReactNode)
+  children: ReactNode
 }
 
 /**
@@ -51,7 +50,7 @@ export function AccountShell({ children }: AccountShellProps) {
   }
 
   if (state.status === 'visitor') {
-    return <>{typeof children === 'function' ? children({ ended: state.ended }) : children}</>
+    return <>{children}</>
   }
 
   return (

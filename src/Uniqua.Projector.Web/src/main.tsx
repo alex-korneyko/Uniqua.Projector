@@ -12,7 +12,9 @@ import '@/index.css'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <AccountShell>{(visitor) => <VisitorScreens ended={visitor.ended} />}</AccountShell>
+      <AccountShell>
+        <VisitorScreens />
+      </AccountShell>
     </QueryClientProvider>
   </StrictMode>,
 )

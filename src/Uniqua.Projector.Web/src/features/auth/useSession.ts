@@ -16,15 +16,7 @@ export { sessionQueryKey }
  */
 export type SessionState =
   | { status: 'loading' }
-  | {
-      status: 'visitor'
-      /**
-       * True when this visitor had a session on this client and it ended — signed out, expired or
-       * revoked. They already own an account, so AC-07, AC-07b and AC-10 show them the sign-in
-       * form; a first-time arrival is shown registration (AC-01).
-       */
-      ended: boolean
-    }
+  | { status: 'visitor' }
   | { status: 'account'; account: Account }
   | { status: 'failed' }
 
@@ -89,7 +81,7 @@ function toState(query: {
   // Before the cached account: a refetch that is refused keeps the previous data, and showing it
   // would present an ended session as a live one (AC-10).
   if (query.error instanceof ApiError && query.error.isNotRecognised) {
-    return { status: 'visitor', ended: query.data !== undefined }
+    return { status: 'visitor' }
   }
 
   if (query.data != null) {
@@ -101,5 +93,5 @@ function toState(query: {
   }
 
   // data === null is a signed-out account: known, not pending.
-  return query.data === null ? { status: 'visitor', ended: true } : { status: 'loading' }
+  return query.data === null ? { status: 'visitor' } : { status: 'loading' }
 }
