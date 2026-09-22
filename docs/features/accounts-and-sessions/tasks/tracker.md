@@ -44,10 +44,10 @@
 | T37 | Seed the failure compare-and-set with the count already read, and return the count actually written under contention | infra | Alex Korneiko | S | — | done |
 | T38 | Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem | ports | Alex Korneiko | S | T35 | done |
 | T39 | Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves | tests | Alex Korneiko | S | — | done |
-| T40 | Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question | docs | Alex Korneiko | S | T35, T39 | todo |
+| T40 | Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question | docs | Alex Korneiko | S | T35, T39 | done |
 | T41 | Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert | infra | Alex Korneiko | S | — | done |
-| T42 | Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal | tests | Alex Korneiko | S | T35, T37, T38 | todo |
-| T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | todo |
+| T42 | Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal | tests | Alex Korneiko | S | T35, T37, T38 | done |
+| T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | done |
 | T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | done |
 | T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | todo |
 
