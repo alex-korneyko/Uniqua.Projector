@@ -20,6 +20,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
     private readonly MsSqlContainer _database = new MsSqlBuilder(SqlServerImage).Build();
 
+    /// <summary>
+    /// The container's connection string, so a test can interrogate the physical schema directly.
+    /// A migration's promise is about the shape of the store, and the EF Core model that produced
+    /// it cannot testify to what actually reached the database.
+    /// </summary>
+    public string ConnectionString => _database.GetConnectionString();
+
     async Task IAsyncLifetime.InitializeAsync()
     {
         await _database.StartAsync();
