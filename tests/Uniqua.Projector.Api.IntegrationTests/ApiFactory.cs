@@ -2,7 +2,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Testcontainers.MsSql;
+using Uniqua.Projector.Application.Accounts.Ports;
+using Uniqua.Projector.Api.IntegrationTests.Fixtures;
 using Uniqua.Projector.Infrastructure;
 
 namespace Uniqua.Projector.Api.IntegrationTests;
@@ -52,10 +56,30 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         await _database.DisposeAsync();
     }
 
+    /// <summary>
+    /// The clock the application runs on under test. Every time-dependent rule reads IClock, so a
+    /// 14-day or 90-day boundary is asserted by moving this rather than by waiting.
+    /// </summary>
+    public TestClock Clock { get; } = new();
+
+    /// <summary>The SQL the application actually sent, for the promises that are about shape.</summary>
+    public CommandRecorder Commands { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Default", _database.GetConnectionString());
         builder.UseEnvironment("Testing");
+
+        builder.ConfigureServices(services =>
+        {
+            // Replaces the system clock rather than sitting alongside it, so a rule that reached
+            // for DateTimeOffset.UtcNow instead of the port would visibly fail these tests.
+            services.RemoveAll<IClock>();
+            services.AddSingleton<IClock>(Clock);
+
+            // EF Core picks up interceptors registered in the application's service provider.
+            services.AddSingleton<IInterceptor>(Commands);
+        });
     }
 
     /// <summary>

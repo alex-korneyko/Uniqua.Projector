@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Uniqua.Projector.Application.Accounts.Ports;
@@ -26,10 +27,17 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddDbContext<AppDbContext>(options =>
+        services.AddDbContext<AppDbContext>((provider, options) =>
+        {
             options.UseSqlServer(
                 configuration.GetConnectionString("Default"),
-                sql => sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)));
+                sql => sql.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName));
+
+            // Any IInterceptor registered in the container is attached here. This is the one place
+            // the context is configured, so it is the one place an interceptor can be added
+            // without a second copy of the connection wiring drifting away from this one.
+            options.AddInterceptors(provider.GetServices<IInterceptor>());
+        });
 
         // ADR 0009: the key ring goes in the store that already exists, so a redeploy carries it
         // and the database backup covers it with no second artefact to remember.
@@ -78,5 +86,12 @@ public static class DependencyInjection
         services.AddSingleton<DummyCredential>();
         services.AddSingleton<IClock, SystemClock>();
         services.AddScoped<IAccountStore, IdentityAccountStore>();
+
+        // One implementation, registered against both ports: they are two views of one table, and
+        // keeping them separate interfaces is what stops the recognition path acquiring the write
+        // path's needs.
+        services.AddScoped<SessionStore>();
+        services.AddScoped<ISessionReader>(services => services.GetRequiredService<SessionStore>());
+        services.AddScoped<ISessionStore>(services => services.GetRequiredService<SessionStore>());
     }
 }
