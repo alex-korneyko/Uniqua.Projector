@@ -137,6 +137,38 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
         factory.Clock.Reset();
     }
 
+    [Fact]
+    public async Task A_first_sweep_that_fails_at_construction_time_raises_no_alert()
+    {
+        // Review 2026-09-22 (re-review) N-08. "Never succeeded" must not by itself count as stale:
+        // a process that has just started and whose first sweep fails (for example because the
+        // database is not ready yet after a redeploy) has not yet had 48 hours to prove itself.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+        using var cleanup = new ExpiredSessionCleanupService(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(), factory.Clock, logger);
+
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("the database is not ready yet"),
+            CancellationToken.None));
+
+        Assert.DoesNotContain(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+
+        // Once the process itself is old enough without ever having succeeded, the alert does
+        // fire — "no evidence of success" past the threshold still deserves attention.
+        factory.Clock.Advance(TimeSpan.FromHours(49));
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("still unavailable"),
+            CancellationToken.None));
+
+        var alert = Assert.Single(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+        Assert.Equal(LogLevel.Error, alert.Level);
+
+        factory.Clock.Reset();
+    }
+
     // ---- The guard and the failure behaviour -----------------------------------------------------
 
     [Fact]

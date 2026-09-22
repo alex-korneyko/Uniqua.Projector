@@ -39,6 +39,13 @@ public sealed class ExpiredSessionCleanupService(
     /// </summary>
     private readonly SemaphoreSlim _guard = new(1, 1);
 
+    /// <summary>
+    /// When this instance was constructed — the fallback staleness baseline for a process that has
+    /// never yet succeeded, so a first sweep failing right at startup does not read as 48 hours
+    /// overdue (review 2026-09-22 re-review, N-08).
+    /// </summary>
+    private readonly DateTimeOffset _startedAt = clock.UtcNow;
+
     /// <summary>How many rows the last successful run removed — the first §7 figure.</summary>
     public int LastRemovedCount { get; private set; }
 
@@ -46,12 +53,13 @@ public sealed class ExpiredSessionCleanupService(
     public DateTimeOffset? LastSucceededAt { get; private set; }
 
     /// <summary>
-    /// Whether the gap since the last success has grown past <see cref="HealthyInterval"/>. A
-    /// process that has never yet swept counts as unhealthy, because "no evidence of success" and
-    /// "evidence of failure" deserve the same attention here.
+    /// Whether the gap since the last success — or, absent any success, since this instance was
+    /// constructed — has grown past <see cref="HealthyInterval"/>. "No evidence of success" still
+    /// deserves attention once the process itself has had long enough to prove itself, but not
+    /// before: a first sweep that fails at t=0 is not yet 48 hours overdue.
     /// </summary>
     public bool HasNotSucceededRecently =>
-        LastSucceededAt is null || clock.UtcNow - LastSucceededAt.Value > HealthyInterval;
+        clock.UtcNow - (LastSucceededAt ?? _startedAt) > HealthyInterval;
 
     /// <summary>
     /// Runs one sweep under the guard, reporting whether it actually ran and succeeded.
