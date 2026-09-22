@@ -39,16 +39,16 @@
 | T32 | Define the theme tokens the vendored components read | ui | Alex Korneiko | S | — | done |
 | T33 | Type-check tests in their own program and drop vitest globals | config | Alex Korneiko | S | — | done |
 | T34 | Record lightningcss (MPL-2.0, build-time only) as a licence exception | docs | Alex Korneiko | S | — | done |
-| T35 | Cap failed sign-ins per request source, counted before the verification, so hanging up no longer escapes the AC-12 delay | ports | Alex Korneiko | S | — | todo |
+| T35 | Cap failed sign-ins per request source, counted before the verification, so hanging up no longer escapes the AC-12 delay | ports | Alex Korneiko | S | — | done |
 | T36 | Render the sign-in-rate-limited refusal on the sign-in screen with its statement and wait | ui | Alex Korneiko | S | T35 | todo |
-| T37 | Seed the failure compare-and-set with the count already read, and return the count actually written under contention | infra | Alex Korneiko | S | — | todo |
+| T37 | Seed the failure compare-and-set with the count already read, and return the count actually written under contention | infra | Alex Korneiko | S | — | done |
 | T38 | Name both password bounds, lock every declared problem in the contract test, and give a malformed body a declared problem | ports | Alex Korneiko | S | T35 | todo |
-| T39 | Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves | tests | Alex Korneiko | S | — | todo |
+| T39 | Prove an unavailable session store fails closed, and word the test-plan row as the UI behaves | tests | Alex Korneiko | S | — | done |
 | T40 | Record the unknown-address counter limits, the 14 days + 1 hour boundary, and close the ADR 0003 question | docs | Alex Korneiko | S | T35, T39 | todo |
-| T41 | Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert | infra | Alex Korneiko | S | — | todo |
+| T41 | Measure cleanup staleness from the last success or the process start, so one failed startup sweep raises no alert | infra | Alex Korneiko | S | — | done |
 | T42 | Prove the registration limit holds under parallel submissions, and that an unexpected Identity error is not reported as a uniqueness refusal | tests | Alex Korneiko | S | T35, T37, T38 | todo |
 | T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | todo |
-| T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | todo |
+| T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | done |
 | T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | todo |
 
 **Total:** 45 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review), ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).
