@@ -1,10 +1,7 @@
 using Uniqua.Projector.Api;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.HttpOverrides;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Application;
-using Uniqua.Projector.Application.Accounts.Ports;
 using Uniqua.Projector.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -19,76 +16,17 @@ builder.Configuration
 // Each layer is wired through its own AddXxx extension; this file names no type from inside a layer.
 builder.Services.AddProblemDetailsHandling();
 builder.Services.AddAntiforgeryGuard();
+builder.Services.AddTrustedProxies(builder.Configuration, builder.Environment);
 
-// Recognition runs in the request pipeline but reads the session record only through an
-// Application port (sad §5). The scheme is the default, so RequireAuthorization on an endpoint
-// means "recognise a session" and nothing else has to be said.
-builder.Services
-    .AddAuthentication(SessionAuthenticationHandler.SchemeName)
-    .AddScheme<AuthenticationSchemeOptions, SessionAuthenticationHandler>(
-        SessionAuthenticationHandler.SchemeName, configureOptions: null);
-builder.Services.AddAuthorization();
-
-// AC-01b's limit counts per request source, so the application has to decide whose report of a
-// client address it believes.
-//
-// CAREFUL: an EMPTY KnownProxies/KnownIPNetworks pair does not mean "trust nobody". The framework's
-// middleware only checks the caller against those lists when at least one entry exists — with both
-// empty it applies X-Forwarded-For unconditionally, so any caller could name its own source and the
-// limit would be decorative. The headers are therefore enabled only when a proxy is actually
-// configured, and the middleware is left out of the pipeline entirely otherwise.
-var trustedProxies = (builder.Configuration.GetSection("TrustedProxies").Get<string[]>() ?? [])
-    .Select(value => System.Net.IPAddress.TryParse(value, out var address) ? address : null)
-    .OfType<System.Net.IPAddress>()
-    .ToArray();
-
-if (trustedProxies.Length > 0)
-{
-    builder.Services.Configure<ForwardedHeadersOptions>(options =>
-    {
-        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-        options.KnownProxies.Clear();
-        options.KnownIPNetworks.Clear();
-
-        foreach (var proxy in trustedProxies)
-        {
-            options.KnownProxies.Add(proxy);
-        }
-    });
-}
-
-builder.Services.AddSingleton<RegistrationRateLimit>();
-
-// Registered BEFORE AddApplication, whose own registration is a TryAdd — so this is the one that
-// wins and the no-op default stands down without that file having to know this one exists.
-// A failing sweep must never take the application down with it, which is why the service swallows
-// its own failures rather than relying on the host to be forgiving.
-builder.Services.AddSingleton<ExpiredSessionCleanupService>();
-builder.Services.AddHostedService(
-    provider => provider.GetRequiredService<ExpiredSessionCleanupService>());
-
-builder.Services.AddSingleton<HubSessionRevocationNotifier>();
-builder.Services.AddSingleton<ISessionRevocationNotifier>(
-    provider => provider.GetRequiredService<HubSessionRevocationNotifier>());
+// Before AddApplication, whose own notifier registration is a TryAdd — see AddAccountsApi.
+builder.Services.AddAccountsApi();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
 
-// Before anything reads a client address, so the limit counts the right source. Absent a
-// configured proxy this is deliberately not in the pipeline at all — see the note above.
-if (trustedProxies.Length > 0)
-{
-    app.UseForwardedHeaders();
-    app.Logger.LogInformation(
-        "module=accounts event=forwarded_headers_trusted proxies={Count}", trustedProxies.Length);
-}
-else
-{
-    app.Logger.LogInformation(
-        "module=accounts event=forwarded_headers_ignored "
-        + "reason=no_trusted_proxy_configured consequence=request_source_is_the_connection");
-}
+// Before anything reads a client address, so the limit counts the right source.
+app.UseTrustedProxies();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();

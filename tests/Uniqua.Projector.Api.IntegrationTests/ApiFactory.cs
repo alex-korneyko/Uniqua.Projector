@@ -35,6 +35,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     }
 
     /// <summary>
+    /// The reverse proxy this host is told to trust. From TEST-NET-1 (RFC 5737), so it can never be
+    /// a real peer; every other test request arrives from a 198.18.0.0/15 peer and is therefore
+    /// untrusted, which is what keeps A_forwarded_address_from_an_untrusted_caller_is_ignored honest.
+    /// </summary>
+    public const string TrustedProxy = "192.0.2.1";
+
+    /// <summary>
     /// The container's connection string, so a test can interrogate the physical schema directly.
     /// A migration's promise is about the shape of the store, and the EF Core model that produced
     /// it cannot testify to what actually reached the database.
@@ -68,6 +75,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Default", _database.GetConnectionString());
+        builder.UseSetting("TrustedProxies:0", TrustedProxy);
         builder.UseEnvironment("Testing");
 
         builder.ConfigureServices(services =>
@@ -116,6 +124,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseSetting("ConnectionStrings:Default", _connectionString);
+            builder.UseSetting("TrustedProxies:0", TrustedProxy);
             builder.UseEnvironment("Testing");
 
             if (_clock is not null)

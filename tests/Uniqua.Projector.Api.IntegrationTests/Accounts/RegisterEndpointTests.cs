@@ -394,6 +394,38 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    [Fact]
+    public async Task A_forwarded_address_from_the_configured_proxy_is_the_request_source()
+    {
+        // spec §6.1: ignoring the proxy's report "would key every visitor to the proxy's own
+        // address and close registration for the whole world after five accounts". Two visitors
+        // behind the one proxy must each get their own five.
+        factory.Clock.Reset();
+        var viaProxy = await ClientAsync(ApiFactory.TrustedProxy);
+        var first = $"203.0.113.{Random.Shared.Next(1, 254)}";
+        var second = $"198.51.100.{Random.Shared.Next(1, 254)}";
+
+        for (var accepted = 0; accepted < RegistrationRateLimit.PermittedPerWindow; accepted++)
+        {
+            Assert.Equal(HttpStatusCode.Created, (await RegisterForwardedAsync(viaProxy, first)).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, (await RegisterForwardedAsync(viaProxy, first)).StatusCode);
+        Assert.Equal(HttpStatusCode.Created, (await RegisterForwardedAsync(viaProxy, second)).StatusCode);
+    }
+
+    private static Task<HttpResponseMessage> RegisterForwardedAsync(HttpClient client, string forwardedFor)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, Accounts)
+        {
+            Content = JsonContent.Create(
+                new { email = NewEmail(), password = GoodPassword, display_name = NewDisplayName() }),
+        };
+        request.Headers.Add("X-Forwarded-For", forwardedFor);
+
+        return client.SendAsync(request);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     private static string NewEmail() => $"{Guid.NewGuid():N}@example.test";
@@ -429,10 +461,10 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
     /// A client that already holds the antiforgery pair a write needs, and that appears to come
     /// from a peer of its own so the per-source limit counts only this test's attempts.
     /// </summary>
-    private async Task<HttpClient> ClientAsync()
+    private async Task<HttpClient> ClientAsync(string? peer = null)
     {
         var client = factory.CreateClient();
-        client.DefaultRequestHeaders.Add(TestPeerAddress.HeaderName, TestPeerAddress.Fresh());
+        client.DefaultRequestHeaders.Add(TestPeerAddress.HeaderName, peer ?? TestPeerAddress.Fresh());
 
         var response = await client.GetAsync("/health");
 

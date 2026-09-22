@@ -31,7 +31,7 @@
 | T24 | Count only accepted registrations against the per-source limit and prune stale sources | ports | Alex Korneiko | S | — | done |
 | T25 | Accept every address MailAddress accepts and stop mapping unexpected Identity errors to a uniqueness refusal | infra | Alex Korneiko | S | T21 | done |
 | T26 | Return the stored address from register and sign-in, declare display_name_invalid, and prove the id is stable across the account's life | ports | Alex Korneiko | S | T22, T24 | done |
-| T27 | Move Api registrations into AddAccountsApi, require TrustedProxies outside Development, and prove a trusted proxy's forwarded address is honoured | wiring | Alex Korneiko | S | T24, T26 | todo |
+| T27 | Move Api registrations into AddAccountsApi, require TrustedProxies outside Development, and prove a trusted proxy's forwarded address is honoured | wiring | Alex Korneiko | S | T24, T26 | done |
 | T28 | Raise the 48-hour cleanup alert as an error log so sad §7 monitoring can fire | infra | Alex Korneiko | S | — | todo |
 | T29 | Render a refusal's title as its statement and its detail as the reason | ui | Alex Korneiko | S | — | todo |
 | T30 | Present the sign-in form when a known session ends, and treat a 401 from any call as the end of the session | ui | Alex Korneiko | S | — | todo |

@@ -101,7 +101,7 @@ public sealed class DataProtectionKeyRingTests(ApiFactory factory)
             .GetRequiredService<IOptions<DataProtectionOptions>>()
             .Value.ApplicationDiscriminator;
 
-        Assert.Equal(DependencyInjection.DataProtectionApplicationName, discriminator);
+        Assert.Equal(Infrastructure.DependencyInjection.DataProtectionApplicationName, discriminator);
         Assert.False(string.IsNullOrWhiteSpace(discriminator));
     }
 }
