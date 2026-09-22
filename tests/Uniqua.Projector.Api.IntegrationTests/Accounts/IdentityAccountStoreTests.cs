@@ -116,7 +116,7 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
 
         for (var attempt = 0; attempt < 20; attempt++)
         {
-            await store.RecordFailureAsync(account.Id, CancellationToken.None);
+            await Fail(store, account.Id);
         }
 
         Assert.True(await store.VerifyPasswordAsync(
@@ -132,8 +132,8 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
         var store = Store(scope);
         var account = await CreateAccountAsync(store);
 
-        await store.RecordFailureAsync(account.Id, CancellationToken.None);
-        await store.RecordFailureAsync(account.Id, CancellationToken.None);
+        await Fail(store, account.Id);
+        await Fail(store, account.Id);
 
         var reread = await store.FindByEmailAsync(account.Email, CancellationToken.None);
 
@@ -147,6 +147,8 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
     {
         // Review 2026-09-22 R-03: parallel guesses must not all read one stale count. Each write
         // that wins returns the number it wrote, so six at once are failures 1 to 6, not six 1s.
+        // Every caller shares the seed a fresh account actually has (no failures yet), the same
+        // way six sign-in requests would each start from their own FindByEmailAsync.
         factory.Clock.Reset();
         Guid accountId;
         using (var setup = factory.Services.CreateScope())
@@ -157,10 +159,127 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
         var numbers = await Task.WhenAll(Enumerable.Range(0, 6).Select(async _ =>
         {
             using var scope = factory.Services.CreateScope();
-            return await Store(scope).RecordFailureAsync(accountId, CancellationToken.None);
+            return await Store(scope).RecordFailureAsync(accountId, 0, null, CancellationToken.None);
         }));
 
         Assert.Equal(Enumerable.Range(1, 6), numbers.Order());
+    }
+
+    // ---- N-09 / N-10: the seeded compare-and-set, and an honest count under contention ----------
+
+    [Fact]
+    public async Task An_uncontended_failure_issues_one_update_and_no_extra_select()
+    {
+        // N-10: FindByEmailAsync already read the count and the instant; seeding the first
+        // compare-and-set round with them must make an uncontended failure cost exactly the one
+        // UPDATE, never a SELECT to re-fetch what the caller already had.
+        using var scope = factory.Services.CreateScope();
+        var store = Store(scope);
+        var account = await CreateAccountAsync(store);
+        factory.Commands.Clear();
+
+        await store.RecordFailureAsync(
+            account.Id, account.ConsecutiveFailures, account.LastFailedAttemptAt, CancellationToken.None);
+
+        var statements = factory.Commands.Statements;
+        Assert.Single(statements);
+        Assert.Contains("UPDATE", statements.Single(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task A_stale_seed_costs_one_re_read_and_still_records_the_true_count()
+    {
+        // N-10's other half: a seed that no longer matches (another request already wrote) must
+        // not be trusted blindly — the store re-reads once and writes the count that read implies,
+        // not something derived from the stale seed.
+        using var scope = factory.Services.CreateScope();
+        var store = Store(scope);
+        var account = await CreateAccountAsync(store);
+        await store.RecordFailureAsync(
+            account.Id, account.ConsecutiveFailures, account.LastFailedAttemptAt, CancellationToken.None);
+
+        // Seeded with the account's original (now stale) values — as if this caller's own
+        // FindByEmailAsync had raced a moment before the failure above landed.
+        var returned = await store.RecordFailureAsync(
+            account.Id, account.ConsecutiveFailures, account.LastFailedAttemptAt, CancellationToken.None);
+
+        Assert.Equal(2, returned);
+
+        var reread = await store.FindByEmailAsync(account.Email, CancellationToken.None);
+        Assert.NotNull(reread);
+        Assert.Equal(2, reread.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public async Task Sustained_contention_returns_the_count_actually_written_not_a_stale_one()
+    {
+        // N-09: once the retry budget is spent, the fallback's blind increment must be reported
+        // honestly — the count the write actually landed as, never the `next` a stale earlier
+        // read predicted. Real, heavy concurrent writing against one row is what forces the
+        // compare-and-set to keep losing for the whole retry budget.
+        const int HammerWorkers = 4;
+
+        Guid accountId;
+        using (var setup = factory.Services.CreateScope())
+        {
+            accountId = (await CreateAccountAsync(Store(setup))).Id;
+        }
+
+        using var stop = new CancellationTokenSource();
+        var hammer = Task.WhenAll(Enumerable.Range(0, HammerWorkers).Select(_ => Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                try
+                {
+                    await factory.ExecuteAsync(
+                        $"""
+                        UPDATE [dbo].[AspNetUsers]
+                        SET [AccessFailedCount] = [AccessFailedCount] + 1,
+                            [LastFailedAttemptAt] = SYSDATETIMEOFFSET()
+                        WHERE [Id] = '{accountId}';
+                        """);
+                }
+                catch (Exception)
+                {
+                    // A row briefly locked by the call under test is expected; the point of this
+                    // loop is to keep the row moving, not to win every single race.
+                }
+            }
+        })));
+
+        // Let the hammer get well ahead before the call under test even starts, so its first
+        // round already loses and the row keeps moving throughout the retry budget rather than
+        // racing the thread pool's own warm-up.
+        while (await factory.ScalarAsync<int>(
+                   $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{accountId}'")
+               < 50)
+        {
+        }
+
+        // A deliberately stale seed: the row has already moved by the time this call starts, and
+        // the hammer above keeps moving it for the whole retry budget, so every round loses.
+        int returned;
+        using (var scope = factory.Services.CreateScope())
+        {
+            returned = await Store(scope).RecordFailureAsync(
+                accountId, 0, null, CancellationToken.None);
+        }
+
+        // Stop the hammer the instant the call under test returns, then give any single write
+        // already in flight per worker time to land before reading — a small, bounded margin
+        // rather than an open-ended race.
+        stop.Cancel();
+        await hammer;
+
+        var stored = await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{accountId}'");
+
+        // At most one more write per hammer worker can have been in flight — already started,
+        // uncancellable — at the instant the call under test returned. A correct implementation
+        // never reports less than that band; the pre-fix bug reported a count computed long
+        // before the fallback write and regularly missed by far more than this band.
+        Assert.InRange(returned, stored - HammerWorkers, stored);
     }
 
     [Fact]
@@ -169,7 +288,7 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
         using var scope = factory.Services.CreateScope();
         var store = Store(scope);
         var account = await CreateAccountAsync(store);
-        await store.RecordFailureAsync(account.Id, CancellationToken.None);
+        await Fail(store, account.Id);
 
         await store.ResetFailuresAsync(account.Id, CancellationToken.None);
 
@@ -241,6 +360,14 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
         Assert.False(refused.IsSuccess);
         Assert.Same(AccountErrors.EmailTaken, refused.Error);
     }
+
+    /// <summary>
+    /// Records a failure without caring about the seed's accuracy — tests that only need the
+    /// count to advance, not to prove anything about the compare-and-set itself, seed with (0,
+    /// null) and let the store's own re-read fall back when that no longer matches.
+    /// </summary>
+    private static Task<int> Fail(IAccountStore store, Guid accountId) =>
+        store.RecordFailureAsync(accountId, 0, null, CancellationToken.None);
 
     private static async Task<StoredAccount> CreateAccountAsync(IAccountStore store)
     {

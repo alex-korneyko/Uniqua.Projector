@@ -47,7 +47,22 @@ public interface IAccountStore
     /// is what gives parallel guesses against one account each a higher number: the value comes
     /// from the write that won, not from a read every one of them shared.
     /// </remarks>
-    Task<int> RecordFailureAsync(Guid accountId, CancellationToken cancellationToken);
+    /// <param name="accountId">The account the failure is recorded against.</param>
+    /// <param name="knownConsecutiveFailures">
+    /// The count the caller already read, from the same lookup that found the account — the store
+    /// uses it as its first compare-and-set expectation, so an uncontended failure costs one
+    /// UPDATE and no extra SELECT. If it no longer matches what is stored, the store re-reads and
+    /// retries; only a lost race costs the extra round trip.
+    /// </param>
+    /// <param name="knownLastFailedAttemptAt">
+    /// The instant that came from the same lookup as <paramref name="knownConsecutiveFailures"/>,
+    /// paired with it in the same way.
+    /// </param>
+    Task<int> RecordFailureAsync(
+        Guid accountId,
+        int knownConsecutiveFailures,
+        DateTimeOffset? knownLastFailedAttemptAt,
+        CancellationToken cancellationToken);
 
     /// <summary>Clears the count and the instant together, on a correct password.</summary>
     Task ResetFailuresAsync(Guid accountId, CancellationToken cancellationToken);

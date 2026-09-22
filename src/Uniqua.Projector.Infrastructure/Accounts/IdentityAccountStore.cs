@@ -150,31 +150,45 @@ internal sealed class IdentityAccountStore(
         return Task.CompletedTask;
     }
 
-    public async Task<int> RecordFailureAsync(Guid accountId, CancellationToken cancellationToken)
+    public async Task<int> RecordFailureAsync(
+        Guid accountId,
+        int knownConsecutiveFailures,
+        DateTimeOffset? knownLastFailedAttemptAt,
+        CancellationToken cancellationToken)
     {
         // Compare-and-set rather than a blind increment. The next count depends on the stored
         // instant (GuessingDelay owns the 15-minute reset), so it is computed from a read and then
         // written only if nobody else wrote in between; a concurrent failure makes the write miss
         // and the loop reads again. Each of N parallel guesses therefore ends up with its own,
         // higher number instead of all of them sharing the one they read.
+        //
+        // The first round's expectation is the pair the caller already read (from the same lookup
+        // that found the account), not a fresh SELECT: an uncontended failure is then one UPDATE
+        // and nothing else. Only a lost race — the write affecting zero rows — pays for a re-read.
         var now = clock.UtcNow;
         var next = 1;
+        var storedCount = knownConsecutiveFailures;
+        var storedAt = knownLastFailedAttemptAt;
 
         for (var attempt = 0; attempt < MaxFailureWriteAttempts; attempt++)
         {
-            var current = await users.Users
-                .AsNoTracking()
-                .Where(user => user.Id == accountId)
-                .Select(user => new { user.AccessFailedCount, user.LastFailedAttemptAt })
-                .SingleOrDefaultAsync(cancellationToken);
-
-            if (current is null)
+            if (attempt > 0)
             {
-                return 0;
+                var current = await users.Users
+                    .AsNoTracking()
+                    .Where(user => user.Id == accountId)
+                    .Select(user => new { user.AccessFailedCount, user.LastFailedAttemptAt })
+                    .SingleOrDefaultAsync(cancellationToken);
+
+                if (current is null)
+                {
+                    return 0;
+                }
+
+                storedCount = current.AccessFailedCount;
+                storedAt = current.LastFailedAttemptAt;
             }
 
-            var storedCount = current.AccessFailedCount;
-            var storedAt = current.LastFailedAttemptAt;
             next = GuessingDelay.CountAfterFailure(storedCount, storedAt, now);
 
             var written = await users.Users
@@ -197,7 +211,10 @@ internal sealed class IdentityAccountStore(
         }
 
         // Sustained contention on one account: fall back to a blind increment so the failure is
-        // still counted. It can only overstate the count, which errs towards a longer delay.
+        // still counted. `next` was computed from the last read and is stale by construction —
+        // this round is only reached because something else kept writing after that read — so the
+        // count actually stored is read back rather than returned. Reporting the stale `next`
+        // would understate the delay exactly when many guesses are racing (N-09).
         await users.Users
             .Where(user => user.Id == accountId)
             .ExecuteUpdateAsync(
@@ -206,8 +223,14 @@ internal sealed class IdentityAccountStore(
                     .SetProperty(user => user.LastFailedAttemptAt, now),
                 cancellationToken);
 
+        var stored = await users.Users
+            .AsNoTracking()
+            .Where(user => user.Id == accountId)
+            .Select(user => user.AccessFailedCount)
+            .SingleOrDefaultAsync(cancellationToken);
+
         logger.LogInformation("module=accounts event=sign_in_failure_recorded contended=true");
-        return next;
+        return stored;
     }
 
     public Task ResetFailuresAsync(Guid accountId, CancellationToken cancellationToken) =>

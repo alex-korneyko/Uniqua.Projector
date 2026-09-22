@@ -53,7 +53,11 @@ public sealed class SignIn(
             // Recorded first, and on a token no client can cancel. A guesser who hangs up once the
             // verification has cost what it costs already knows the answer; if the count were
             // written after the wait, hanging up would skip it and the curve would never grow.
-            var failure = await accounts.RecordFailureAsync(account.Id, CancellationToken.None);
+            var failure = await accounts.RecordFailureAsync(
+                account.Id,
+                account.ConsecutiveFailures,
+                account.LastFailedAttemptAt,
+                CancellationToken.None);
 
             // The delay is served only on failure. A correct password is never held, which is what
             // keeps the account usable to its owner no matter how hard anyone else is guessing
