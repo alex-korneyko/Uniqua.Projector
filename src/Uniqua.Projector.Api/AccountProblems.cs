@@ -40,6 +40,8 @@ public static class AccountProblems
         Row("accounts.sign_in_rate_limited", 429, "Sign-in is temporarily limited",
             "Too many failed sign-in attempts have come from here recently.",
             carriesRetryAfter: true),
+        Row("accounts.request_malformed", 400, "The request body could not be read",
+            "The request body must be a JSON object matching the documented shape."),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>

@@ -160,6 +160,28 @@ public sealed class SessionEndpointTests(ApiFactory factory)
             value => value.StartsWith($"{SessionCookie.Name}=", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task A_malformed_body_is_refused_with_the_contracts_code_and_no_framework_message()
+    {
+        // review 2026-09-22-2 N-06c: /sessions declared no 400 at all, and model binding used to
+        // fail with no declared `code`. This is the one declared problem for an unreadable body.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsync(
+            Sessions,
+            new StringContent("{ not json", System.Text.Encoding.UTF8, "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(
+            "accounts.request_malformed",
+            JsonDocument.Parse(body).RootElement.GetProperty("code").GetString());
+        Assert.DoesNotContain("JsonException", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Text.Json", body, StringComparison.Ordinal);
+    }
+
     // ---- AC-12 / AC-05b: the per-source failed-sign-in cap (review 2026-09-22-2 N-01) -----------
 
     [Fact]

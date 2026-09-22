@@ -26,13 +26,13 @@ public static class AccountErrors
         "The address or the password is incorrect.");
 
     /// <summary>
-    /// AC-02. The bounds come from the acceptance criterion, not from a column. The sentence is
-    /// the contract's, which states only the minimum — see the note in Api/AccountProblems.cs
-    /// about what a too-long password is currently told.
+    /// AC-02. The bounds come from the acceptance criterion, not from a column, and the sentence
+    /// names both of them: a password shorter than 8 characters and one longer than 128 are the
+    /// same refusal, so the wording has to be true of either.
     /// </summary>
     public static readonly AccountError PasswordInvalid = new(
         "accounts.password_invalid",
-        "A password must be at least 8 characters long.");
+        "A password must be between 8 and 128 characters long.");
 
     /// <summary>AC-02b.</summary>
     public static readonly AccountError EmailInvalid = new(

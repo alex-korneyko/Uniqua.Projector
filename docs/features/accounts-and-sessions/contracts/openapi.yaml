@@ -91,7 +91,9 @@ paths:
                 display_name: "Test User"
         "400":
           description: |
-            The submission is malformed (sad.md §6 flow 3, inner branches). `accounts.password_invalid`
+            The submission is malformed. Either the body was not readable JSON at all —
+            `accounts.request_malformed`, reached before any field is looked at — or it parsed but a
+            field's own shape failed (sad.md §6 flow 3, inner branches): `accounts.password_invalid`
             for AC-02 (shorter than 8 or longer than 128 characters); `accounts.email_invalid` for AC-02b
             (the address cannot be an email address); `accounts.display_name_invalid` when the display
             name is empty or longer than 50 characters (AC-01 / AC-11 bound it at 1..50 — reconciled
@@ -101,12 +103,19 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
               examples:
+                request_malformed:
+                  value:
+                    type: "https://projector.example.com/problems/accounts/request-malformed"
+                    title: "The request body could not be read"
+                    status: 400
+                    detail: "The request body must be a JSON object matching the documented shape."
+                    code: "accounts.request_malformed"
                 password_invalid:
                   value:
                     type: "https://projector.example.com/problems/accounts/password-invalid"
                     title: "The password is not usable"
                     status: 400
-                    detail: "A password must be at least 8 characters long."
+                    detail: "A password must be between 8 and 128 characters long."
                     code: "accounts.password_invalid"
                 email_invalid:
                   value:
@@ -165,7 +174,7 @@ paths:
                 type: "https://projector.example.com/problems/accounts/registration-rate-limited"
                 title: "Registration is temporarily limited"
                 status: 429
-                detail: "Too many accounts have been created from here in the past minute. Try again in 37 seconds."
+                detail: "Too many accounts have been created from here in the past minute."
                 code: "accounts.registration_rate_limited"
                 retry_after_seconds: 37
 
@@ -252,6 +261,20 @@ paths:
                 status: 401
                 detail: "The address or the password is incorrect."
                 code: "accounts.credentials_invalid"
+        "400":
+          description: |
+            The body was not readable JSON at all, so no credential was ever looked at — reached
+            before the per-source cap is even reserved. `accounts.request_malformed` is the one
+            code either endpoint returns for this (review 2026-09-22-2 N-06c).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/accounts/request-malformed"
+                title: "The request body could not be read"
+                status: 400
+                detail: "The request body must be a JSON object matching the documented shape."
+                code: "accounts.request_malformed"
         "403":
           $ref: "#/components/responses/AntiforgeryFailed"
         "429":

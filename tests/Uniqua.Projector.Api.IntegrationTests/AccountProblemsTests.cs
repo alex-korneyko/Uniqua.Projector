@@ -19,7 +19,7 @@ public sealed class AccountProblemsTests
     // code, status, title, detail — each row transcribed from a contracts/openapi.yaml example.
     [InlineData("accounts.password_invalid", 400,
         "The password is not usable",
-        "A password must be at least 8 characters long.")]
+        "A password must be between 8 and 128 characters long.")]
     [InlineData("accounts.email_invalid", 400,
         "The address is not usable",
         "That is not an email address we can use.")]
@@ -44,6 +44,12 @@ public sealed class AccountProblemsTests
     [InlineData("accounts.sign_in_rate_limited", 429,
         "Sign-in is temporarily limited",
         "Too many failed sign-in attempts have come from here recently.")]
+    [InlineData("accounts.display_name_invalid", 400,
+        "A display name is not usable",
+        "A display name must be between 1 and 50 characters long.")]
+    [InlineData("accounts.request_malformed", 400,
+        "The request body could not be read",
+        "The request body must be a JSON object matching the documented shape.")]
     public void Each_contract_code_is_published_exactly_as_the_contract_states(
         string code, int status, string title, string detail)
     {
@@ -51,7 +57,11 @@ public sealed class AccountProblemsTests
 
         Assert.Equal(status, problem.Status);
         Assert.Equal(title, problem.Title);
-        Assert.StartsWith(detail, problem.Detail, StringComparison.Ordinal);
+        // The full sentence, not a prefix: a StartsWith check would hide a contract that grew
+        // extra wording (e.g. the 429 example's now-removed "Try again in ..." tail) or a domain
+        // sentence that trails off differently than the published example (review 2026-09-22-2
+        // N-06b).
+        Assert.Equal(detail, problem.Detail);
     }
 
     [Fact]
@@ -68,9 +78,8 @@ public sealed class AccountProblemsTests
             "accounts.antiforgery_failed",
             "accounts.registration_rate_limited",
             "accounts.sign_in_rate_limited",
-            // Not in contracts/openapi.yaml — see AccountProblems for the finding raised to the
-            // api stage. The domain needs a display-name-shape refusal and the contract has none.
             "accounts.display_name_invalid",
+            "accounts.request_malformed",
         ];
 
         Assert.Equal(declared.Order(), AccountProblems.Codes.Order());

@@ -20,11 +20,31 @@ public static class ProblemDetailsSetup
             {
                 context.ProblemDetails.Instance = context.HttpContext.Request.Path;
                 context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier;
+
+                // A missing or malformed JSON body never reaches an endpoint delegate at all —
+                // minimal API's own parameter binding fails it before that, and ASP.NET Core
+                // writes the framework's generic "Bad Request" ProblemDetails directly through
+                // this same customization hook rather than throwing (so no IExceptionHandler ever
+                // sees it). Caught here it would ship with no `code` at all (review 2026-09-22-2
+                // N-06c); this reshapes it into the one declared problem instead.
+                if (context.ProblemDetails.Status == StatusCodes.Status400BadRequest
+                    && !context.ProblemDetails.Extensions.ContainsKey("code")
+                    && IsAccountsOrSessionsRequest(context.HttpContext.Request.Path))
+                {
+                    var problem = AccountProblems.For("accounts.request_malformed");
+                    context.ProblemDetails.Type = problem.Type;
+                    context.ProblemDetails.Title = problem.Title;
+                    context.ProblemDetails.Detail = problem.Detail;
+                    context.ProblemDetails.Extensions["code"] = problem.Code;
+                }
             });
 
         services.AddExceptionHandler<UnhandledExceptionHandler>();
         return services;
     }
+
+    private static bool IsAccountsOrSessionsRequest(PathString path) =>
+        path.StartsWithSegments("/api/v1/accounts") || path.StartsWithSegments("/api/v1/sessions");
 
     /// <summary>
     /// Writes one row of the wording table as the response. This is the only path a refusal takes,

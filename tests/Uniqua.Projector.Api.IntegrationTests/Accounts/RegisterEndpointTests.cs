@@ -88,6 +88,27 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task A_password_that_is_too_long_is_refused_with_the_same_code_as_too_short()
+    {
+        // AC-02's upper bound (review 2026-09-22-2 N-02): R-21 removed the column's maxLength, so
+        // this case is reachable, and the wording names both bounds either way it is missed.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Accounts,
+            new
+            {
+                email = NewEmail(),
+                password = new string('a', 129),
+                display_name = NewDisplayName(),
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("accounts.password_invalid", await CodeOfAsync(response));
+    }
+
+    [Fact]
     public async Task An_address_that_cannot_be_an_address_is_refused_with_the_contracts_code()
     {
         factory.Clock.Reset();
@@ -149,8 +170,11 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
     }
 
     [Fact]
-    public async Task A_malformed_body_is_refused_without_echoing_a_framework_message()
+    public async Task A_malformed_body_is_refused_with_the_contracts_code_and_no_framework_message()
     {
+        // review 2026-09-22-2 N-06c: model binding used to fail before any endpoint code ran, with
+        // no declared `code` at all. This is now the one declared problem either account endpoint
+        // returns for an unreadable body.
         factory.Clock.Reset();
         var client = await ClientAsync();
 
@@ -158,12 +182,25 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
             Accounts,
             new StringContent("{ not json", System.Text.Encoding.UTF8, "application/json"));
 
-        Assert.True((int)response.StatusCode >= 400);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("accounts.request_malformed", await CodeOfAsync(response));
 
         var body = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("JsonException", body, StringComparison.Ordinal);
         Assert.DoesNotContain("JsonReaderException", body, StringComparison.Ordinal);
         Assert.DoesNotContain("System.Text.Json", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_missing_body_is_refused_with_the_same_declared_code()
+    {
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        var response = await client.PostAsync(Accounts, content: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("accounts.request_malformed", await CodeOfAsync(response));
     }
 
     // ---- AC-01b: the per-source limit -------------------------------------------------------------
