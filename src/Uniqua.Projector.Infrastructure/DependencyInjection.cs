@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Uniqua.Projector.Application.Accounts.Ports;
+using Uniqua.Projector.Domain.Accounts;
+using Uniqua.Projector.Infrastructure.Accounts;
 
 namespace Uniqua.Projector.Infrastructure;
 
@@ -33,6 +37,46 @@ public static class DependencyInjection
             .SetApplicationName(DataProtectionApplicationName)
             .PersistKeysToDbContext<AppDbContext>();
 
+        AddAccounts(services);
+
         return services;
+    }
+
+    private static void AddAccounts(IServiceCollection services)
+    {
+        services.AddIdentityCore<ProjectorUser>(options =>
+        {
+            // ADR 0010. The framework's lockout would make an account unusable to its owner, which
+            // AC-12 forbids; the failure count it maintains is kept and reused as data for the
+            // delay curve instead. This switch is the whole of that decision, and the schema
+            // cannot enforce it — only IdentityAccountStoreTests can.
+            options.Lockout.AllowedForNewUsers = false;
+
+            // The address is Identity's login key and must identify exactly one account (AC-03).
+            options.User.RequireUniqueEmail = true;
+
+            // The password bounds belong to the Account entity (AC-02), so Identity's own
+            // validators are stood down rather than duplicating — and disagreeing with — them.
+            options.Password.RequiredLength = Account.MinPasswordLength;
+            options.Password.RequireDigit = false;
+            options.Password.RequireLowercase = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireNonAlphanumeric = false;
+            options.Password.RequiredUniqueChars = 1;
+        })
+        .AddEntityFrameworkStores<AppDbContext>();
+
+        services.Configure<PasswordHasherOptions>(options =>
+        {
+            // spec §6: at least 100 ms per verification. The figure is Domain's, held by
+            // PasswordHashingCostTests, so lowering it means re-measuring rather than editing a
+            // number here.
+            options.CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3;
+            options.IterationCount = PasswordHashingCost.IterationCount;
+        });
+
+        services.AddSingleton<DummyCredential>();
+        services.AddSingleton<IClock, SystemClock>();
+        services.AddScoped<IAccountStore, IdentityAccountStore>();
     }
 }
