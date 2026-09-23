@@ -212,6 +212,41 @@ public sealed class RequestSourceTests
             + $"reserves of {keys} distinct keys; it must equal the {keys} keys actually held.");
     }
 
+    // ---- T-04 (review 2026-09-23 third re-review): the old ceiling test asserted only ------------
+    // ---- TrackedSourceCount <= 100_000, which would still pass if the limiter refused an ---------
+    // ---- already-tracked key just because the limiter as a whole sits at capacity -----------------
+
+    [Fact]
+    public void At_capacity_a_key_already_tracked_is_still_refused_once_it_exceeds_its_own_limit()
+    {
+        // T-04: the ceiling's fail-open path (above) must apply only to a source that was never
+        // tracked at all. A source that *is* tracked must still be held to its own
+        // PermittedPerWindow, even while the limiter as a whole sits at its 100,000 ceiling —
+        // otherwise the ceiling would double as a way to dodge the per-source limit once the
+        // limiter happens to be full.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+
+        FillToCapacity(limit);
+
+        // "fill-0" is already tracked, with one reservation already counted against it. Spend
+        // the rest of its own per-window allowance.
+        for (var attempt = 1; attempt < RegistrationRateLimit.PermittedPerWindow; attempt++)
+        {
+            var reservation = limit.Reserve("fill-0");
+            Assert.True(reservation.IsPermitted);
+        }
+
+        var overLimit = limit.Reserve("fill-0");
+
+        Assert.False(
+            overLimit.IsPermitted,
+            "an already-tracked key was still permitted past its own "
+            + $"{RegistrationRateLimit.PermittedPerWindow}-per-window limit while the limiter sat "
+            + "at its 100,000-source capacity; the ceiling's fail-open path must apply only to a "
+            + "source that isn't tracked yet.");
+    }
+
     [Fact]
     public void A_key_is_tracked_again_once_the_clock_passes_the_window()
     {
