@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (third re-review) — S-04"
-status: "todo"
+status: "done"
 ---
 
 # T57 — Record which cap refused a sign-in, on the reservation and on the sign_in_rate_limited log line

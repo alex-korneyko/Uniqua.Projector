@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (third re-review) — T-04, S-02"
-status: "todo"
+status: "done"
 ---
 
 # T56 — Prove the tracked-key ceiling's fail-open contract for both limiters, including the sign-in per-address limiter

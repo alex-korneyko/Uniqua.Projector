@@ -17,7 +17,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (third re-review) — S-02, S-03, S-05"
-status: "todo"
+status: "done"
 ---
 
 # T61 — Bring spec, ADR 0010, sad, openapi, test-plan, session rules and README in line with the bounded, re-keyed cap

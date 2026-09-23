@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (third re-review) — T-02, T-06"
-status: "todo"
+status: "done"
 ---
 
 # T58 — Answer a non-400 bad request with its own 4xx in every environment, and rename the shared 500 to a feature-neutral api.unexpected

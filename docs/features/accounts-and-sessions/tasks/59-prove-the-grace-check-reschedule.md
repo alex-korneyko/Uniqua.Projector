@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (third re-review) — T-03"
-status: "todo"
+status: "done"
 ---
 
 # T59 — Prove the cleanup service's grace-deadline reschedule by driving ExecuteAsync itself
