@@ -1,13 +1,9 @@
+###############################################################################
+# Project-specific
+###############################################################################
+
 .claude/*.local.md
 .worktrees/
-.idea/
-
-# .NET build output
-bin/
-obj/
-
-# Node
-node_modules/
 
 # Client build output served by the API
 src/Uniqua.Projector.Api/wwwroot/
@@ -17,3 +13,133 @@ src/Uniqua.Projector.Api/appsettings.*.*.json
 
 # Crash dumps written by Git for Windows tools (grep.exe.stackdump and the like)
 *.stackdump
+
+###############################################################################
+# .NET / ASP.NET Core
+###############################################################################
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+*.binlog
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.rsuser
+
+# Visual Studio
+.vs/
+
+# MSBuild / NuGet
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+.nuget/
+
+# Tests and coverage
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+BenchmarkDotNet.Artifacts/
+
+# ASP.NET Core secrets and local data
+*.pfx
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.mdf
+*.ldf
+
+# Publish profiles may contain credentials
+*.pubxml
+*.publishproj
+PublishScripts/
+
+###############################################################################
+# Node / React (Vite)
+###############################################################################
+
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.stylelintcache
+
+# Environment files (keep the committed example)
+.env
+.env.*
+!.env.example
+*.local
+
+# Package manager logs and caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+###############################################################################
+# JetBrains Rider / ReSharper (per-user files)
+###############################################################################
+
+# The whole .idea folder is per-user here; team settings live in *.sln.DotSettings
+.idea/
+*.iml
+*.ipr
+*.iws
+*.DotSettings.user
+_ReSharper*/
+*.[Rr]e[Ss]harper
+.idea_modules/
+riderModule.iml
+/_ReSharper.Caches/
+
+###############################################################################
+# OS and other editors
+###############################################################################
+
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.swp
+*.sw?
+*~
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
