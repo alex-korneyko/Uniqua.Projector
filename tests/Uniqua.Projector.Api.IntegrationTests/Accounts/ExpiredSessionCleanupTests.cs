@@ -250,6 +250,102 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task ExecuteAsync_itself_reschedules_a_second_sweep_around_the_grace_deadline_and_raises_the_alert()
+    {
+        // T59 — review 2026-09-23 (third re-review) T-03. Every other test in this class drives
+        // RunOnceAsync directly, or reads TimeUntilStaleGraceCheck() as a value. Neither actually
+        // proves that ExecuteAsync's own
+        // `if (LastSucceededAt is null) { DelayAsync; SweepAsync }` block runs: deleting that block
+        // left every existing test green. This test starts the real BackgroundService and drives it
+        // through StartAsync/StopAsync, with a sweep that always fails, so only that block can make
+        // a second sweep happen.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+
+        // A clock that behaves like the fixture's TestClock (delays are still recorded on it, for
+        // the assertion below) but also advances simulated "now" by the duration it is asked to
+        // wait — otherwise nothing here would ever look stale, since the fixture's TestClock never
+        // moves on its own and this whole run happens on one thread without any real wall-clock
+        // time passing.
+        var clock = new AdvancingClock(factory.Clock);
+
+        // Test-only DI container: swaps in a session store whose DeleteExpiredAsync always throws,
+        // so the sweep ExecuteAsync drives — not just the one a test hands to RunOnceAsync — fails
+        // every time. No production file changes for this.
+        var services = new ServiceCollection();
+        services.AddScoped<ISessionStore>(_ => new AlwaysFailingSessionStore());
+        await using var provider = services.BuildServiceProvider();
+
+        using var cleanup = new ExpiredSessionCleanupService(
+            provider.GetRequiredService<IServiceScopeFactory>(), clock, logger);
+
+        await cleanup.StartAsync(CancellationToken.None);
+
+        // The two sweeps and the delay between them happen on the hosted service's own background
+        // execution, not necessarily synchronously within StartAsync — so this polls, bounded, for
+        // the second failure to land rather than assuming a particular scheduling.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (logger.Entries.Count(e => e.Message.Contains("event=session_cleanup_failed")) < 2
+            && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        await cleanup.StopAsync(CancellationToken.None);
+
+        var expectedDelay =
+            ExpiredSessionCleanupService.StaleGracePeriod + ExpiredSessionCleanupService.GraceCheckMargin;
+        Assert.Contains(expectedDelay, factory.Clock.RequestedDelays);
+
+        var failures = logger.Entries.Count(
+            entry => entry.Message.Contains("event=session_cleanup_failed"));
+        Assert.Equal(2, failures);
+
+        var alert = Assert.Single(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+        Assert.Equal(LogLevel.Error, alert.Level);
+
+        factory.Clock.Reset();
+    }
+
+    /// <summary>Every call throws, so a sweep driven through this store always fails.</summary>
+    private sealed class AlwaysFailingSessionStore : ISessionStore
+    {
+        public Task<Session> OpenAsync(Guid accountId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("not exercised by this test");
+
+        public Task RevokeAsync(Guid sessionId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("not exercised by this test");
+
+        public Task<bool> StampActivityAsync(Session session, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("not exercised by this test");
+
+        public Task<int> DeleteExpiredAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("the database is unavailable");
+    }
+
+    /// <summary>
+    /// Delegates <see cref="IClock.UtcNow"/> to the fixture's <see cref="TestClock"/>, but also
+    /// moves it forward by whatever <see cref="IClock.DelayAsync"/> is asked to wait — proving the
+    /// grace-deadline reschedule requires simulated time to actually pass between the two sweeps,
+    /// which the fixture's clock alone never does on its own.
+    /// </summary>
+    private sealed class AdvancingClock(TestClock inner) : IClock
+    {
+        public DateTimeOffset UtcNow => inner.UtcNow;
+
+        public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
+        {
+            if (duration > TimeSpan.Zero)
+            {
+                inner.Advance(duration);
+            }
+
+            return inner.DelayAsync(duration, cancellationToken);
+        }
+    }
+
+    [Fact]
     public async Task A_failure_47_hours_after_a_success_raises_no_alert()
     {
         // Review 2026-09-23 (second re-review) Q-09 regression: once a sweep has succeeded, the
