@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -146,6 +148,59 @@ public sealed class RequestShapeTests(ApiFactory factory)
         Assert.Equal(AccountProblems.For(code!).Status, (int)response.StatusCode);
     }
 
+    [Fact]
+    public async Task The_Kestrel_fixture_presents_its_own_throwaway_certificate_not_a_machine_one()
+    {
+        // review 2026-09-23 (fourth re-review) V-04: the fixture used to call UseHttps() with no
+        // certificate, so it needed the ASP.NET Core dev certificate to be installed on whichever
+        // machine ran the suite, and the class comment wrongly claimed this test spoke plain HTTP.
+        // KestrelDevelopmentApiFactory now builds its own self-signed certificate with
+        // CertificateRequest, and KestrelClientAsync pins the TLS handshake to exactly that
+        // certificate's thumbprint (SHA-256), rather than trusting whatever is presented. A
+        // handshake that succeeds here is proof the fixture's own certificate — and no other — was
+        // the one Kestrel served.
+        await using var development = new KestrelDevelopmentApiFactory(factory.ConnectionString);
+
+        var (client, baseAddress) = await KestrelClientAsync(development);
+        var response = await client.GetAsync(new Uri(baseAddress, "/health"));
+
+        Assert.True(response.IsSuccessStatusCode);
+
+        var seenViaDirectHandshake = await SeenServerCertificateAsync(development);
+        Assert.Equal(
+            development.Certificate.GetCertHashString(HashAlgorithmName.SHA256),
+            seenViaDirectHandshake.GetCertHashString(HashAlgorithmName.SHA256));
+    }
+
+    /// <summary>
+    /// Connects to the fixture's real socket and hands back whatever certificate it actually
+    /// presented during the TLS handshake, with no pinning — a check independent of the
+    /// pinned-validator path <see cref="KestrelClientAsync"/> uses, so it cannot be satisfied by
+    /// coincidentally matching validation logic alone.
+    /// </summary>
+    private static async Task<X509Certificate2> SeenServerCertificateAsync(
+        KestrelDevelopmentApiFactory factory)
+    {
+        var server = factory.Host.Services.GetRequiredService<IServer>();
+        var baseAddress = new Uri(
+            server.Features.Get<IServerAddressesFeature>()!.Addresses.First());
+
+        X509Certificate2? seen = null;
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, presented, _, _) =>
+            {
+                seen = presented is null ? null : new X509Certificate2(presented);
+                return true;
+            },
+        };
+
+        using var client = new HttpClient(handler);
+        _ = await client.GetAsync(new Uri(baseAddress, "/health"));
+
+        return seen ?? throw new InvalidOperationException("No certificate was presented.");
+    }
+
     [Theory]
     [InlineData(408)]
     [InlineData(411)]
@@ -248,13 +303,18 @@ public sealed class RequestShapeTests(ApiFactory factory)
 
         // Every cookie this application sets is Secure — the antiforgery system refuses to issue a
         // token over a plain request rather than downgrading (see ApiFactory) — so this real socket
-        // has to speak actual TLS, using the local machine's ASP.NET Core dev certificate. The
-        // client only needs to trust that one certificate to complete the handshake, not the whole
-        // system trust store.
+        // has to speak actual TLS, using the throwaway certificate factory.Certificate built for
+        // itself (review 2026-09-23, fourth re-review, V-04). The client trusts that one
+        // certificate, and only that one, by comparing thumbprints rather than accepting whatever
+        // the server happens to present.
         var handler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback =
-                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+            ServerCertificateCustomValidationCallback = (_, presented, _, _) =>
+                presented is not null
+                && string.Equals(
+                    presented.GetCertHashString(HashAlgorithmName.SHA256),
+                    factory.Certificate.GetCertHashString(HashAlgorithmName.SHA256),
+                    StringComparison.Ordinal),
         };
         var client = new HttpClient(handler);
         var response = await client.GetAsync(new Uri(baseAddress, "/health"));
@@ -382,10 +442,12 @@ public sealed class RequestShapeTests(ApiFactory factory)
     /// <summary>
     /// A Development-environment boot over a real, running Kestrel instance rather than the
     /// in-memory TestServer, with a small <c>MaxRequestBodySize</c> so a body a few kilobytes over
-    /// it is cheap to send from a test. Plain HTTP, not HTTPS: the antiforgery cookie pair is copied
-    /// onto the request by hand (see <see cref="KestrelClientAsync"/>), which does not depend on the
-    /// scheme, and a real TLS handshake would need a trusted dev certificate this sandbox cannot
-    /// assume is present.
+    /// it is cheap to send from a test. Real HTTPS, over a throwaway self-signed certificate this
+    /// factory builds for itself with <see cref="CertificateRequest"/> (review 2026-09-23, fourth
+    /// re-review, V-04) — not the machine's ASP.NET Core dev certificate, so the 413 test below
+    /// depends on nothing being installed on the machine or the CI runner. The antiforgery cookie
+    /// pair is still copied onto the request by hand (see <see cref="KestrelClientAsync"/>), since
+    /// that does not depend on the scheme.
     /// </summary>
     private sealed class KestrelDevelopmentApiFactory : WebApplicationFactory<Program>
     {
@@ -403,6 +465,13 @@ public sealed class RequestShapeTests(ApiFactory factory)
         /// </summary>
         public IHost Host { get; private set; } = null!;
 
+        /// <summary>
+        /// The throwaway self-signed certificate this factory's Kestrel listens with. Built once,
+        /// in the BCL, so <see cref="KestrelClientAsync"/> can pin the TLS handshake to this exact
+        /// certificate instead of trusting whatever the machine happens to have installed.
+        /// </summary>
+        public X509Certificate2 Certificate { get; } = CreateSelfSignedCertificate();
+
         protected override IHost CreateHost(IHostBuilder builder)
         {
             builder.ConfigureWebHost(webHostBuilder =>
@@ -411,7 +480,9 @@ public sealed class RequestShapeTests(ApiFactory factory)
                 {
                     options.Limits.MaxRequestBodySize = MaxRequestBodySize;
                     options.Listen(
-                        System.Net.IPAddress.Loopback, 0, listenOptions => listenOptions.UseHttps());
+                        System.Net.IPAddress.Loopback,
+                        0,
+                        listenOptions => listenOptions.UseHttps(Certificate));
                 });
             });
 
@@ -425,6 +496,25 @@ public sealed class RequestShapeTests(ApiFactory factory)
         {
             builder.UseSetting("ConnectionStrings:Default", _connectionString);
             builder.UseEnvironment("Development");
+        }
+
+        private static X509Certificate2 CreateSelfSignedCertificate()
+        {
+            using var key = RSA.Create(2048);
+            var request = new CertificateRequest(
+                "CN=localhost (T67 throwaway test certificate)",
+                key,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+
+            using var ephemeral = request.CreateSelfSigned(
+                DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+
+            // CreateSelfSigned hands back a certificate whose private key is stored ephemerally,
+            // which Kestrel's TLS listener cannot use to complete a handshake on every platform —
+            // the round trip through PKCS#12 gives it a key Kestrel can actually load.
+            return X509CertificateLoader.LoadPkcs12(
+                ephemeral.Export(X509ContentType.Pkcs12), password: null, X509KeyStorageFlags.Exportable);
         }
     }
 
