@@ -30,10 +30,10 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     internal const int Capacity = 100_000;
 
     /// <summary>
-    /// How long the forced prune at <see cref="Capacity"/> and the ceiling log line it can trigger
-    /// are each throttled to at most once per, so a limiter kept full costs one scan and one log
-    /// line per interval rather than one of each per request (review 2026-09-23 third re-review
-    /// T-01).
+    /// How long the forced prune at <see cref="Capacity"/> is throttled to at most once per, so a
+    /// limiter kept full costs one full scan per interval rather than one per request (review
+    /// 2026-09-23 third re-review T-01). The ceiling log line is throttled separately, on the
+    /// limiter's own window.
     /// </summary>
     private static readonly TimeSpan ForcedPruneInterval = TimeSpan.FromSeconds(1);
 
@@ -44,20 +44,31 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     private long _lastCeilingLoggedAtTicks;
 
     /// <summary>
-    /// An approximate count kept with <see cref="Interlocked"/> on add and remove, rather than
-    /// <see cref="ConcurrentDictionary{TKey,TValue}.Count"/>, which takes every bucket's lock in
-    /// turn — a cost this type used to pay on every reserve once it sat at <see cref="Capacity"/>
-    /// (review 2026-09-23 third re-review T-01). Approximate because a release racing a prune can
-    /// leave it briefly off by one; the ceiling check below tolerates that the same way it already
-    /// tolerated a stale read of <c>_entries.Count</c>.
+    /// The number of lists in <c>_entries</c>, kept with <see cref="Interlocked"/> on add and
+    /// remove rather than read from <see cref="ConcurrentDictionary{TKey,TValue}.Count"/>, which
+    /// takes every bucket's lock in turn — a cost this type used to pay on every reserve once it
+    /// sat at <see cref="Capacity"/> (review 2026-09-23 third re-review T-01). It is incremented
+    /// only by the thread whose <c>TryAdd</c> actually inserted a list, and decremented only by the
+    /// one <c>TryRemove</c> of that exact list that succeeds, so it never drifts. It is approximate
+    /// only in the sense that a reader can see it a moment before or after a concurrent add or
+    /// remove lands; the ceiling check tolerates that the same way it tolerated a stale read of
+    /// <c>_entries.Count</c>.
     /// </summary>
     private long _trackedSourceCount;
 
     /// <summary>How many keys were turned away, uncounted, since the last ceiling line was logged.</summary>
     private long _untrackedSinceLastCeilingLog;
 
+    private long _forcedPruneCount;
+
     /// <summary>How many sources currently hold a slot. For tests and for anyone watching memory.</summary>
     public int TrackedSourceCount => (int)Interlocked.Read(ref _trackedSourceCount);
+
+    /// <summary>
+    /// How many forced reclaims have run at <see cref="Capacity"/>. For tests, so the throttle on
+    /// the forced prune is observable rather than inferred from timing (review of T55).
+    /// </summary>
+    public long ForcedPruneCount => Interlocked.Read(ref _forcedPruneCount);
 
     /// <summary>
     /// Holds one of this source's slots for an attempt about to be made, or says how long until one
@@ -90,25 +101,29 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
             // Not tracked at all rather than refused: refusing would need a slot to refuse *from*,
             // and there is none left to give this source. Permitted and uncounted, exactly as
             // InMemoryUnknownAddressAttempts treats an address past its own capacity. Logged at
-            // most once per interval too, carrying how many keys were turned away since the last
+            // most once per window, carrying how many keys were turned away since the last
             // line (review 2026-09-23 third re-review T-01) rather than once per refused request.
             LogCeilingReachedIfDue(now);
             return RateLimitDecision.Permitted(now);
         }
 
         var windowOpenedAt = now - window;
-        var isNewSource = false;
-        var entries = _entries.GetOrAdd(
-            source,
-            _ =>
-            {
-                isNewSource = true;
-                return [];
-            });
-
-        if (isNewSource)
+        if (!_entries.TryGetValue(source, out var entries))
         {
-            Interlocked.Increment(ref _trackedSourceCount);
+            // Counted only when this thread's insert is the one that won: GetOrAdd's factory can
+            // run on several racing threads for one absent key while only one list is kept, so
+            // counting on the factory's say-so drifted the count upward for good (review of T55).
+            var fresh = new List<DateTimeOffset>();
+            if (_entries.TryAdd(source, fresh))
+            {
+                Interlocked.Increment(ref _trackedSourceCount);
+                entries = fresh;
+            }
+            else if (!_entries.TryGetValue(source, out entries))
+            {
+                // Another thread added the list and a prune removed it again in between.
+                return Reserve(source);
+            }
         }
 
         lock (entries)
@@ -199,21 +214,24 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
             return;
         }
 
+        Interlocked.Increment(ref _forcedPruneCount);
         PruneExpired(now);
     }
 
     /// <summary>
-    /// Logs <c>tracked_source_ceiling_reached</c> at most once per <see cref="ForcedPruneInterval"/>,
-    /// the same throttle shape as <see cref="ForcePruneIfDue"/>, carrying how many keys were turned
-    /// away uncounted since the previous line rather than writing one line per refused request
-    /// (review 2026-09-23 third re-review T-01).
+    /// Logs <c>tracked_source_ceiling_reached</c> at most once per the limiter's own window, the
+    /// same compare-and-set shape as <see cref="ForcePruneIfDue"/>, carrying how many keys were
+    /// turned away uncounted since the previous line rather than writing one line per refused
+    /// request (review 2026-09-23 third re-review T-01: "log the ceiling once per window, with a
+    /// count"). Deliberately not <see cref="ForcedPruneInterval"/>: that would still write up to 60
+    /// lines per registration window and 900 per sign-in window (review of T55).
     /// </summary>
     private void LogCeilingReachedIfDue(DateTimeOffset now)
     {
         Interlocked.Increment(ref _untrackedSinceLastCeilingLog);
 
         var last = Interlocked.Read(ref _lastCeilingLoggedAtTicks);
-        if (now.UtcTicks - last < ForcedPruneInterval.Ticks
+        if (now.UtcTicks - last < window.Ticks
             || Interlocked.CompareExchange(ref _lastCeilingLoggedAtTicks, now.UtcTicks, last) != last)
         {
             return;

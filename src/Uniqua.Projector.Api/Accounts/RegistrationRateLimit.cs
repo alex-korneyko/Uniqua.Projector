@@ -48,6 +48,12 @@ public sealed class RegistrationRateLimit
     public int TrackedSourceCount => _limiter.TrackedSourceCount;
 
     /// <summary>
+    /// How many forced reclaims the limiter has run at its tracked-source ceiling. For tests, so
+    /// the throttle on that full scan is observable (review of T55).
+    /// </summary>
+    public long ForcedPruneCount => _limiter.ForcedPruneCount;
+
+    /// <summary>
     /// Holds one of this source's slots for a registration about to be attempted, or says how long
     /// until one frees up.
     /// </summary>

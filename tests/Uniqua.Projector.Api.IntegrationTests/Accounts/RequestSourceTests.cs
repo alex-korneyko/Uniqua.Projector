@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
@@ -78,25 +81,20 @@ public sealed class RequestSourceTests
     // ---- are both throttled once the limiter sits at capacity -------------------------------------
 
     [Fact]
-    public void At_capacity_a_flood_of_new_keys_within_one_interval_logs_the_ceiling_at_most_once()
+    public void At_capacity_a_flood_of_new_keys_within_one_interval_forces_one_prune_and_logs_one_line()
     {
         // T-01: before the fix, every one of these 1,000 new-key attempts at capacity ran its own
         // unthrottled forced PruneExpired over all 100,000 tracked entries and wrote its own
         // tracked_source_ceiling_reached line. The fix claims the forced prune through a
-        // compare-and-set like PruneIfDue's, at most once per a short named interval, so the
-        // ceiling is logged at most once per window — carrying how many keys went untracked since
-        // the last line — rather than once per request.
+        // compare-and-set like PruneIfDue's, at most once per a short named interval, and logs the
+        // ceiling at most once per window — carrying how many keys went untracked since the last
+        // line — rather than once per request.
         var clock = new TestClock();
         var logger = new RecordingLogger<RegistrationRateLimit>();
         var limit = new RegistrationRateLimit(clock, logger);
 
-        const int capacity = 100_000;
-        for (var source = 0; source < capacity; source++)
-        {
-            limit.Reserve($"fill-{source}");
-        }
-
-        Assert.Equal(capacity, limit.TrackedSourceCount);
+        FillToCapacity(limit);
+        Assert.Equal(0, limit.ForcedPruneCount);
 
         const int flood = 1_000;
         for (var source = 0; source < flood; source++)
@@ -108,15 +106,110 @@ public sealed class RequestSourceTests
             Assert.True(reservation.IsPermitted);
         }
 
-        var ceilingLines = logger.Entries
-            .Count(entry => entry.Message.Contains(
-                "tracked_source_ceiling_reached", StringComparison.Ordinal));
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+
+        // Exactly one, not "at most one": zero would mean the forced reclaim no longer runs before
+        // a new key is turned away, and more than one would mean it is not throttled.
+        Assert.True(
+            limit.ForcedPruneCount == 1,
+            $"{limit.ForcedPruneCount} forced prunes ran for {flood} new keys inside one interval; "
+            + "T-01 asks for exactly one full scan per interval, not one per request.");
+
+        var ceilingLines = CeilingLines(logger);
+        Assert.True(
+            ceilingLines.Count == 1,
+            $"{ceilingLines.Count} tracked_source_ceiling_reached lines were logged for {flood} new "
+            + "keys inside one window; T-01 asks for exactly one line per window.");
+        Assert.Equal(LogLevel.Error, ceilingLines[0].Level);
+        Assert.Equal(1, UntrackedSinceLastLine(ceilingLines[0]));
+    }
+
+    [Fact]
+    public void At_capacity_the_ceiling_line_is_logged_once_per_window_carrying_the_count_turned_away()
+    {
+        // Review of T55, finding 3: the ceiling line is throttled on the limiter's own window, not
+        // on the one-second forced-prune interval — otherwise a limiter kept full writes up to 60
+        // lines per registration window and 900 per sign-in window.
+        var clock = new TestClock();
+        var logger = new RecordingLogger<RegistrationRateLimit>();
+        var limit = new RegistrationRateLimit(clock, logger);
+
+        FillToCapacity(limit);
+
+        const int flood = 1_000;
+        for (var source = 0; source < flood; source++)
+        {
+            limit.Reserve($"flood-{source}");
+        }
+
+        Assert.Single(CeilingLines(logger));
+
+        // Well past the forced-prune interval but still inside the window: the forced prune may
+        // run again, yet no second ceiling line is written.
+        clock.Advance(RegistrationRateLimit.Window / 2);
+        limit.Reserve("inside-the-window");
 
         Assert.True(
-            ceilingLines <= 1,
-            $"{ceilingLines} separate tracked_source_ceiling_reached lines were logged for {flood} "
-            + "new keys inside one window; T-01 asks for at most one line per window, carrying how "
-            + "many keys went untracked since the last one, not one line per refused request.");
+            CeilingLines(logger).Count == 1,
+            $"{CeilingLines(logger).Count} ceiling lines were logged inside one window; T-01 asks "
+            + "for at most one line per window.");
+
+        // Keep the limiter full past the window: every fill key reserves a second, later slot, so
+        // its list survives the prune that drops the first.
+        for (var source = 0; source < Capacity; source++)
+        {
+            limit.Reserve($"fill-{source}");
+        }
+
+        clock.Advance((RegistrationRateLimit.Window / 2) + TimeSpan.FromSeconds(1));
+        limit.Reserve("past-the-window");
+
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+
+        var ceilingLines = CeilingLines(logger);
+        Assert.Equal(2, ceilingLines.Count);
+        Assert.Equal(LogLevel.Error, ceilingLines[1].Level);
+
+        // Every key turned away after the first line: the rest of the flood, the one inside the
+        // window, and the one that triggered this line.
+        Assert.Equal((flood - 1) + 1 + 1, UntrackedSinceLastLine(ceilingLines[1]));
+    }
+
+    // ---- Review of T55, finding 1: the tracked count does not drift under racing first reserves ---
+
+    [Fact]
+    public void Racing_first_reserves_of_the_same_new_keys_count_each_key_exactly_once()
+    {
+        // ConcurrentDictionary.GetOrAdd can run its factory on several threads for one absent key
+        // and keep only one result; incrementing the count on the factory's say-so therefore
+        // counted every lost race as one more tracked source, for good. Several threads walk the
+        // same fresh keys in the same order at once, so their first reserves of each key collide.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+
+        const int keys = 10_000;
+        var racers = Math.Max(4, Environment.ProcessorCount);
+        using var start = new Barrier(racers);
+
+        var threads = Enumerable.Range(0, racers)
+            .Select(_ => new Thread(() =>
+            {
+                start.SignalAndWait();
+                for (var key = 0; key < keys; key++)
+                {
+                    limit.Reserve($"racing-{key}");
+                }
+            }))
+            .ToList();
+
+        threads.ForEach(thread => thread.Start());
+        threads.ForEach(thread => thread.Join());
+
+        // Nothing was released and the clock never moved, so every one of the keys is still held.
+        Assert.True(
+            limit.TrackedSourceCount == keys,
+            $"TrackedSourceCount is {limit.TrackedSourceCount} after {racers} threads raced first "
+            + $"reserves of {keys} distinct keys; it must equal the {keys} keys actually held.");
     }
 
     [Fact]
@@ -125,13 +218,8 @@ public sealed class RequestSourceTests
         var clock = new TestClock();
         var limit = new RegistrationRateLimit(clock);
 
-        const int capacity = 100_000;
-        for (var source = 0; source < capacity; source++)
-        {
-            limit.Reserve($"fill-{source}");
-        }
-
-        Assert.Equal(capacity, limit.TrackedSourceCount);
+        FillToCapacity(limit);
+        const int capacity = Capacity;
 
         var atCeiling = limit.Reserve("still-at-ceiling");
         Assert.True(atCeiling.IsPermitted);
@@ -150,6 +238,31 @@ public sealed class RequestSourceTests
     }
 
     // ---- Helpers -------------------------------------------------------------------------------
+
+    private const int Capacity = 100_000;
+
+    private static void FillToCapacity(RegistrationRateLimit limit)
+    {
+        for (var source = 0; source < Capacity; source++)
+        {
+            limit.Reserve($"fill-{source}");
+        }
+
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+    }
+
+    private static List<RecordingLogger<RegistrationRateLimit>.Entry> CeilingLines(
+        RecordingLogger<RegistrationRateLimit> logger) =>
+        [.. logger.Entries.Where(entry => entry.Message.Contains(
+            "tracked_source_ceiling_reached", StringComparison.Ordinal))];
+
+    private static long UntrackedSinceLastLine(RecordingLogger<RegistrationRateLimit>.Entry line)
+    {
+        var match = Regex.Match(line.Message, @"untracked_since_last_line=(\d+)");
+        Assert.True(match.Success, $"the ceiling line carries no untracked_since_last_line: {line.Message}");
+
+        return long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+    }
 
     private static string SourceOf(string remoteAddress)
     {
