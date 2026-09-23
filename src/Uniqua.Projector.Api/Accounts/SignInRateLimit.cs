@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging.Abstractions;
 using Uniqua.Projector.Application.Accounts.Ports;
 
 namespace Uniqua.Projector.Api.Accounts;
@@ -70,10 +71,16 @@ public sealed class SignInRateLimit
     private readonly SlidingWindowLimiter _perSource;
     private readonly UpperInvariantLookupNormalizer _normalizer = new();
 
-    public SignInRateLimit(IClock clock)
+    public SignInRateLimit(IClock clock, ILogger<SignInRateLimit> logger)
     {
-        _perAddress = new SlidingWindowLimiter(clock, PermittedFailuresPerWindow, Window);
-        _perSource = new SlidingWindowLimiter(clock, PermittedFailuresPerSourceWindow, Window);
+        _perAddress = new SlidingWindowLimiter(clock, PermittedFailuresPerWindow, Window, logger);
+        _perSource = new SlidingWindowLimiter(clock, PermittedFailuresPerSourceWindow, Window, logger);
+    }
+
+    /// <summary>For tests, which have no DI container to source a logger from.</summary>
+    public SignInRateLimit(IClock clock)
+        : this(clock, NullLogger<SignInRateLimit>.Instance)
+    {
     }
 
     /// <summary>How many sources currently hold a slot. For tests and for anyone watching memory.</summary>

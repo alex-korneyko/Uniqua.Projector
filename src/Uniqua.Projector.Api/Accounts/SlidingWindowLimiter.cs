@@ -16,8 +16,19 @@ namespace Uniqua.Projector.Api.Accounts;
 /// <c>RegistrationRateLimit</c> did before this type was extracted (review 2026-09-22-2 N-01,
 /// folding R-25's fix into the shared type rather than duplicating it).
 /// </remarks>
-internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow, TimeSpan window)
+internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow, TimeSpan window, ILogger logger)
 {
+    /// <summary>
+    /// The most sources tracked at once, matching the ceiling
+    /// <c>InMemoryUnknownAddressAttempts.Capacity</c> accepts for the same reason: an IPv6 address
+    /// rotating within its own /64 no longer buys a fresh key (<see cref="RequestSource"/>), but a
+    /// flood of distinct sources still must not grow <c>_entries</c> without bound (review
+    /// 2026-09-23 P-02). Past it, a new source's slot is not tracked at all — permitted rather than
+    /// refused, exactly as <c>InMemoryUnknownAddressAttempts</c> treats an address past its own
+    /// capacity — and the gap is logged as an error.
+    /// </summary>
+    internal const int Capacity = 100_000;
+
     private readonly ConcurrentDictionary<string, List<DateTimeOffset>> _entries = new();
 
     private long _lastPrunedAtTicks;
@@ -40,6 +51,25 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     {
         var now = clock.UtcNow;
         PruneIfDue(now);
+
+        if (!_entries.ContainsKey(source) && _entries.Count >= Capacity)
+        {
+            // The periodic prune above runs at most once a window; force an immediate reclaim of
+            // whatever has already expired before turning a new source away for good.
+            PruneExpired(now);
+        }
+
+        if (!_entries.ContainsKey(source) && _entries.Count >= Capacity)
+        {
+            // Not tracked at all rather than refused: refusing would need a slot to refuse *from*,
+            // and there is none left to give this source. Permitted and uncounted, exactly as
+            // InMemoryUnknownAddressAttempts treats an address past its own capacity.
+            logger.LogError(
+                "module=accounts event=tracked_source_ceiling_reached "
+                + "consequence=source_not_rate_limited ceiling={Ceiling}",
+                Capacity);
+            return RateLimitDecision.Permitted(now);
+        }
 
         var windowOpenedAt = now - window;
         var entries = _entries.GetOrAdd(source, _ => []);
@@ -102,6 +132,17 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
             return;
         }
 
+        PruneExpired(now);
+    }
+
+    /// <summary>
+    /// Removes every entry whose window has already closed, right now rather than waiting for the
+    /// periodic sweep above — the forced reclaim <see cref="Reserve"/> runs before turning away a
+    /// new source at <see cref="Capacity"/>, so a source count only looks exhausted because nothing
+    /// has pruned it yet is never mistaken for one that is genuinely full.
+    /// </summary>
+    private void PruneExpired(DateTimeOffset now)
+    {
         var windowOpenedAt = now - window;
 
         foreach (var (source, entries) in _entries)

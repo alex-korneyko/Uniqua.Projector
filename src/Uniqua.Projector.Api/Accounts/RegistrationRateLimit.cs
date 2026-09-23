@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using Uniqua.Projector.Application.Accounts.Ports;
 
 namespace Uniqua.Projector.Api.Accounts;
@@ -32,9 +33,15 @@ public sealed class RegistrationRateLimit
 
     private readonly SlidingWindowLimiter _limiter;
 
-    public RegistrationRateLimit(IClock clock)
+    public RegistrationRateLimit(IClock clock, ILogger<RegistrationRateLimit> logger)
     {
-        _limiter = new SlidingWindowLimiter(clock, PermittedPerWindow, Window);
+        _limiter = new SlidingWindowLimiter(clock, PermittedPerWindow, Window, logger);
+    }
+
+    /// <summary>For tests, which have no DI container to source a logger from.</summary>
+    public RegistrationRateLimit(IClock clock)
+        : this(clock, NullLogger<RegistrationRateLimit>.Instance)
+    {
     }
 
     /// <summary>How many sources currently hold a slot. For tests and for anyone watching memory.</summary>

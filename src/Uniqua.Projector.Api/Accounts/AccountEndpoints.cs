@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Uniqua.Projector.Application.Accounts;
 using Uniqua.Projector.Domain;
 using Uniqua.Projector.Domain.Accounts;
@@ -217,7 +219,7 @@ public static class RequestSource
     {
         if (context.Connection.RemoteIpAddress is { } address)
         {
-            return address.ToString();
+            return Key(address);
         }
 
         // Every visitor then shares one key, which spec §6.1 names as a failure mode rather than a
@@ -227,5 +229,31 @@ public static class RequestSource
             + "consequence=registration_limit_shared_by_all_callers");
 
         return Unknown;
+    }
+
+    /// <summary>
+    /// The key one address contributes: an IPv4-mapped IPv6 address (<c>::ffff:a.b.c.d</c>) is
+    /// keyed by its plain IPv4 form, so it shares a budget with a client seen as <c>a.b.c.d</c>
+    /// directly (review 2026-09-23 P-02); any other IPv6 address is keyed by its /64 prefix — the
+    /// block an ISP hands one customer — so rotating within it does not buy a fresh budget per
+    /// address; a plain IPv4 address is keyed as itself.
+    /// </summary>
+    private static string Key(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            return address.MapToIPv4().ToString();
+        }
+
+        if (address.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            return address.ToString();
+        }
+
+        var bytes = address.GetAddressBytes();
+        var prefix = new byte[bytes.Length];
+        Array.Copy(bytes, prefix, 8);
+
+        return new IPAddress(prefix).ToString();
     }
 }
