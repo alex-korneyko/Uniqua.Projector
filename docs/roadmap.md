@@ -23,7 +23,7 @@ control and tests hold up under a fifteen-minute read.
 | # | Step | Source | Size | Status |
 |---|---|---|:---:|---|
 | 1 | Project skeleton — the four server projects with the reference direction enforced, composition root, EF Core, test harness, React client, CI | `architecture-map.md §Module inventory` | M | idea |
-| 2 | Accounts and sessions — register, sign in, sign out, carried by an httpOnly cookie → [`docs/features/accounts-and-sessions/`](features/accounts-and-sessions/spec.md) | `idea-brief.md §3. Users` | M | spec'd |
+| 2 | Accounts and sessions — register, sign in, sign out, carried by an httpOnly cookie → [`docs/features/accounts-and-sessions/`](features/accounts-and-sessions/spec.md) | `idea-brief.md §3. Users` | M | shipped |
 | 3 | A board with columns and cards — create a board, add and reorder columns, add and edit cards, with board membership enforced on every read and write | `idea-brief.md §7. Recommendation` | M | idea |
 | 4 | The first public deployment — the thin path reachable on the owner's registered domain, over TLS, from a host that does not sleep | `idea-brief.md §4. Why now` | M | idea |
 | 5 | Card move with a stated concurrency rule — drag a card within and between columns, with a defined answer for two members moving one card at once | `idea-brief.md §6. Risks` | M | idea |
@@ -101,5 +101,4 @@ Step 10 enters no wave: it has no size and no shape yet, so what gets scheduled 
 
 | Step | Shipped | Link |
 |---|---|---|
-
-Nothing shipped yet.
+| 2 · Accounts and sessions | 2026-09-23 | [changelog](features/accounts-and-sessions/_ship/changelog.md) · PR: branch `feature/accounts-and-sessions` → `main` (link added once opened) |
