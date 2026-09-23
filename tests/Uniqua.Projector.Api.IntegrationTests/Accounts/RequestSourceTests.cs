@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -246,19 +247,31 @@ public sealed class RequestSourceTests
             // the retry only spins while churners are momentarily filling the cap themselves, and
             // never masks a genuine loss, since a lost keeper slot shows up later as the tail
             // assertion below being permitted when it must be refused.
+            //
+            // V-05/V-06 follow-up (review of T65): the retry is bounded by a deadline rather than
+            // open-ended. Today's churners always stop after churnIterationsPerThread and release
+            // everything they took, so a keeper is always eventually permitted. But a future
+            // regression that leaks slots upward — a Release that stops removing its entry, or a
+            // count stuck at PermittedPerWindow — would mean a keeper is *never* permitted, and an
+            // unbounded `do { } while` would hang this synchronous [Fact] instead of failing it with
+            // a message (xUnit does not time out synchronous Facts by default). A keeper that hits
+            // the deadline instead gives up and leaves kept[index] false, which the existing
+            // `kept.All(...)` assertion below already reports.
+            var keeperDeadline = TimeSpan.FromSeconds(10);
             var kept = new bool[keepers];
             var keeperThreads = Enumerable.Range(0, keepers)
                 .Select(index => new Thread(() =>
                 {
                     start.SignalAndWait();
+                    var clockStart = Stopwatch.StartNew();
                     RateLimitDecision decision;
                     do
                     {
                         decision = limit.Reserve(key);
                     }
-                    while (!decision.IsPermitted);
+                    while (!decision.IsPermitted && clockStart.Elapsed < keeperDeadline);
 
-                    kept[index] = true;
+                    kept[index] = decision.IsPermitted;
                 }))
                 .ToList();
 
