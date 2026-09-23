@@ -963,6 +963,151 @@
       ],
       "file": "docs/features/accounts-and-sessions/tasks/61-true-up-the-cap-docs.md",
       "origin": "review-2026-09-23-2: S-02, S-03, S-05"
+    },
+    {
+      "id": "T62",
+      "title": "Measure the sign-in length guard on the trimmed address against the Domain limits",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-05b"
+      ],
+      "dod": "POST /api/v1/sessions compares the trimmed email's length with Account.MaxEmailLength and the password's length with Account.MaxPasswordLength, so the guard measures the same value registration measured and cannot refuse an owner whose registered address arrives padded with whitespace; the CreateSessionRequest.MaxEmailLength and MaxPasswordLength copies are removed (or become aliases of the Domain constants) so the limits live in Domain only; the refusal for a genuinely over-long credential is unchanged (401 accounts.credentials_invalid, no slot taken); tests: an account registered with a 256-character address signs in with 201 when the address is sent with a trailing space and with a leading newline; a 257-character address after trimming is still refused with the wrong-password body and takes no slot.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/62-trim-before-the-length-guard.md",
+      "origin": "review-2026-09-23-3: V-01"
+    },
+    {
+      "id": "T63",
+      "title": "Refuse request bodies with unknown fields, as the contract's additionalProperties: false says",
+      "layer": "ports",
+      "deps": [
+        "T62"
+      ],
+      "acs": [
+        "AC-05b"
+      ],
+      "dod": "RegisterAccountRequest and CreateSessionRequest reject a JSON member they do not declare (JsonUnmappedMemberHandling.Disallow on each record, or the equivalent scoped to these two bodies), so a body with an extra field lands on the existing 400 accounts.request_malformed from the one ProblemDetails handler in every environment; on sign-in the refusal depends only on the body's shape, never on account state, so it adds no AC-05b oracle, and it happens before Reserve so it takes no rate-limit slot; the Account response schema keeps additionalProperties: false; tests: POST /api/v1/accounts and POST /api/v1/sessions with an otherwise valid body plus an extra \"x\": 1 member each answer 400 accounts.request_malformed, create no account or session, and (sign-in) take no slot; the existing valid-body tests stay green.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RegisterEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/63-refuse-unknown-request-fields.md",
+      "origin": "review-2026-09-23-3: U-02"
+    },
+    {
+      "id": "T64",
+      "title": "Name which limiter hit its ceiling, give each its true consequence, and keep the throttles working after the clock steps back",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-12",
+        "AC-01b"
+      ],
+      "dod": "SlidingWindowLimiter takes a limiter name and a consequence from its owner, and the tracked_source_ceiling_reached line carries limiter={Limiter} (registration, sign_in_per_source, sign_in_per_address) and that limiter's own consequence — the per-address limiter says the pair goes uncapped while the per-source cap of 100 still applies, never source_not_rate_limited; the forced-prune throttle, the ceiling-log throttle and PruneIfDue treat a negative elapsed time (the clock stepped backwards) as due rather than not due, or are stamped from a monotonic source, so a backwards clock step cannot switch off the forced reclaim or the ceiling alarm; tests: SignInRateLimitCeilingTests asserts each sign-in limiter's ceiling line names its limiter and its consequence, and RegistrationRateLimit's names registration; with the limiter at Capacity, stepping TestClock back by an hour still lets the next new key trigger the forced reclaim and the ceiling line.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SlidingWindowLimiter.cs",
+        "src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs",
+        "src/Uniqua.Projector.Api/Accounts/RegistrationRateLimit.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignInRateLimitCeilingTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RequestSourceTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/64-name-the-full-limiter-and-survive-a-clock-step.md",
+      "origin": "review-2026-09-23-3: V-02, V-03"
+    },
+    {
+      "id": "T65",
+      "title": "Prove that a per-address refusal gives back its per-source slot, and that Release racing Reserve loses no reservation",
+      "layer": "tests",
+      "deps": [
+        "T64"
+      ],
+      "acs": [
+        "AC-12"
+      ],
+      "dod": "SignInRateLimitTests caps one (source, address) pair at 20, sends about 100 more attempts at it that the per-address cap refuses, then asserts that a Reserve for another address from the same source is permitted and that the source's per-source count still reflects only the permitted attempts — the test fails if the _perSource.Release call on a per-address refusal in SignInRateLimit.Reserve is deleted (verified during RED by removing it, then restoring); a multi-threaded test runs Reserve and Release concurrently on one key of a SlidingWindowLimiter and asserts that, once the threads finish, the reservations never released still bring the key to a refusal at PermittedPerWindow — the test fails if the ReferenceEquals re-check under the list lock is removed (verified the same way, or explained if the race cannot be forced deterministically); only test code changes.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SignInRateLimitTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RequestSourceTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/65-prove-the-limiter-release-paths.md",
+      "origin": "review-2026-09-23-3: V-05, V-06"
+    },
+    {
+      "id": "T66",
+      "title": "Prove AC-12's reset clause: a run of 429s does not keep the failure count alive",
+      "layer": "tests",
+      "deps": [
+        "T62"
+      ],
+      "acs": [
+        "AC-12"
+      ],
+      "dod": "An integration test on TestClock: 20 wrong passwords cap the (source, address) pair; further attempts at it keep answering 429 until 15 minutes after the last failure that reached verification; once the per-pair window has also passed, the next wrong password is verified and counted as failure #1 (no delay applied, AccessFailedCount = 1), showing that the 429s alone did not keep the count alive, exactly as spec.md §5 AC-12 now reads; the test fails if a 429 were made to touch LastFailedAttemptAt or AccessFailedCount (verified during RED by a temporary mutation, then restored); only test code changes.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/66-prove-refused-attempts-do-not-keep-the-count-alive.md",
+      "origin": "review-2026-09-23-3: U-06"
+    },
+    {
+      "id": "T67",
+      "title": "Give the real-Kestrel request-shape test its own throwaway certificate, and correct its comment",
+      "layer": "tests",
+      "deps": [],
+      "acs": [],
+      "dod": "The real-socket Kestrel fixture in RequestShapeTests builds a self-signed certificate in the test with System.Security.Cryptography.X509Certificates.CertificateRequest (no new package) and passes it to UseHttps, so the 413 test no longer depends on an ASP.NET Core dev certificate being installed on the machine or the CI runner; the client trusts only that certificate (or the test's handler accepts that exact certificate); the class and helper comments describe what the code actually does; the 413 test and the 408/411/431 tests stay green.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/RequestShapeTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/67-self-signed-cert-for-the-kestrel-test.md",
+      "origin": "review-2026-09-23-3: V-04"
+    },
+    {
+      "id": "T68",
+      "title": "Anchor or drop the remaining unanchored .gitignore build-output patterns",
+      "layer": "config",
+      "deps": [],
+      "acs": [],
+      "dod": "publish/, x64/, x86/, [Aa][Rr][Mm]/ and [Aa][Rr][Mm]64/ no longer match at any depth: anchored to where build output actually lands, or dropped where bin/ and obj/ already cover it; checked directly: git check-ignore reports nothing for src/Uniqua.Projector.Web/src/features/publish/x.ts, src/Uniqua.Projector.Web/src/x64/x.ts and docs/features/x/arm/x.md, while bin/, obj/, node_modules, dist, the API's wwwroot build output and TestResults stay ignored, and git ls-files -ci --exclude-standard lists nothing.",
+      "files_hint": [
+        ".gitignore"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/68-anchor-the-remaining-gitignore-patterns.md",
+      "origin": "review-2026-09-23-3: V-07"
+    },
+    {
+      "id": "T69",
+      "title": "Bring sad, ADR 0010, data-model, README, test-plan and openapi in line with the reset rule, the length guard, antiforgery and the rejection statuses",
+      "layer": "docs",
+      "deps": [
+        "T62",
+        "T63",
+        "T64"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-05b"
+      ],
+      "dod": "U-01: sad.md flow 6 and §10 QG-1, ADR 0010's decision-driver and consequence bullets, data-model.md's LastFailedAttemptAt rationale, README.md and the GuessingDelay.cs doc comments all say the count resets after 15 minutes in which no failed attempt reached verification (no 'no attempt at all' or 'idle' left), and SessionRulesDocumentTests also checks README.md for that wording; U-04: sad flow 4 has an alt branch before Reserve for an email over 256 or a password over 128 characters (same 401 credentials_invalid, nothing reserved, measured on the trimmed address per T62), and test-plan.md has an edge case for 257/129 characters -> 401, identical body, no slot taken; U-03: openapi declares the readable XSRF-TOKEN Set-Cookie on GET /api/v1/accounts/me, describes the cookie-and-header pair in the AntiforgeryToken parameter, drops the '# unresolved — OQ-API-1' marker, and contracts/api-sync-report.md records OQ-API-1 as closed; U-05: openapi's RequestRejected keeps only examples that reach the application (408, 405), says that 411, 414 and 431 are answered by Kestrel with no problem body, and GET /api/v1/accounts/me and DELETE /api/v1/sessions/current declare the 4XX RequestRejected response; openapi also records that unknown request fields are refused (T63) and the ceiling log names its limiter (T64) wherever it already describes those behaviours.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/sad.md",
+        "docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md",
+        "docs/features/accounts-and-sessions/data-model.md",
+        "README.md",
+        "src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs",
+        "docs/features/accounts-and-sessions/test-plan.md",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "docs/features/accounts-and-sessions/contracts/api-sync-report.md",
+        "tests/Uniqua.Projector.Api.IntegrationTests/SessionRulesDocumentTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/69-true-up-reset-wording-and-contract.md",
+      "origin": "review-2026-09-23-3: U-01, U-03, U-04, U-05"
     }
   ]
 }
