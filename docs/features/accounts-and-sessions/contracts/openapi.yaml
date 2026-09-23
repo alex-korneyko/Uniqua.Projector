@@ -224,7 +224,32 @@ paths:
                 email: "admin@example.test"
                 display_name: "Test User"
         "401":
-          $ref: "#/components/responses/SessionNotRecognised"
+          description: |
+            No session is recognised for this request — the cookie is absent, or the record says the
+            session was revoked (AC-08/AC-10), or the Session entity judges it expired: idle for 14
+            days (AC-07) or opened 90 days ago however actively it was used (AC-07b). One code covers
+            all four, because the client's response to each is identical: present the sign-in form.
+
+            `UseAntiforgeryGuard` runs before recognition and issues the readable `XSRF-TOKEN` cookie
+            on every safe (GET) response before it knows whether the session will be recognised, so a
+            signed-out visitor gets it here too — the same cookie the 200 response documents.
+          headers:
+            Set-Cookie:
+              description: |
+                A readable `XSRF-TOKEN` cookie (`AntiforgerySetup.IssueClientReadableToken`), issued
+                on this response the same as on the 200: recognition runs after the cookie is set, so
+                a signed-out visitor's GET still receives it.
+              schema: { type: string }
+              example: "XSRF-TOKEN=<readable-token>; Path=/; Secure; SameSite=Strict"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/accounts/session-not-recognised"
+                title: "Not signed in"
+                status: 401
+                detail: "Sign in to continue."
+                code: "accounts.session_not_recognised"
         "4XX":
           $ref: "#/components/responses/RequestRejected"
         "500":

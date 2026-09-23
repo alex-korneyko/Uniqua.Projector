@@ -23,9 +23,10 @@ namespace Uniqua.Projector.Api.Antiforgery;
 /// </list>
 /// <para>
 /// The <c>XSRF-TOKEN</c> cookie is deliberately <em>not</em> httpOnly — the client has to read it —
-/// which is safe because it is worthless without the httpOnly half. This is reported in the
-/// implement handoff so <c>sequences</c> can draw the handshake and <c>/sdd:api --reconcile</c> can
-/// bind it. contracts/openapi.yaml is left unedited.
+/// which is safe because it is worthless without the httpOnly half. The shape is now declared in
+/// contracts/openapi.yaml (the <c>getCurrentAccount</c> Set-Cookie header and the
+/// <c>components.parameters.AntiforgeryToken</c> description), and OQ-API-1 is closed (review
+/// 2026-09-23, fourth re-review, U-03).
 /// </para>
 /// </remarks>
 public static class AntiforgerySetup

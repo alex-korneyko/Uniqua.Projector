@@ -66,8 +66,9 @@ public sealed class ProblemDetailsTests(ApiFactory factory)
     [Fact]
     public async Task A_read_hands_the_client_the_token_it_will_need_to_write_with()
     {
-        // OQ-API-1: the client cannot write without a token and no flow said how it gets one.
-        // The chosen shape is the framework's cookie-and-header pair — see AntiforgerySetup.
+        // OQ-API-1 (closed, review 2026-09-23 fourth re-review, U-03): the acquisition shape is
+        // the framework's cookie-and-header pair, declared on getCurrentAccount in openapi.yaml
+        // and implemented in AntiforgerySetup.
         var response = await factory.CreateClient().GetAsync("/health");
 
         Assert.True(response.Headers.TryGetValues("Set-Cookie", out var cookies));
