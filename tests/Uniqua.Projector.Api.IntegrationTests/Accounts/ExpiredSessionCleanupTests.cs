@@ -169,6 +169,67 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
         factory.Clock.Reset();
     }
 
+    [Fact]
+    public async Task A_failure_past_a_short_grace_period_with_no_success_ever_raises_the_alert()
+    {
+        // Review 2026-09-23 (second re-review) Q-09. T41 measured staleness against the full
+        // 48-hour HealthyInterval even before any sweep had ever succeeded, so an instance that is
+        // restarted more often than every 48 hours never lives long enough to look "48 hours
+        // overdue" and never raises session_cleanup_stale, no matter how many sweeps fail. Before
+        // the first success, staleness must instead be measured against a short grace period after
+        // process start (for example one hour) — a first failure at t=0 still raises nothing, but a
+        // failure once that short grace period has passed, with no success ever recorded, must.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+        using var cleanup = new ExpiredSessionCleanupService(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(), factory.Clock, logger);
+
+        // t=0: a first failure raises nothing — the process has not had even the grace period to
+        // prove itself yet.
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("the database is not ready yet"),
+            CancellationToken.None));
+        Assert.DoesNotContain(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+
+        // Past a short grace period (90 minutes), but nowhere near the 48-hour HealthyInterval, a
+        // failure with no success ever recorded must raise the alert.
+        factory.Clock.Advance(TimeSpan.FromMinutes(90));
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("still unavailable"),
+            CancellationToken.None));
+
+        var alert = Assert.Single(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+        Assert.Equal(LogLevel.Error, alert.Level);
+
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public async Task A_failure_47_hours_after_a_success_raises_no_alert()
+    {
+        // Review 2026-09-23 (second re-review) Q-09 regression: once a sweep has succeeded, the
+        // grace period no longer applies — the full 48-hour HealthyInterval measured from
+        // LastSucceededAt governs, unchanged.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+        using var cleanup = new ExpiredSessionCleanupService(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(), factory.Clock, logger);
+
+        Assert.True(await cleanup.RunOnceAsync(_ => Task.FromResult(0), CancellationToken.None));
+
+        factory.Clock.Advance(TimeSpan.FromHours(47));
+        Assert.False(await cleanup.RunOnceAsync(
+            _ => throw new InvalidOperationException("the database is unavailable"),
+            CancellationToken.None));
+
+        Assert.DoesNotContain(
+            logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
+
+        factory.Clock.Reset();
+    }
+
     // ---- The guard and the failure behaviour -----------------------------------------------------
 
     [Fact]

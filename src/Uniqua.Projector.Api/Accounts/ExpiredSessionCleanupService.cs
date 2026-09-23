@@ -34,6 +34,15 @@ public sealed class ExpiredSessionCleanupService(
     public static readonly TimeSpan HealthyInterval = TimeSpan.FromHours(48);
 
     /// <summary>
+    /// Before any sweep has ever succeeded, how long a process gets to prove itself before a
+    /// failure counts as stale. Measuring pre-first-success staleness against the full
+    /// <see cref="HealthyInterval"/> instead meant an instance restarted more often than every 48
+    /// hours never lived long enough to look overdue, and <see cref="RaiseAlertIfStale"/> never
+    /// fired no matter how many sweeps failed (review 2026-09-23 second re-review, Q-09).
+    /// </summary>
+    public static readonly TimeSpan StaleGracePeriod = TimeSpan.FromHours(1);
+
+    /// <summary>
     /// flow 7's idempotency guard. The work has no key of its own, so two overlapping runs would
     /// simply issue the same delete against the same rows.
     /// </summary>
@@ -53,13 +62,16 @@ public sealed class ExpiredSessionCleanupService(
     public DateTimeOffset? LastSucceededAt { get; private set; }
 
     /// <summary>
-    /// Whether the gap since the last success — or, absent any success, since this instance was
-    /// constructed — has grown past <see cref="HealthyInterval"/>. "No evidence of success" still
-    /// deserves attention once the process itself has had long enough to prove itself, but not
-    /// before: a first sweep that fails at t=0 is not yet 48 hours overdue.
+    /// Whether the gap since the last success has grown past <see cref="HealthyInterval"/> — or,
+    /// absent any success yet, whether the gap since this instance was constructed has grown past
+    /// the much shorter <see cref="StaleGracePeriod"/>. "No evidence of success" still deserves
+    /// attention once the process itself has had long enough to prove itself, but not before: a
+    /// first sweep that fails at t=0 is not yet overdue.
     /// </summary>
     public bool HasNotSucceededRecently =>
-        clock.UtcNow - (LastSucceededAt ?? _startedAt) > HealthyInterval;
+        LastSucceededAt is { } lastSucceededAt
+            ? clock.UtcNow - lastSucceededAt > HealthyInterval
+            : clock.UtcNow - _startedAt > StaleGracePeriod;
 
     /// <summary>
     /// Runs one sweep under the guard, reporting whether it actually ran and succeeded.
@@ -113,9 +125,11 @@ public sealed class ExpiredSessionCleanupService(
     }
 
     /// <summary>
-    /// sad §6 flow 7: "No run has succeeded for more than 48 hours — raise the section 7 alert".
-    /// There is no queue to replay and no retry to lean on; the operator is the escalation path,
-    /// so this is an error-level line with a stable event name for a log search to key on.
+    /// sad §6 flow 7: "No run has succeeded for more than 48 hours — raise the section 7 alert",
+    /// or, before any success has ever been recorded, past the much shorter
+    /// <see cref="StaleGracePeriod"/>. There is no queue to replay and no retry to lean on; the
+    /// operator is the escalation path, so this is an error-level line with a stable event name
+    /// for a log search to key on.
     /// </summary>
     private void RaiseAlertIfStale()
     {
@@ -125,7 +139,7 @@ public sealed class ExpiredSessionCleanupService(
                 "module=accounts event=session_cleanup_stale last_succeeded_at={LastSucceededAt} "
                 + "threshold_hours={ThresholdHours}",
                 LastSucceededAt?.ToString("O") ?? "never",
-                HealthyInterval.TotalHours);
+                (LastSucceededAt is not null ? HealthyInterval : StaleGracePeriod).TotalHours);
         }
     }
 
