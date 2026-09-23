@@ -187,18 +187,23 @@ public sealed class SessionEndpointTests(ApiFactory factory)
     public async Task A_body_with_an_unknown_field_is_refused_and_takes_no_slot()
     {
         // review 2026-09-23 (fourth re-review) U-02: openapi declares additionalProperties: false
-        // on this body, but nothing enforced it. The refusal must depend on the body's shape alone
-        // — never on account state — and must happen before Reserve, so it takes no slot.
+        // on this body, but nothing enforced it — so correct credentials plus an unknown field
+        // opened a session (201) instead of being refused. The account is real and the password is
+        // right, so the only thing standing between this request and a session is the unknown
+        // field; the refusal must depend on the body's shape alone — never on account state — and
+        // must happen before Reserve, so it takes no slot and opens no session.
         factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
         var client = await ClientAsync();
         var limit = factory.Services.GetRequiredService<SignInRateLimit>();
         var trackedAddressesBefore = limit.TrackedAddressKeyCount;
         var trackedSourcesBefore = limit.TrackedSourceCount;
+        var sessionsBefore = await factory.ScalarAsync<int>("SELECT COUNT(*) FROM [dbo].[Sessions]");
 
         var response = await client.PostAsync(
             Sessions,
             new StringContent(
-                """{"email":"someone@example.test","password":"a-long-enough-password","x":1}""",
+                $$"""{"email":"{{account.Email}}","password":"{{GoodPassword}}","x":1}""",
                 System.Text.Encoding.UTF8,
                 "application/json"));
 
@@ -207,8 +212,13 @@ public sealed class SessionEndpointTests(ApiFactory factory)
             "accounts.request_malformed",
             JsonDocument.Parse(await response.Content.ReadAsStringAsync())
                 .RootElement.GetProperty("code").GetString());
+        Assert.DoesNotContain(
+            response.Headers.TryGetValues("Set-Cookie", out var cookies) ? cookies : [],
+            value => value.StartsWith($"{SessionCookie.Name}=", StringComparison.Ordinal));
         Assert.Equal(trackedAddressesBefore, limit.TrackedAddressKeyCount);
         Assert.Equal(trackedSourcesBefore, limit.TrackedSourceCount);
+        Assert.Equal(
+            sessionsBefore, await factory.ScalarAsync<int>("SELECT COUNT(*) FROM [dbo].[Sessions]"));
     }
 
     // ---- AC-05b / S-01: over-long credentials are refused before Reserve or a lookup -------------
