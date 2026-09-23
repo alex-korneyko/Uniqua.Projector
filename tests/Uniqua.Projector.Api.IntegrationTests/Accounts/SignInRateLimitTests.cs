@@ -105,6 +105,54 @@ public sealed class SignInRateLimitTests
         Assert.DoesNotContain("example.test", key, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- V-05: a per-address refusal gives back the per-source slot it took before checking -------
+
+    [Fact]
+    public void A_per_address_refusal_gives_back_its_per_source_slot()
+    {
+        var clock = new TestClock();
+        var limit = new SignInRateLimit(clock);
+        const string source = "203.0.113.9";
+        const string cappedAddress = "owner@example.test";
+
+        // Cap the (source, address) pair at its own ceiling of 20.
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            Assert.True(limit.Reserve(source, cappedAddress).IsPermitted);
+        }
+
+        // Every further attempt at the SAME pair is refused by the per-address cap alone. Reserve
+        // takes the per-source slot first (S-01) and must give it back on a per-address refusal
+        // (V-05) — otherwise these refusals, which never touched a password, would still spend the
+        // source's own ceiling.
+        const int refusalsToSend = 100;
+        for (var attempt = 0; attempt < refusalsToSend; attempt++)
+        {
+            var reservation = limit.Reserve(source, cappedAddress);
+            Assert.False(reservation.IsPermitted);
+            Assert.Equal(SignInRateLimitCap.PerAddress, reservation.Cap);
+        }
+
+        // Those 100 refusals must not have counted against the source's own ceiling of 100 — only
+        // the 20 permitted attempts against the capped pair should. Spend exactly the remaining 80
+        // on distinct addresses; every one must still be permitted.
+        var remaining = SignInRateLimit.PermittedFailuresPerSourceWindow - SignInRateLimit.PermittedFailuresPerWindow;
+        for (var index = 0; index < remaining; index++)
+        {
+            var reservation = limit.Reserve(source, $"other-{index}@example.test");
+            Assert.True(
+                reservation.IsPermitted,
+                "a per-address refusal did not give back its per-source slot: the source's own "
+                + "ceiling was exhausted by refusals that should never have counted against it.");
+        }
+
+        // ...and the one past that must now be refused by the per-source cap, proving the count is
+        // exactly the 20 + 80 = 100 permitted attempts, not 20 + 100 refused-and-uncounted ones.
+        var overLimit = limit.Reserve(source, "final-straw@example.test");
+        Assert.False(overLimit.IsPermitted);
+        Assert.Equal(SignInRateLimitCap.PerSource, overLimit.Cap);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     /// <summary>

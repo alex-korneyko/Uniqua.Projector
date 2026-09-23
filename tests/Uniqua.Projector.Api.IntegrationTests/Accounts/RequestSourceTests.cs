@@ -216,6 +216,104 @@ public sealed class RequestSourceTests
             + $"reserves of {keys} distinct keys; it must equal the {keys} keys actually held.");
     }
 
+    // ---- V-06 (fourth re-review): Release racing Reserve on one key loses no reservation ----------
+
+    [Fact]
+    public void Release_racing_Reserve_on_one_key_never_loses_a_held_reservation()
+    {
+        // V-06: Reserve re-checks, under the list lock, that _entries still maps this key to the
+        // exact list it fetched before taking the lock (the ReferenceEquals in
+        // SlidingWindowLimiter.Reserve). Without that re-check, a Release racing in between — which
+        // can empty a list and remove it from _entries — lets a concurrent Reserve add its slot to
+        // a list that is no longer reachable from _entries at all: the slot is granted, but nothing
+        // afterwards sees it, so PermittedPerWindow silently stops being enforced.
+        // Racing_first_reserves_of_the_same_new_keys_... (above) only races TryAdd across distinct
+        // keys and would never catch this — it needs Release racing Reserve on the SAME key.
+        const int keepers = 3;
+        const int churnerCount = 8;
+        const int churnIterationsPerThread = 30;
+        const int trials = 100;
+
+        for (var trial = 0; trial < trials; trial++)
+        {
+            var clock = new TestClock();
+            var limit = new RegistrationRateLimit(clock);
+            var key = $"race-{trial}";
+
+            using var start = new Barrier(keepers + churnerCount);
+
+            // Keepers each hold one slot for good (never release), retrying until they get it —
+            // the retry only spins while churners are momentarily filling the cap themselves, and
+            // never masks a genuine loss, since a lost keeper slot shows up later as the tail
+            // assertion below being permitted when it must be refused.
+            var kept = new bool[keepers];
+            var keeperThreads = Enumerable.Range(0, keepers)
+                .Select(index => new Thread(() =>
+                {
+                    start.SignalAndWait();
+                    RateLimitDecision decision;
+                    do
+                    {
+                        decision = limit.Reserve(key);
+                    }
+                    while (!decision.IsPermitted);
+
+                    kept[index] = true;
+                }))
+                .ToList();
+
+            // Churners hammer Reserve immediately followed by Release on the very same key, so the
+            // key's backing list is repeatedly emptied and removed from _entries while a keeper's
+            // Reserve may be mid-flight past its own TryGetValue and about to take the list's lock.
+            var churnerThreads = Enumerable.Range(0, churnerCount)
+                .Select(_ => new Thread(() =>
+                {
+                    start.SignalAndWait();
+                    for (var iteration = 0; iteration < churnIterationsPerThread; iteration++)
+                    {
+                        var decision = limit.Reserve(key);
+                        if (decision.IsPermitted)
+                        {
+                            limit.Release(key, decision);
+                        }
+                    }
+                }))
+                .ToList();
+
+            keeperThreads.ForEach(thread => thread.Start());
+            churnerThreads.ForEach(thread => thread.Start());
+            keeperThreads.ForEach(thread => thread.Join());
+            churnerThreads.ForEach(thread => thread.Join());
+
+            Assert.True(
+                kept.All(held => held),
+                $"trial {trial}: not every keeper thread obtained its reservation.");
+
+            // Every churner released what it took, so the key's live list should now hold exactly
+            // the `keepers` reservations above. Filling the rest of PermittedPerWindow explicitly
+            // must still succeed...
+            for (var index = keepers; index < RegistrationRateLimit.PermittedPerWindow; index++)
+            {
+                var filler = limit.Reserve(key);
+                Assert.True(
+                    filler.IsPermitted,
+                    $"trial {trial}: filling slot {index} of "
+                    + $"{RegistrationRateLimit.PermittedPerWindow} was refused, which only happens "
+                    + "if a keeper's reservation was lost to an orphaned list during the race.");
+            }
+
+            // ...and the one past that must now be refused: if a keeper's reservation had instead
+            // been silently added to a list already removed from _entries, the live count would be
+            // short by one and this call would wrongly succeed.
+            var overLimit = limit.Reserve(key);
+            Assert.False(
+                overLimit.IsPermitted,
+                $"trial {trial}: a reservation past {RegistrationRateLimit.PermittedPerWindow} was "
+                + "permitted for a key that should already be at its cap — a held reservation was "
+                + "lost to a Release racing its Reserve.");
+        }
+    }
+
     // ---- T-04 (review 2026-09-23 third re-review): the old ceiling test asserted only ------------
     // ---- TrackedSourceCount <= 100_000, which would still pass if the limiter refused an ---------
     // ---- already-tracked key just because the limiter as a whole sits at capacity -----------------
