@@ -144,6 +144,19 @@ public sealed class SessionRulesDocumentTests
     }
 
     [Fact]
+    public void The_guessing_rule_counts_attempts_in_flight_and_keys_an_ipv6_caller_by_its_slash_64()
+    {
+        // review 2026-09-23 (third re-review) S-05: "past 100 failed" left out an attempt still in
+        // flight (it counts the moment the slot is reserved, not the moment it completes), and "the
+        // caller's IP address" left out that an IPv6 address is keyed by its /64 prefix, not the
+        // full address (RequestSource.Key).
+        var rules = Read("docs/session-rules.md");
+
+        Assert.Contains("in flight", rules, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("/64", rules, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void The_readme_states_the_sign_in_cap_alongside_the_guessing_delay()
     {
         // review 2026-09-23 P-03: the README's one-line summary of the guessing rule names the

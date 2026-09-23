@@ -265,6 +265,11 @@ paths:
             never registered, and for an attempt held back by the progressive delay. The response names
             neither of the two and carries no `details`: any structured hint would be the enumeration
             oracle these criteria exist to close.
+
+            An `email` or `password` longer than the `maxLength` declared below is refused with this same
+            code, before `SignInRateLimit` reserves a slot and before any account lookup — on length
+            alone, never on whether the address is registered, so this adds no further oracle
+            (review 2026-09-23 (third re-review) S-01).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -300,10 +305,18 @@ paths:
             checked, so this refusal never verifies one; applies identically whether the submitted
             address is registered or not. The request source is the client address as reported by
             this instance's own reverse proxy, trusted only when the request arrived from the proxy
-            (spec §6.1), the same key the registration rate limit uses.
+            (spec §6.1), the same key the registration rate limit uses. When the request source
+            cannot be resolved at all, neither cap applies and this response is never returned for
+            that reason — the attempt proceeds uncapped rather than sharing one budget with every
+            such caller (review 2026-09-23 (third re-review) S-05).
           headers:
             Retry-After:
-              description: seconds until a further sign-in from this source is accepted
+              description: |
+                Seconds until a further attempt is accepted. A refusal by the per-(source, address)
+                cap names only that pair — a different address, or the same address from a source
+                that has not itself reached the per-source ceiling below, is accepted at once; only
+                a refusal by the per-source cap blocks every address from this source until it
+                clears (review 2026-09-23 (third re-review) S-05).
               schema: { type: integer, minimum: 1 }
               example: 412
           content:

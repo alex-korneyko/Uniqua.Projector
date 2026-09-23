@@ -323,6 +323,7 @@ sequenceDiagram
     Visitor->>Spa: Fills in the address and the password
     Spa->>Api: Submits the sign-in
     Api->>Api: Reserve a slot for this (request source, address) pair and for this request source (SignInRateLimit, review 2026-09-23 P-01)
+    Note over Api: When the request source cannot be resolved, neither slot is reserved at all - the attempt proceeds uncapped rather than sharing one budget with every such caller (spec §6.1)
     alt Either cap is already exhausted for this window
         Api-->>Spa: Refused - sign-in is temporarily limited (429), with when to retry
         Spa-->>Visitor: Shows the limit and the retry time, nothing else typed is lost
@@ -521,7 +522,7 @@ One instance on the owner's self-hosted host, behind a **reverse proxy** that te
 - Count of live session records; count of rows removed by the last cleanup run, and when it last succeeded.
 - Failed sign-in attempts per account per hour (the AC-12 progressive delay in action).
 - Registrations refused by the rate limit, and the request source that triggered it.
-- Sign-ins refused by either cap (`accounts.sign_in_rate_limited`), broken down by request source, and which of the two caps — per-(source, address) or per-source — refused each one (review 2026-09-23 P-03).
+- Sign-ins refused by either cap (`accounts.sign_in_rate_limited`), broken down by request source, and — from the `cap=per_address|per_source` field the `sign_in_rate_limited` log line carries (review 2026-09-23 (third re-review) S-04) — which of the two caps refused each one (review 2026-09-23 P-03).
 
 **Alerts:**
 - Session-recognition p95 above 30 ms sustained — the budget ADR 0008's per-request lookup spends.

@@ -109,8 +109,9 @@ does not wait for its own response.
   costs you nothing.
 - From the 6th the delay doubles: **at least 2 seconds at the 6th**, at least 32 at the 10th, up to a
   ceiling of five minutes.
-- The count returns to zero on a correct password, or after **15 minutes** in which no attempt is
-  made at all.
+- The count returns to zero on a correct password, or after **15 minutes** in which no failed
+  attempt reached verification — a `429` refused before verification does not, by itself, keep the
+  count alive.
 - **A correct password is never delayed**, however hard anyone else has been guessing, and it never
   counts against either cap below. Lockout — a state that only an out-of-band action clears — was
   rejected in favour of this delay, and the caps below never add one back: both release on the next
@@ -123,9 +124,11 @@ pair is refused with **`429`** before a password is even checked; past **100 fai
 one request source across every address it has tried in the same window, the next attempt from that
 source is refused regardless of which address it names. A successful sign-in hands back the two slots
 it reserved itself, so it never counts against either cap; failures already counted stay until they
-age out of the window. Both are keyed by request source (in practice, the caller's IP address) — a guesser who
-shares the owner's own request source, or whose source has separately reached its own 100-failure
-ceiling, can still refuse the owner for up to 15 minutes; that residual is accepted and recorded in
+age out of the window. Both are keyed by request source (in practice, the caller's IP address —
+except an IPv6 address, which is keyed by its **/64 prefix**, the block an ISP hands one customer,
+so rotating within it does not buy a fresh budget) — a guesser who shares the owner's own request
+source, or whose source has separately reached its own 100-failure ceiling, can still refuse the
+owner for up to 15 minutes; that residual is accepted and recorded in
 [spec §6.1](features/accounts-and-sessions/spec.md).
 
 Nothing in a response reveals that any of this is happening. A refusal that waited thirty seconds is

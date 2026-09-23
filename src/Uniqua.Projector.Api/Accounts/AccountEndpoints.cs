@@ -256,9 +256,14 @@ public static class RequestSource
         // entirely (SignInRateLimit), which logs its own warning — spec §6.1 names this as a
         // failure mode rather than a detail, so it is said loudly instead of passed over
         // (review 2026-09-23 P-03).
+        // review 2026-09-23 (third re-review) S-05: the two consumers of this key do not share one
+        // consequence — registration keys every such caller onto one shared budget, while
+        // SignInRateLimit skips its caps entirely for RequestSource.Unknown rather than sharing a
+        // budget across them — so the value named here states both rather than the single,
+        // registration-only shape the previous wording implied.
         logger.LogError(
             "module=accounts event=request_source_unknown "
-            + "consequence=rate_limits_shared_by_all_callers");
+            + "consequence=registration_shares_one_key_sign_in_skips_caps");
 
         return Unknown;
     }
