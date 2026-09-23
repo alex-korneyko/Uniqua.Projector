@@ -289,12 +289,14 @@ paths:
           $ref: "#/components/responses/AntiforgeryFailed"
         "429":
           description: |
-            AC-12 / AC-05b, ADR 0010's amendment (review 2026-09-22-2 N-01) — more than 20 failed
-            sign-ins came from this request source within the past 15 minutes. Reserved before the
-            password is checked, so this refusal never verifies one; applies identically whether the
-            submitted address is registered or not. The request source is the client address as
-            reported by this instance's own reverse proxy, trusted only when the request arrived
-            from the proxy (spec §6.1), the same key the registration rate limit uses.
+            AC-12 / AC-05b, ADR 0010's amendment (review 2026-09-22-2 N-01), keying refined in
+            review 2026-09-23 P-01 — either 20 failed sign-ins or attempts still in flight for this
+            (request source, address) pair, or 100 for this request source across every address it
+            has tried, within the past 15 minutes. Both slots are reserved before the password is
+            checked, so this refusal never verifies one; applies identically whether the submitted
+            address is registered or not. The request source is the client address as reported by
+            this instance's own reverse proxy, trusted only when the request arrived from the proxy
+            (spec §6.1), the same key the registration rate limit uses.
           headers:
             Retry-After:
               description: seconds until a further sign-in from this source is accepted

@@ -28,9 +28,10 @@ public static class AccountProblems
         Row(AccountErrors.CredentialsInvalid, 401, "The address or the password is incorrect"),
         Row(AccountErrors.DisplayNameInvalid, 400, "A display name is not usable"),
 
-        // These three are refused before or outside any domain rule, so they have no sentinel:
-        // recognition and forgery are decided in the request pipeline and the rate limit is an
-        // Api-level guard on a public endpoint.
+        // These are refused before or outside any domain rule, so they have no sentinel:
+        // recognition and forgery are decided in the request pipeline, and both rate limits are
+        // Api-level guards on a public endpoint — no longer registration only (review 2026-09-23
+        // P-03).
         Row("accounts.session_not_recognised", 401, "Not signed in", "Sign in to continue."),
         Row("accounts.antiforgery_failed", 403, "The request could not be verified",
             "The request could not be verified as coming from this application."),
@@ -82,8 +83,8 @@ public static class AccountProblems
 /// <param name="Detail">The plain-language reason — fixed per code, never an echo of input.</param>
 /// <param name="Type">The URI identifying the problem type.</param>
 /// <param name="CarriesRetryAfter">
-/// Whether this problem is published with a <c>retry_after_seconds</c> member. Only AC-01b's rate
-/// limit is.
+/// Whether this problem is published with a <c>retry_after_seconds</c> member. Both AC-01b's
+/// registration limit and AC-12's sign-in limit are; nothing else is.
 /// </param>
 public sealed record AccountProblem(
     string Code,

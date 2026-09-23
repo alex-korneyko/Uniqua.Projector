@@ -15,8 +15,9 @@ line each:
 - **What ends it** — signing out (exactly the session it travelled on, and no other), or either time
   limit. A redeploy ends nothing.
 - **What happens when someone guesses at a password** — a per-account delay that grows with each
-  consecutive failure, resetting on success or after 15 minutes idle. No lockout, ever: a correct
-  password is never delayed.
+  consecutive failure, resetting on success or after 15 minutes idle, plus a cap of 20 failed
+  sign-ins or attempts still in flight per (request source, address) in that window — past it, `429`
+  until it clears. A correct password is never delayed or capped.
 
 **→ [`docs/session-rules.md`](docs/session-rules.md)** has each of those with the file that enforces
 it, the test that proves it, and how to verify it yourself.

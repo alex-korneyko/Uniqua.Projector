@@ -100,7 +100,10 @@ Both are stated as commitments with the step that will verify them, rather than 
 ## 4. What happens when someone guesses at a password
 
 An attempt against an account is held back for longer with each consecutive failure, and the account
-is **never locked**.
+is **never locked** — there is no state from which the owner has to be unlocked by anyone. That is
+not quite "no cap, ever", though: past a point a guesser is refused outright rather than merely
+delayed, and the two caps below exist precisely so the delay does not have to hold back a client that
+does not wait for its own response.
 
 - The first five consecutive failures are not delayed at all. Mistyping your own password a few times
   costs you nothing.
@@ -108,20 +111,35 @@ is **never locked**.
   ceiling of five minutes.
 - The count returns to zero on a correct password, or after **15 minutes** in which no attempt is
   made at all.
-- **A correct password is never delayed**, however hard anyone else has been guessing. There is no
-  threshold at which an account becomes unusable to its owner — that is the whole reason lockout was
-  rejected.
+- **A correct password is never delayed or capped**, however hard anyone else has been guessing.
+  Lockout — a state that only an out-of-band action clears — was rejected in favour of this delay,
+  and the caps below never add one back: both release on the next 15-minute window regardless of
+  what happens in it.
+
+On top of the delay, two caps bound a client that hangs up as soon as it has verified whether an
+address is registered, so it pays none of the delay above: past **20 failed sign-ins or attempts
+still in flight** for one (request source, address) pair in 15 minutes, the next attempt against that
+pair is refused with **`429`** before a password is even checked; past **100 failed** sign-ins from
+one request source across every address it has tried in the same window, the next attempt from that
+source is refused regardless of which address it names. A correct password releases both slots at once, from
+any source. Both are keyed by request source (in practice, the caller's IP address) — a guesser who
+shares the owner's own request source, or whose source has separately reached its own 100-failure
+ceiling, can still refuse the owner for up to 15 minutes; that residual is accepted and recorded in
+[spec §6.1](features/accounts-and-sessions/spec.md).
 
 Nothing in a response reveals that any of this is happening. A refusal that waited thirty seconds is
 identical, field for field and header for header, to one that waited nothing — otherwise the delay
-itself would tell a guesser they had found a real account.
+itself would tell a guesser they had found a real account. The `429` from a cap is a different code
+from the `401` a delayed or undelayed refusal returns, but both are returned identically whether or
+not the address is registered.
 
 Relatedly: a wrong password and an address no account was ever registered with are refused in the
 same words and take a comparable time, because the unregistered case still performs a full password
 verification. Neither the message nor the wait reveals whether an address is registered.
 
-- **Enforced by** [`src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs`](../src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs)
-  and [`src/Uniqua.Projector.Application/Accounts/SignIn.cs`](../src/Uniqua.Projector.Application/Accounts/SignIn.cs)
+- **Enforced by** [`src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs`](../src/Uniqua.Projector.Domain/Accounts/GuessingDelay.cs),
+  [`src/Uniqua.Projector.Application/Accounts/SignIn.cs`](../src/Uniqua.Projector.Application/Accounts/SignIn.cs)
+  and, for the two caps, [`src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs`](../src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs)
 - **Proved by** [`tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs`](../tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs)
   and [`tests/Uniqua.Projector.Domain.Tests/Accounts/GuessingDelayTests.cs`](../tests/Uniqua.Projector.Domain.Tests/Accounts/GuessingDelayTests.cs)
 - **Check it yourself:** submit a wrong password to `POST /api/v1/sessions` seven times in a row and

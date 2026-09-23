@@ -60,8 +60,9 @@ public static class ProblemDetailsSetup
     /// so no endpoint can accidentally publish a different shape for the same code.
     /// </summary>
     /// <param name="retryAfterSeconds">
-    /// Only AC-01b's rate limit supplies this; it is written as the contract's
-    /// <c>retry_after_seconds</c> member and as the standard <c>Retry-After</c> header.
+    /// AC-01b's registration limit and AC-12's sign-in limit supply this — no longer registration
+    /// only (review 2026-09-23 P-03); it is written as the contract's <c>retry_after_seconds</c>
+    /// member and as the standard <c>Retry-After</c> header.
     /// </param>
     public static Task WriteAccountProblemAsync(
         this HttpContext context,

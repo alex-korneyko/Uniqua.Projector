@@ -206,7 +206,8 @@ public static class RequestSource
     public const string Unknown = "unknown";
 
     /// <summary>
-    /// The key AC-01b's limit counts against.
+    /// The key both AC-01b's registration limit and <see cref="SignInRateLimit"/>'s two sign-in
+    /// caps count against — no longer registration only (review 2026-09-23 P-03).
     /// </summary>
     /// <remarks>
     /// The forwarded headers middleware has already decided whether to believe a proxy's report:
@@ -223,10 +224,11 @@ public static class RequestSource
         }
 
         // Every visitor then shares one key, which spec §6.1 names as a failure mode rather than a
-        // detail — so it is said loudly instead of passed over.
+        // detail — so it is said loudly instead of passed over. Affects every rate limit keyed on
+        // request source, registration and sign-in alike (review 2026-09-23 P-03).
         logger.LogError(
             "module=accounts event=request_source_unknown "
-            + "consequence=registration_limit_shared_by_all_callers");
+            + "consequence=rate_limits_shared_by_all_callers");
 
         return Unknown;
     }

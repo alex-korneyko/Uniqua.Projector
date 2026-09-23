@@ -322,40 +322,47 @@ sequenceDiagram
     Note over Visitor,Db: Precondition: the visitor owns an account and holds no active session
     Visitor->>Spa: Fills in the address and the password
     Spa->>Api: Submits the sign-in
-    Api->>App: Sign in with these credentials
-    App->>Infra: Find the account for this address, normalised the same way registration normalised it
-    Infra->>Db: Look the address up
-    Db-->>Infra: The account, or nothing
-    Infra-->>App: The account, or nothing
-    alt No account was ever registered with that address
-        App->>Infra: Verify the password against a dummy credential so the attempt costs the same time
-        Infra-->>App: Rejected
-        App-->>Api: Refused - the address or the password is incorrect
-        Api-->>Spa: The same wording and a comparable wait as a wrong password
-        Spa-->>Visitor: Shows one message that names neither of the two
-    else The account exists and the password is wrong
-        App->>Infra: Verify the password
-        Infra-->>App: Rejected
-        App->>Infra: Record one more consecutive failure against the account
-        Note over Infra,Db: persists the consecutive-failure count and the time of this attempt on the account - see flow 6
-        Infra->>Db: Update the account
-        Db-->>Infra: Updated
-        App-->>Api: Refused - the address or the password is incorrect
-        Api-->>Spa: Refusal
-        Spa-->>Visitor: Shows the same message, word for word
-    else The account exists and the password is correct
-        App->>Infra: Verify the password
-        Infra-->>App: Accepted
-        App->>Infra: Return the consecutive-failure count to zero and open a session
-        Note over Infra,Db: persists a session record - the account it belongs to, when it was opened, when it was last seen
-        Infra->>Db: Write the session record and the cleared counter
-        Db-->>Infra: Written
-        Infra-->>App: Session reference
-        App-->>Api: Session opened
-        Api-->>Spa: Signed in, session cookie set
-        Spa-->>Visitor: Shows their own display name
+    Api->>Api: Reserve a slot for this (request source, address) pair and for this request source (SignInRateLimit, review 2026-09-23 P-01)
+    alt Either cap is already exhausted for this window
+        Api-->>Spa: Refused - sign-in is temporarily limited (429), with when to retry
+        Spa-->>Visitor: Shows the limit and the retry time, nothing else typed is lost
+    else Both slots are reserved
+        Api->>App: Sign in with these credentials
+        App->>Infra: Find the account for this address, normalised the same way registration normalised it
+        Infra->>Db: Look the address up
+        Db-->>Infra: The account, or nothing
+        Infra-->>App: The account, or nothing
+        alt No account was ever registered with that address
+            App->>Infra: Verify the password against a dummy credential so the attempt costs the same time
+            Infra-->>App: Rejected
+            App-->>Api: Refused - the address or the password is incorrect
+            Api-->>Spa: The same wording and a comparable wait as a wrong password
+            Spa-->>Visitor: Shows one message that names neither of the two
+        else The account exists and the password is wrong
+            App->>Infra: Verify the password
+            Infra-->>App: Rejected
+            App->>Infra: Record one more consecutive failure against the account
+            Note over Infra,Db: persists the consecutive-failure count and the time of this attempt on the account - see flow 6
+            Infra->>Db: Update the account
+            Db-->>Infra: Updated
+            App-->>Api: Refused - the address or the password is incorrect
+            Api-->>Spa: Refusal
+            Spa-->>Visitor: Shows the same message, word for word
+        else The account exists and the password is correct
+            App->>Infra: Verify the password
+            Infra-->>App: Accepted
+            App->>Infra: Return the consecutive-failure count to zero and open a session
+            Note over Infra,Db: persists a session record - the account it belongs to, when it was opened, when it was last seen
+            Infra->>Db: Write the session record and the cleared counter
+            Db-->>Infra: Written
+            Infra-->>App: Session reference
+            App-->>Api: Session opened
+            Api->>Api: Release both slots - a correct password is never counted against either cap, from any source
+            Api-->>Spa: Signed in, session cookie set
+            Spa-->>Visitor: Shows their own display name
+        end
     end
-    Note over Visitor,Db: Postcondition: either a session exists and the failure count is zero, or nothing about the account changed except its failure count
+    Note over Visitor,Db: Postcondition: either a session exists, the failure count is zero and both cap slots are released, or nothing about the account changed except its failure count and the reserved slots
 ```
 
 **Critical flow 5: recognising a session on an ordinary read (AC-06, AC-07, AC-07b, AC-10)**
@@ -423,11 +430,11 @@ sequenceDiagram
     Domain-->>App: A delay grown from the count - at least 2 seconds at the sixth failure, at least 30 seconds at the tenth
     App->>Infra: Verify the password
     Infra-->>App: Rejected
-    App->>App: Hold the answer for the computed delay before replying
     App->>Infra: Record one more consecutive failure and the time of this attempt
-    Note over Infra,Db: persists the consecutive-failure count and the last-attempt time on the account - both read on the next attempt
+    Note over Infra,Db: persists the consecutive-failure count and the last-attempt time on the account before the delay is held, not after - so a client that hangs up mid-delay still counts (review 2026-09-23 P-03)
     Infra->>Db: Update the account
     Db-->>Infra: Updated
+    App->>App: Hold the answer for the computed delay before replying
     App-->>Api: Refused - the address or the password is incorrect
     Api-->>Spa: The same refusal as any other, only later
     Spa-->>Guesser: Shows the same message, with no hint that a delay was applied
@@ -505,7 +512,7 @@ sequenceDiagram
 
 ## 7. Deployment view
 
-One instance on the owner's self-hosted host, behind a **reverse proxy** that terminates TLS for the registered domain and forwards the originating client address — that forwarded address is the **request source** the registration rate limit keys on (spec §6.1), and it is trusted only when the request arrives from the proxy itself. **SQL Server** runs alongside on the same host and holds all three of this feature's concerns: accounts, session records, and the data-protection key ring (ADR 0009). A single replica; because both the session store and the key ring are shared state in the database, a second replica would work without code change, but nothing calls for one.
+One instance on the owner's self-hosted host, behind a **reverse proxy** that terminates TLS for the registered domain and forwards the originating client address — that forwarded address is the **request source** the registration rate limit and both sign-in caps key on (spec §6.1), and it is trusted only when the request arrives from the proxy itself. **SQL Server** runs alongside on the same host and holds all three of this feature's concerns: accounts, session records, and the data-protection key ring (ADR 0009). A single replica; because both the session store and the key ring are shared state in the database, a second replica would work without code change, but nothing calls for one.
 
 **Expired-session cleanup.** A hosted background service inside the API process removes rows that can no longer be live — older than 90 days, or revoked more than 14 days ago — once a day and once at startup. The startup run matters because the daily timer does not survive a restart: a redeploy, a reboot of the host or a crash all reset it, and on a manually-operated instance those are the common case rather than the exception. Cleanup is **hygiene, not enforcement**: an expired row is refused at recognition time regardless, because the `Session` entity itself decides it is dead. It exists because a session row records when a named person signed in, and spec §3 rules out any data-deletion path — without cleanup the table is a permanent visit log.
 
@@ -514,6 +521,7 @@ One instance on the owner's self-hosted host, behind a **reverse proxy** that te
 - Count of live session records; count of rows removed by the last cleanup run, and when it last succeeded.
 - Failed sign-in attempts per account per hour (the AC-12 progressive delay in action).
 - Registrations refused by the rate limit, and the request source that triggered it.
+- Sign-ins refused by either cap (`accounts.sign_in_rate_limited`), broken down by request source, and which of the two caps — per-(source, address) or per-source — refused each one (review 2026-09-23 P-03).
 
 **Alerts:**
 - Session-recognition p95 above 30 ms sustained — the budget ADR 0008's per-request lookup spends.
@@ -542,8 +550,8 @@ Three of the rows below are inherited from `architecture-map.md` §Conventions v
 | Error handling | RFC 9457 `ProblemDetails` from one exception handler. A refusal carries exactly the plain-language reason its acceptance criterion specifies — no more (AC-05 must not reveal which of address or password was wrong) | architecture-map §Conventions |
 | ID strategy | `Guid.CreateVersion7()` for account and session identifiers — time-ordered, and it leaks no record counts | architecture-map §Conventions |
 | Password hashing | The Identity hasher, with parameters tuned so one verification costs ≥ 100 ms on the §6 reference machine; guarded by a unit test over the parameters | spec §6 |
-| Guessing protection | A progressive per-account delay computed from Identity's consecutive-failure counter, with the framework's own lockout switched off, plus a cap of 20 failed sign-ins per request source per 15-minute sliding window — reserved before the password is verified and released only on success, so it still holds against a client that hangs up instead of waiting for the delay | ADR 0010 |
-| Rate limiting | No more than 5 registrations per minute per request source, and no more than 20 failed sign-ins per request source per 15 minutes — the client address as reported by the reverse proxy, trusted only when the request arrives from the proxy | spec §6.1, §7 |
+| Guessing protection | A progressive per-account delay computed from Identity's consecutive-failure counter, with the framework's own lockout switched off, plus a cap of 20 failed sign-ins or attempts still in flight per (request source, address) pair, and 100 per request source across every address it has tried, both per 15-minute sliding window — reserved before the password is verified and released only on success, so it still holds against a client that hangs up instead of waiting for the delay | ADR 0010, review 2026-09-23 P-01 |
+| Rate limiting | No more than 5 registrations per minute per request source, no more than 20 failed sign-ins or attempts still in flight per (request source, address) pair per 15 minutes, and no more than 100 per request source across every address in the same window — the client address as reported by the reverse proxy, trusted only when the request arrives from the proxy | spec §6.1, §7 |
 | Internationalisation | N/A — single language | — |
 | Observability | The §7 metrics; server-side timing on the sign-in, registration and session-recognition paths | §7 |
 | Secrets | The data-protection key ring lives in the database; this project has no secret manager, which is why the certificate-encrypted variant was rejected | ADR 0009, §11 |
@@ -609,7 +617,7 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 - **Email addresses are retained indefinitely with no deletion path** (spec §3). Deliberate rather than overlooked — the audience is a small set of invited reviewers — but it means there is no way to honour an erasure request without a manual database edit.
 - **A session row records when a named person signed in.** The §7 cleanup bounds how long that history lives, but there is no per-person erasure, for the same reason as above.
 - **Account enumeration through the registration form is deliberate** (AC-03, AC-11b). The display-name uniqueness chosen during clarify widened it: the form now also reveals which display names are in use.
-- **An unknown address at sign-in still costs a full password verification** (AC-05b), which makes the sign-in form a cheap way to consume processor time. The §6.1 rate limit covers registration only.
+- **An unknown address at sign-in still costs a full password verification** (AC-05b), which makes the sign-in form a cheap way to consume processor time. The per-(source, address) and per-source sign-in caps bound the volume but not a spray thin enough to stay under both, and the §6.1 spam-registration rate limit covers registration only, not sign-in.
 
 ## 12. Glossary
 
@@ -624,7 +632,7 @@ Terms marked **[CONTEXT]** are canonical in the repository-root `CONTEXT.md` and
 | display name **[CONTEXT]** | The label other board members see next to an account's actions. Unique across accounts as of this feature (AC-11, AC-11b) |
 | live-update connection **[CONTEXT]** | The connection a board member's browser holds open to one board so that changes made by other members arrive without a reload |
 | session record | The server-side row that *is* the session (ADR 0008): its identifier, the account, when it was opened, when it was last seen, and whether it has been revoked. The cookie carries only an opaque reference to it |
-| request source | The client address as reported by this instance's reverse proxy, trusted only when the request arrives from the proxy. It is the key the registration rate limit counts against (spec §6.1) |
+| request source | The client address as reported by this instance's reverse proxy, trusted only when the request arrives from the proxy. It is the key the registration rate limit and both sign-in caps — per-(source, address) and per-source — count against (spec §6.1) |
 | key ring | The set of keys ASP.NET Core Data Protection uses to sign and encrypt the session cookie. Kept in the database so a redeploy does not end every session (ADR 0009) |
 | reference machine | The machine the §6 throughput and hashing-cost figures are measured on — a 2-vCPU virtual machine on the self-hosted host. CI is not the reference machine |
 | progressive delay | The growing refusal delay applied after repeated wrong passwords on one account, in place of locking the account (ADR 0010) |

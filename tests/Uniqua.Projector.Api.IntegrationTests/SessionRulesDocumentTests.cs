@@ -105,6 +105,45 @@ public sealed class SessionRulesDocumentTests
     }
 
     [Fact]
+    public void The_guessing_rule_states_the_sign_in_cap_its_429_and_the_shared_source_residual()
+    {
+        // review 2026-09-23 P-03: the per-(source, address) and per-source caps that back AC-12's
+        // "never unusable to its owner" reading — and the residual for a guesser who shares the
+        // owner's own request source, recorded in spec §6.1 — were missing from this document
+        // entirely, which still read as an unqualified "no lockout, ever" with no cap in sight.
+        var rules = Read("docs/session-rules.md");
+
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerWindow} failed",
+            rules,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerSourceWindow} failed",
+            rules,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.Window.TotalMinutes:0} minutes",
+            rules,
+            StringComparison.Ordinal);
+        Assert.Contains("429", rules, StringComparison.Ordinal);
+        Assert.Contains("request source", rules, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void The_readme_states_the_sign_in_cap_alongside_the_guessing_delay()
+    {
+        // review 2026-09-23 P-03: the README's one-line summary of the guessing rule names the
+        // per-account delay but neither cap, so a first-time reader never learns a cap exists at
+        // all until they follow the link.
+        var readme = Read("README.md");
+
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerWindow} failed",
+            readme,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void What_cannot_be_observed_yet_is_labelled_with_the_step_that_will_verify_it()
     {
         // An honest "not yet verified" beats an unqualified promise, and naming the step is what

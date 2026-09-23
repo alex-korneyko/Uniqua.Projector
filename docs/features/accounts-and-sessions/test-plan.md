@@ -64,6 +64,11 @@ happens when someone guesses at a password — behaves exactly as the repository
 | AC-12 error | password verification is deliberately expensive | unit | the hashing parameters cost at least 100 ms per verification (§6), and the framework's own lockout is off (ADR 0010) |
 | AC-12 error | a further wrong password after five failures is refused late, and the count survives | integration | the refusal is held back, the failure count and the last-attempt time are persisted, and the message is the same one any refusal uses |
 | AC-12 error | the count returns to zero on a correct password and after 15 idle minutes | integration | against a controllable clock both resets happen, and a correct password is accepted with no delay even after nine failures — the owner is never locked out |
+| AC-12 error | a 21st failed attempt against one (source, address) pair in the window is refused without verification | integration | refused with `accounts.sign_in_rate_limited` (429) before a password is checked, and the count does not move a 22nd time (review 2026-09-23 P-03) |
+| AC-12 error | parallel and abandoned attempts against one pair count toward the cap the same as an awaited one | integration | attempts held open or dropped by the caller still reserve a slot, so a client that never waits for its response exhausts the cap exactly as one that does |
+| AC-12 error | the per-(source, address) and per-source caps apply identically to an unregistered address (AC-05b) | integration | an unregistered address refused 20 times from one source is capped the same way a registered one is, before the dummy verification runs |
+| AC-05b error | a correct password against another address, or from another source, still succeeds once one pair is capped | integration | the per-address cap on one pair, or the per-source cap on one source, refuses only that pair or that source — a different address, or the same address from an uncapped source, signs in normally |
+| AC-12 error | the sign-in form shows the 429 refusal and when to retry | component | the rate-limited message and the retry time are rendered, distinct from the ordinary wrong-password message |
 | AC-13 cross-context | an account's identity is stable and never issued twice | integration | the identity is unchanged across sign-out, a run of failed attempts and a fresh sign-in, and no second account is created with an identity already handed out |
 
 ## Edge cases / error paths
@@ -74,7 +79,11 @@ happens when someone guesses at a password — behaves exactly as the repository
 - Display name at 50 and 51 characters (AC-01) → accepted, refused.
 - An address that cannot be an address, and an address differing from a registered one only in case or surrounding whitespace (AC-02b, AC-03) → the first refused as unusable, the second refused as already registered.
 - Sign-in with an address no account was ever registered with (AC-05b) → the wrong-password refusal, word for word and in a comparable time.
-- A session exactly at 14 days + 1 hour idle (measured from the last activity stamp) and one minute past it; one at 90 days old and one minute past it (AC-07, AC-07b) → live, dead, live, dead.
+- A session one minute before 14 days + 1 hour idle (measured from the last activity stamp), and at it; one minute before 90 days old, and at it (AC-07, AC-07b) → live, dead; live, dead. `IsExpired` uses `>=`, so the instant itself is already dead (review 2026-09-23 P-04).
+- A 21st failed sign-in against one (source, address) pair within 15 minutes, including one refused outright by an in-flight attempt's reserved slot rather than a completed one (AC-12) → refused before verification, `accounts.sign_in_rate_limited` (429), the count unmoved.
+- A 101st failed sign-in from one source across addresses it has tried, none of them individually capped (AC-12) → refused the same way, regardless of which address the 101st names.
+- A correct password for a different address than the one capped, or for the same address from an uncapped source (AC-05b, AC-12) → accepted normally; only the capped pair or source is refused.
+- Sign-in from a request source that could not be resolved (no `RemoteIpAddress`) (AC-12, §6.1) → neither cap applied, logged as an error; the guessing delay alone still governs.
 - A cookie whose session record was never written, and one whose record says revoked (AC-10) → both refused, the sign-in form presented.
 - Two sessions of one account, one signed out (AC-08) → one revoked, the other still recognised.
 - The store unavailable on an ordinary read (AC-10) → fails closed: the failure view with retry is shown, never the account view. Recognition is a positive assertion; an outage answers neither "recognised" nor "not recognised", so it must never collapse into the sign-in form's ordinary "visitor" refusal, which would misreport a live session as one that was never signed in.
