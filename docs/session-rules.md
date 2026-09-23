@@ -111,18 +111,19 @@ does not wait for its own response.
   ceiling of five minutes.
 - The count returns to zero on a correct password, or after **15 minutes** in which no attempt is
   made at all.
-- **A correct password is never delayed or capped**, however hard anyone else has been guessing.
-  Lockout — a state that only an out-of-band action clears — was rejected in favour of this delay,
-  and the caps below never add one back: both release on the next 15-minute window regardless of
-  what happens in it.
+- **A correct password is never delayed**, however hard anyone else has been guessing, and it never
+  counts against either cap below. Lockout — a state that only an out-of-band action clears — was
+  rejected in favour of this delay, and the caps below never add one back: both release on the next
+  15-minute window regardless of what happens in it.
 
 On top of the delay, two caps bound a client that hangs up as soon as it has verified whether an
 address is registered, so it pays none of the delay above: past **20 failed sign-ins or attempts
 still in flight** for one (request source, address) pair in 15 minutes, the next attempt against that
 pair is refused with **`429`** before a password is even checked; past **100 failed** sign-ins from
 one request source across every address it has tried in the same window, the next attempt from that
-source is refused regardless of which address it names. A correct password releases both slots at once, from
-any source. Both are keyed by request source (in practice, the caller's IP address) — a guesser who
+source is refused regardless of which address it names. A successful sign-in hands back the two slots
+it reserved itself, so it never counts against either cap; failures already counted stay until they
+age out of the window. Both are keyed by request source (in practice, the caller's IP address) — a guesser who
 shares the owner's own request source, or whose source has separately reached its own 100-failure
 ceiling, can still refuse the owner for up to 15 minutes; that residual is accepted and recorded in
 [spec §6.1](features/accounts-and-sessions/spec.md).

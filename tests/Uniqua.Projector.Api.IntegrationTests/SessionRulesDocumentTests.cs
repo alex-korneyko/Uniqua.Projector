@@ -130,6 +130,20 @@ public sealed class SessionRulesDocumentTests
     }
 
     [Fact]
+    public void The_guessing_rule_names_the_shared_source_residual_and_drops_the_false_never_capped_claim()
+    {
+        // review 2026-09-23 (T53 fix round): "A correct password is never delayed or capped" is
+        // false against SignInRateLimit.Reserve, which can refuse a capped (source, address) pair
+        // or source with 429 before any password is checked — the earlier "15 minutes" assertion
+        // above was already true of that wrong sentence, so it never caught the contradiction. This
+        // pins the residual itself and forbids the sentence that denied it.
+        var rules = Read("docs/session-rules.md");
+
+        Assert.Contains("up to 15 minutes", rules, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("never delayed or capped", rules, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void The_readme_states_the_sign_in_cap_alongside_the_guessing_delay()
     {
         // review 2026-09-23 P-03: the README's one-line summary of the guessing rule names the
@@ -141,6 +155,18 @@ public sealed class SessionRulesDocumentTests
             $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerWindow} failed",
             readme,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_readme_names_the_shared_source_residual_and_drops_the_false_never_capped_claim()
+    {
+        // review 2026-09-23 (T53 fix round): same contradiction as the session-rules document — the
+        // README stated "A correct password is never delayed or capped" while SignInRateLimit.Reserve
+        // refuses a capped pair before verification.
+        var readme = Read("README.md");
+
+        Assert.Contains("up to 15 minutes", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("never delayed or capped", readme, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

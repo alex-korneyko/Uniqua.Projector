@@ -223,9 +223,10 @@ public static class RequestSource
             return Key(address);
         }
 
-        // Every visitor then shares one key, which spec §6.1 names as a failure mode rather than a
-        // detail — so it is said loudly instead of passed over. Affects every rate limit keyed on
-        // request source, registration and sign-in alike (review 2026-09-23 P-03).
+        // registration then shares one key across all such callers, and sign-in skips its caps
+        // entirely (SignInRateLimit), which logs its own warning — spec §6.1 names this as a
+        // failure mode rather than a detail, so it is said loudly instead of passed over
+        // (review 2026-09-23 P-03).
         logger.LogError(
             "module=accounts event=request_source_unknown "
             + "consequence=rate_limits_shared_by_all_callers");

@@ -17,7 +17,9 @@ line each:
 - **What happens when someone guesses at a password** — a per-account delay that grows with each
   consecutive failure, resetting on success or after 15 minutes idle, plus a cap of 20 failed
   sign-ins or attempts still in flight per (request source, address) in that window — past it, `429`
-  until it clears. A correct password is never delayed or capped.
+  until it clears. A correct password is never delayed; the cap can still refuse the owner for
+  up to 15 minutes if a guesser shares their request source and targets their address
+  (accepted, spec §6.1).
 
 **→ [`docs/session-rules.md`](docs/session-rules.md)** has each of those with the file that enforces
 it, the test that proves it, and how to verify it yourself.
