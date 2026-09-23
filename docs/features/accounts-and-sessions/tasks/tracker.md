@@ -58,7 +58,15 @@
 | T51 | Make the contention test, the test clock and the test peer addresses deterministic | tests | Alex Korneiko | S | T50 | done |
 | T52 | Re-baseline the sign-in throughput regression check so it measures a regression, not machine noise | tests | Alex Korneiko | S | — | done |
 | T53 | Trace the sign-in cap through sad, test-plan, session rules and README, fix the boundary rows, and retire the registration-only wording | docs | Alex Korneiko | S | T46, T47, T48, T49 | done |
+| T54 | Bound the sign-in cap's keys: hash the address, reserve per source first, drop emptied lists, and refuse over-long credentials before reserving | ports | Alex Korneiko | S | — | todo |
+| T55 | Throttle the tracked-key ceiling path: rate-limit the forced prune, log the ceiling once per window, and count keys without locking every bucket | ports | Alex Korneiko | S | T54 | todo |
+| T56 | Prove the tracked-key ceiling's fail-open contract for both limiters, including the sign-in per-address limiter | tests | Alex Korneiko | S | T55 | todo |
+| T57 | Record which cap refused a sign-in, on the reservation and on the sign_in_rate_limited log line | ports | Alex Korneiko | S | T54 | todo |
+| T58 | Answer a non-400 bad request with its own 4xx in every environment, and rename the shared 500 to a feature-neutral api.unexpected | ports | Alex Korneiko | S | — | todo |
+| T59 | Prove the cleanup service's grace-deadline reschedule by driving ExecuteAsync itself | tests | Alex Korneiko | S | — | todo |
+| T60 | Anchor the .gitignore build-output patterns so they cannot swallow source or docs folders | config | Alex Korneiko | S | — | todo |
+| T61 | Bring spec, ADR 0010, sad, openapi, test-plan, session rules and README in line with the bounded, re-keyed cap | docs | Alex Korneiko | S | T54, T55, T57, T58 | todo |
 
-**Total:** 53 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review; T46–T53 from the second re-review, 2026-09-23), ~32.5 person-days (12 × M at ~1 day, 41 × S at ~0.5 day).
+**Total:** 61 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review; T46–T53 from the second re-review, 2026-09-23; T54–T61 from the third re-review, 2026-09-23), ~36.5 person-days (12 × M at ~1 day, 49 × S at ~0.5 day).
 
-> **Sizing trigger fired.** sad §11 predicted this: «if `/sdd:tasks` emits more than roughly 12 tasks or more than about 3 days of work, re-run `/sdd:classify-size accounts-and-sessions`». Both thresholds are crossed — 53 tasks and ~32.5 person-days against a declared size of **M**. The breakdown is honest at that size because the feature carries two surfaces (ADR 0006), a custom authentication handler, three migrations and a background service; the decision on whether to re-size, re-route or split the feature belongs to the owner.
+> **Sizing trigger fired.** sad §11 predicted this: «if `/sdd:tasks` emits more than roughly 12 tasks or more than about 3 days of work, re-run `/sdd:classify-size accounts-and-sessions`». Both thresholds are crossed — 61 tasks and ~36.5 person-days against a declared size of **M**. The breakdown is honest at that size because the feature carries two surfaces (ADR 0006), a custom authentication handler, three migrations and a background service; the decision on whether to re-size, re-route or split the feature belongs to the owner.

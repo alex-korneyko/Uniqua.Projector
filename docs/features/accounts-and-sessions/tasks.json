@@ -839,6 +839,130 @@
       ],
       "file": "docs/features/accounts-and-sessions/tasks/53-trace-the-cap-through-the-docs.md",
       "origin": "review-2026-09-23: P-03, P-04, Q-10, Q-15"
+    },
+    {
+      "id": "T54",
+      "title": "Bound the sign-in cap's keys: hash the address, reserve per source first, drop emptied lists, and refuse over-long credentials before reserving",
+      "layer": "ports",
+      "deps": [],
+      "acs": ["AC-12", "AC-05b"],
+      "dod": "The per-address key is source + separator + lowercase hex SHA-256 of the normalised email (the same hash InMemoryUnknownAddressAttempts uses), so a key's length is fixed whatever was submitted and no submitted address is held in plain text; SignInRateLimit.Reserve reserves the per-source slot first and the per-address slot second, releasing the per-source slot when the per-address cap refuses, so an attempt the per-source ceiling refuses creates no per-address entry; SlidingWindowLimiter.Release removes a key's list once it is empty (only that exact list, as PruneExpired does); POST /api/v1/sessions refuses an email longer than 256 characters or a password longer than 128 with the same problem a wrong password gets (AccountErrors.CredentialsInvalid, 401), before Reserve and before any account lookup — the refusal depends on input length alone, never on account state, so it adds no AC-05b oracle, and the CreateSessionRequest remark is updated to say why this pre-check is safe; SignInRateLimit exposes the per-address tracked count (e.g. TrackedAddressKeyCount); tests: a flood of distinct addresses (including one of 10,000 characters) from a source already at its per-source ceiling leaves the per-address tracked count unchanged; an over-long email and an over-long password each get the wrong-credentials refusal and consume no slot; the per-address key length is constant for a 5-character and a 10,000-character address; the existing cap tests stay green.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs",
+        "src/Uniqua.Projector.Api/Accounts/SlidingWindowLimiter.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/GuessingProtectionTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/54-bound-the-sign-in-cap-keys.md",
+      "origin": "review-2026-09-23-2: S-01"
+    },
+    {
+      "id": "T55",
+      "title": "Throttle the tracked-key ceiling path: rate-limit the forced prune, log the ceiling once per window, and count keys without locking every bucket",
+      "layer": "ports",
+      "deps": ["T54"],
+      "acs": ["AC-12", "AC-01b"],
+      "dod": "In SlidingWindowLimiter, the forced PruneExpired a new key triggers at Capacity runs at most once per a named short interval (e.g. one second), claimed through a compare-and-set like PruneIfDue's, so a limiter kept full costs a full scan at most once per interval rather than once per request; the tracked_source_ceiling_reached error is logged at most once per window, carrying how many keys went untracked since the last line; the capacity check uses an approximate count kept with Interlocked on add and remove instead of ConcurrentDictionary.Count, and TrackedSourceCount keeps its meaning for tests; fail-open at the ceiling (permitted, not counted) is unchanged; tests: with the limiter at Capacity, 1,000 new keys within one interval cause at most one forced prune and at most one ceiling log line, and a key is tracked again once the clock passes the window.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SlidingWindowLimiter.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RequestSourceTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/55-throttle-the-ceiling-path.md",
+      "origin": "review-2026-09-23-2: T-01"
+    },
+    {
+      "id": "T56",
+      "title": "Prove the tracked-key ceiling's fail-open contract for both limiters, including the sign-in per-address limiter",
+      "layer": "tests",
+      "deps": ["T55"],
+      "acs": ["AC-12", "AC-01b"],
+      "dod": "RequestSourceTests (or a new ceiling test class) asserts, for RegistrationRateLimit and for both SignInRateLimit limiters, with the limiter filled to Capacity: a new key is permitted and not counted; the ceiling is logged at error level; a key already tracked is still refused past its own limit; after TestClock passes Window a new key is tracked again; for the sign-in per-address limiter specifically, a new pair past the ceiling is still bounded by the per-source ceiling of 100 (the fallback spec §6.1 will name) — every assertion fails if the limiter refused new keys at the ceiling, if the forced reclaim were deleted, or if the ceiling log were removed.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/RequestSourceTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/56-prove-the-ceiling-behaviour.md",
+      "origin": "review-2026-09-23-2: T-04, S-02"
+    },
+    {
+      "id": "T57",
+      "title": "Record which cap refused a sign-in, on the reservation and on the sign_in_rate_limited log line",
+      "layer": "ports",
+      "deps": ["T54"],
+      "acs": ["AC-12"],
+      "dod": "SignInReservation.Refused carries which cap refused (per_address or per_source); the sign_in_rate_limited warning carries cap={Cap} alongside source, so sad §7's per-cap breakdown can be built from the logs; the 429 response body is unchanged (the cap is not disclosed to the caller); tests: a refusal by the per-pair cap logs cap=per_address and a refusal by the per-source ceiling logs cap=per_source.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Accounts/SignInRateLimit.cs",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/SessionEndpointTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/57-name-the-refusing-cap.md",
+      "origin": "review-2026-09-23-2: S-04"
+    },
+    {
+      "id": "T58",
+      "title": "Answer a non-400 bad request with its own 4xx in every environment, and rename the shared 500 to a feature-neutral api.unexpected",
+      "layer": "ports",
+      "deps": [],
+      "acs": ["AC-10"],
+      "dod": "In the one handler (ProblemDetailsSetup), a BadHttpRequestException with any 4xx status other than 400 — 413 for a body over Kestrel's limit, among others — answers that same status as a coded problem (a declared code for 413, e.g. api.request_too_large, or the existing request_malformed family if openapi is extended to say so), logged at Information or Warning, never as unhandled_exception, in Development as well as elsewhere; the code the one handler gives every unhandled exception is renamed from accounts.unexpected to api.unexpected, with type URI .../problems/api/unexpected, in AccountProblems (or a neutral problems table beside it), openapi.yaml components/responses/Unexpected and every test that names it; AccountProblemsTests covers the new and renamed rows; tests: a Development-boot request with a body over the configured limit (set a small MaxRequestBodySize in the test host) answers 413 with its code, and /boom answers 500 api.unexpected.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/ProblemDetailsSetup.cs",
+        "src/Uniqua.Projector.Api/AccountProblems.cs",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "tests/Uniqua.Projector.Api.IntegrationTests/AccountProblemsTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/RequestShapeTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/58-client-errors-stay-client-errors.md",
+      "origin": "review-2026-09-23-2: T-02, T-06"
+    },
+    {
+      "id": "T59",
+      "title": "Prove the cleanup service's grace-deadline reschedule by driving ExecuteAsync itself",
+      "layer": "tests",
+      "deps": [],
+      "acs": [],
+      "dod": "A test starts ExpiredSessionCleanupService (StartAsync/StopAsync) against the fixture's TestClock with a sweep that always fails; it asserts that a delay of about StaleGracePeriod + GraceCheckMargin was requested, that a second sweep ran, and that session_cleanup_stale was logged; the test fails if the `if (LastSucceededAt is null) { DelayAsync; SweepAsync }` block in ExecuteAsync is deleted (verified by temporarily removing it during RED, then restoring); only test code, or a minimal test seam in the service, changes.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Accounts/ExpiredSessionCleanupTests.cs",
+        "src/Uniqua.Projector.Api/Accounts/ExpiredSessionCleanupService.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/59-prove-the-grace-check-reschedule.md",
+      "origin": "review-2026-09-23-2: T-03"
+    },
+    {
+      "id": "T60",
+      "title": "Anchor the .gitignore build-output patterns so they cannot swallow source or docs folders",
+      "layer": "config",
+      "deps": [],
+      "acs": [],
+      "dod": "[Dd]ebug/, [Rr]elease/, [Ll]og/, [Ll]ogs/, artifacts/ and **/[Pp]ackages/* no longer match at any depth: either anchored to where build output actually lands, or dropped where bin/ and obj/ already cover .NET output; the *.sln.DotSettings comment is corrected for a .slnx repo; checked directly: git check-ignore returns nothing for src/Uniqua.Projector.Application/Logs/A.cs, src/Uniqua.Projector.Web/src/debug/p.tsx, src/Uniqua.Projector.Web/src/features/packages/i.ts and docs/features/x/artifacts/a.md, still ignores src/*/bin/, src/*/obj/, node_modules/ and the Api's wwwroot build output if it was ignored before, and git ls-files -ci --exclude-standard stays empty.",
+      "files_hint": [
+        ".gitignore"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/60-anchor-the-gitignore.md",
+      "origin": "review-2026-09-23-2: T-05"
+    },
+    {
+      "id": "T61",
+      "title": "Bring spec, ADR 0010, sad, openapi, test-plan, session rules and README in line with the bounded, re-keyed cap",
+      "layer": "docs",
+      "deps": ["T54", "T55", "T57", "T58"],
+      "acs": ["AC-12", "AC-05b"],
+      "dod": "spec §6.1 and the ADR 0010 amendment say the per-address ceiling counts (source, address) pairs shared by every source, and that past it the per-source figure of 100 is the fallback; AC-12, the spec §6 row and test-plan.md:66 read '…after 15 minutes in which no failed attempt reached verification'; one log level is stated for an unresolved source, matching the code, in test-plan, spec and ADR 0010; openapi's Retry-After wording covers both the per-pair and per-source refusals; openapi's 429 and sad flow 4 name the unknown-source exemption; openapi declares the over-long-credential refusal T54 added and the renamed api.unexpected from T58; docs/session-rules.md counts attempts in flight and says an IPv6 caller is keyed by its /64; the README names the per-source ceiling and its half of the residual; the log value consequence=rate_limits_shared_by_all_callers is corrected to what actually happens (registration shares one key, sign-in skips its caps); sad §7's per-cap breakdown names the cap= field T57 added; SessionRulesDocumentTests checks the /64 and in-flight wording.",
+      "files_hint": [
+        "docs/features/accounts-and-sessions/spec.md",
+        "docs/features/accounts-and-sessions/adr/0010-replace-account-lockout-with-a-progressive-per-account-delay.md",
+        "docs/features/accounts-and-sessions/sad.md",
+        "docs/features/accounts-and-sessions/contracts/openapi.yaml",
+        "docs/features/accounts-and-sessions/test-plan.md",
+        "docs/session-rules.md",
+        "README.md",
+        "src/Uniqua.Projector.Api/Accounts/AccountEndpoints.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/SessionRulesDocumentTests.cs"
+      ],
+      "file": "docs/features/accounts-and-sessions/tasks/61-true-up-the-cap-docs.md",
+      "origin": "review-2026-09-23-2: S-02, S-03, S-05"
     }
   ]
 }
