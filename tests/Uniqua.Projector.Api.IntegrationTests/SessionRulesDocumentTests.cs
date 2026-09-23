@@ -183,6 +183,24 @@ public sealed class SessionRulesDocumentTests
     }
 
     [Fact]
+    public void The_readme_states_the_corrected_reset_wording()
+    {
+        // review 2026-09-23 (fourth re-review) U-01: the reworded reset rule — "15 minutes in
+        // which no failed attempt reached verification" (S-03: a 429 returned before a password is
+        // even checked does not, by itself, keep the count alive) — reached spec.md, session-rules.md
+        // and test-plan.md, but README.md still said "15 minutes idle", which is the wording S-03
+        // corrected everywhere else.
+        var readme = Read("README.md");
+
+        Assert.Contains(
+            "15 minutes in which no failed attempt reached verification",
+            readme,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("no attempt at all", readme, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("15 minutes idle", readme, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void The_readme_names_the_shared_source_residual_and_drops_the_false_never_capped_claim()
     {
         // review 2026-09-23 (T53 fix round): same contradiction as the session-rules document — the
