@@ -122,6 +122,10 @@ public sealed class RequestSourceTests
             + "keys inside one window; T-01 asks for exactly one line per window.");
         Assert.Equal(LogLevel.Error, ceilingLines[0].Level);
         Assert.Equal(1, UntrackedSinceLastLine(ceilingLines[0]));
+
+        // review 2026-09-23 fourth re-review V-02: the line names its own limiter, so an operator
+        // reading it does not have to guess which of registration's or sign-in's tables is full.
+        Assert.Contains("limiter=registration", ceilingLines[0].Message, StringComparison.Ordinal);
     }
 
     [Fact]

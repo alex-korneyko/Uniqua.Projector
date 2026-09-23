@@ -35,7 +35,8 @@ public sealed class RegistrationRateLimit
 
     public RegistrationRateLimit(IClock clock, ILogger<RegistrationRateLimit> logger)
     {
-        _limiter = new SlidingWindowLimiter(clock, PermittedPerWindow, Window, logger);
+        _limiter = new SlidingWindowLimiter(
+            clock, PermittedPerWindow, Window, logger, "registration", "new_sources_uncapped");
     }
 
     /// <summary>For tests, which have no DI container to source a logger from.</summary>

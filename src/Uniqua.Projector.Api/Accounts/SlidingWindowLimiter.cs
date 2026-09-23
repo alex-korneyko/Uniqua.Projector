@@ -11,12 +11,31 @@ namespace Uniqua.Projector.Api.Accounts;
 /// what counts as "should not have counted" differs between the two callers, which is why the
 /// decision to release is theirs and not this type's.
 /// </summary>
+/// <param name="limiterName">
+/// Which limiter this is, carried on the ceiling line as <c>limiter=</c>
+/// (<c>registration</c>, <c>sign_in_per_source</c> or <c>sign_in_per_address</c>) — review
+/// 2026-09-23 (fourth re-review) V-02: two independently-owned limiters used to share one logger
+/// and one ceiling line, so an operator could not tell which table was full.
+/// </param>
+/// <param name="ceilingConsequence">
+/// What not tracking a new key actually means for this limiter, carried on the ceiling line as
+/// <c>consequence=</c>. Not a shared constant (V-02): the per-address limiter filling does not
+/// leave its pair uncapped in the same sense the per-source or registration limiter filling does
+/// — the per-source cap of 100 still applies to that source regardless — so the wording is the
+/// owner's to give, not this type's to assume.
+/// </param>
 /// <remarks>
 /// The counter is per process and in memory, pruned lazily rather than on a timer, exactly as
 /// <c>RegistrationRateLimit</c> did before this type was extracted (review 2026-09-22-2 N-01,
 /// folding R-25's fix into the shared type rather than duplicating it).
 /// </remarks>
-internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow, TimeSpan window, ILogger logger)
+internal sealed class SlidingWindowLimiter(
+    IClock clock,
+    int permittedPerWindow,
+    TimeSpan window,
+    ILogger logger,
+    string limiterName,
+    string ceilingConsequence)
 {
     /// <summary>
     /// The most sources tracked at once, matching the ceiling
@@ -189,7 +208,7 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     private void PruneIfDue(DateTimeOffset now)
     {
         var last = Interlocked.Read(ref _lastPrunedAtTicks);
-        if (now.UtcTicks - last < window.Ticks
+        if (IsWithinInterval(now, last, window)
             || Interlocked.CompareExchange(ref _lastPrunedAtTicks, now.UtcTicks, last) != last)
         {
             return;
@@ -208,7 +227,7 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     private void ForcePruneIfDue(DateTimeOffset now)
     {
         var last = Interlocked.Read(ref _lastForcedPruneAtTicks);
-        if (now.UtcTicks - last < ForcedPruneInterval.Ticks
+        if (IsWithinInterval(now, last, ForcedPruneInterval)
             || Interlocked.CompareExchange(ref _lastForcedPruneAtTicks, now.UtcTicks, last) != last)
         {
             return;
@@ -231,7 +250,7 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
         Interlocked.Increment(ref _untrackedSinceLastCeilingLog);
 
         var last = Interlocked.Read(ref _lastCeilingLoggedAtTicks);
-        if (now.UtcTicks - last < window.Ticks
+        if (IsWithinInterval(now, last, window)
             || Interlocked.CompareExchange(ref _lastCeilingLoggedAtTicks, now.UtcTicks, last) != last)
         {
             return;
@@ -240,10 +259,32 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
         var untrackedSinceLastLine = Interlocked.Exchange(ref _untrackedSinceLastCeilingLog, 0);
         logger.LogError(
             "module=accounts event=tracked_source_ceiling_reached "
-            + "consequence=source_not_rate_limited ceiling={Ceiling} "
+            + "limiter={Limiter} consequence={Consequence} ceiling={Ceiling} "
             + "untracked_since_last_line={UntrackedSinceLastLine}",
+            limiterName,
+            ceilingConsequence,
             Capacity,
             untrackedSinceLastLine);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="now"/> is still inside <paramref name="interval"/> since
+    /// <paramref name="lastTicks"/> — the shared "not due yet" check behind all three throttles
+    /// above.
+    /// </summary>
+    /// <remarks>
+    /// review 2026-09-23 (fourth re-review) V-03: a host clock that steps backwards (an NTP
+    /// correction, for example, after a Proxmox VM resumes) makes <c>now - last</c> negative. That
+    /// used to read as "well within the interval", so a limiter already at capacity would fail
+    /// open — new sources turned away uncounted — with the forced reclaim and the ceiling alarm
+    /// both silenced for a whole window, until real time caught back up. A negative elapsed time is
+    /// treated as due instead: it can only mean the clock moved, never that the interval has not
+    /// yet passed.
+    /// </remarks>
+    private static bool IsWithinInterval(DateTimeOffset now, long lastTicks, TimeSpan interval)
+    {
+        var elapsedTicks = now.UtcTicks - lastTicks;
+        return elapsedTicks >= 0 && elapsedTicks < interval.Ticks;
     }
 
     /// <summary>

@@ -75,8 +75,18 @@ public sealed class SignInRateLimit
 
     public SignInRateLimit(IClock clock, ILogger<SignInRateLimit> logger)
     {
-        _perAddress = new SlidingWindowLimiter(clock, PermittedFailuresPerWindow, Window, logger);
-        _perSource = new SlidingWindowLimiter(clock, PermittedFailuresPerSourceWindow, Window, logger);
+        // V-02: the per-address limiter filling does not stop the per-source cap from still
+        // applying to that source, so its consequence says exactly that rather than the blanket
+        // "source_not_rate_limited" both limiters used to share.
+        _perAddress = new SlidingWindowLimiter(
+            clock,
+            PermittedFailuresPerWindow,
+            Window,
+            logger,
+            "sign_in_per_address",
+            "pair_uncapped_per_source_cap_still_applies");
+        _perSource = new SlidingWindowLimiter(
+            clock, PermittedFailuresPerSourceWindow, Window, logger, "sign_in_per_source", "new_sources_uncapped");
     }
 
     /// <summary>For tests, which have no DI container to source a logger from.</summary>

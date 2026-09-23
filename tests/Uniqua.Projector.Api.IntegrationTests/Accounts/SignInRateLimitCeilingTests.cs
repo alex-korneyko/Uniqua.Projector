@@ -43,10 +43,15 @@ public sealed class SignInRateLimitCeilingTests
         Assert.True(newSourceReservation.IsPermitted);
         Assert.Equal(Capacity, limit.TrackedSourceCount);
 
-        // 2) The ceiling is logged at error level.
+        // 2) The ceiling is logged at error level, naming the per-source limiter (review
+        //    2026-09-23 fourth re-review V-02): an operator reading this line must be able to
+        //    tell which of the two limiters is full, not just that one of them is.
         var ceilingLines = CeilingLines(logger);
         Assert.NotEmpty(ceilingLines);
         Assert.Contains(ceilingLines, line => line.Level == LogLevel.Error);
+        Assert.Contains(
+            ceilingLines,
+            line => line.Message.Contains("limiter=sign_in_per_source", StringComparison.Ordinal));
 
         // 3) A source already tracked ("source-0", from the fill above, with one reservation
         //    already counted against it) is still refused once it exceeds its own per-source
@@ -102,8 +107,22 @@ public sealed class SignInRateLimitCeilingTests
         Assert.True(newPairReservation.IsPermitted);
         Assert.Equal(Capacity, limit.TrackedAddressKeyCount);
 
-        // 2) The ceiling is logged at error level.
-        Assert.Contains(CeilingLines(logger), line => line.Level == LogLevel.Error);
+        // 2) The ceiling is logged at error level, naming the per-address limiter and its own
+        //    consequence (review 2026-09-23 fourth re-review V-02): the per-address table filling
+        //    does not stop the per-source cap of 100 from still applying, so the line must never
+        //    claim the blanket "source_not_rate_limited" both limiters used to share.
+        var addressCeilingLines = CeilingLines(logger);
+        Assert.Contains(addressCeilingLines, line => line.Level == LogLevel.Error);
+        Assert.Contains(
+            addressCeilingLines,
+            line => line.Message.Contains("limiter=sign_in_per_address", StringComparison.Ordinal));
+        Assert.Contains(
+            addressCeilingLines,
+            line => line.Message.Contains(
+                "consequence=pair_uncapped_per_source_cap_still_applies", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            addressCeilingLines,
+            line => line.Message.Contains("consequence=source_not_rate_limited", StringComparison.Ordinal));
 
         // 3) The exact pair reserved first in the fill above ("source-0", "fill-0@example.test")
         //    is already tracked. Spending the rest of its own per-address limit of 20 keeps
@@ -191,6 +210,42 @@ public sealed class SignInRateLimitCeilingTests
             $"{limit.TrackedAddressKeyCount} pairs were tracked after a new pair arrived at capacity "
             + "once the whole fill had expired; the per-address limiter's forced reclaim must free "
             + "the expired entries and track the new pair, not fail open.");
+    }
+
+    // ---- V-03 (review 2026-09-23 fourth re-review): a backwards clock step must not silence -------
+    // ---- the forced reclaim or the ceiling alarm ---------------------------------------------------
+
+    [Fact]
+    public void A_backwards_clock_step_still_lets_the_next_new_key_trigger_the_forced_reclaim_and_the_ceiling_line()
+    {
+        // V-03: if the host clock steps back (an NTP correction after a Proxmox VM resumes, for
+        // example), "now - last" goes negative. Before the fix that read as "not due" for a whole
+        // window, so a limiter already at capacity would turn new sources away uncounted with
+        // nothing logged and no forced reclaim run, until real time caught back up.
+        var clock = new TestClock();
+        var logger = new RecordingLogger<SignInRateLimit>();
+        var limit = new SignInRateLimit(clock, logger);
+
+        FillWithDistinctPairs(limit);
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+
+        // Stamp both throttles once at capacity, then note how many ceiling lines exist so far.
+        limit.Reserve("first-over-capacity", "first-over-capacity@example.test");
+        var linesBeforeStep = CeilingLines(logger).Count;
+        Assert.True(linesBeforeStep >= 1);
+
+        // The clock steps back an hour — well past both the one-second forced-prune interval and
+        // the 15-minute window, so if a negative elapsed time were still read as "not due", nothing
+        // would fire again for two more real windows.
+        clock.Advance(TimeSpan.FromHours(-1));
+
+        var afterStep = limit.Reserve("after-the-backwards-step", "after-the-backwards-step@example.test");
+
+        Assert.True(afterStep.IsPermitted);
+        Assert.True(
+            CeilingLines(logger).Count > linesBeforeStep,
+            "a backwards clock step silenced the ceiling alarm instead of the negative elapsed "
+            + "time being treated as due.");
     }
 
     // ---- Helpers -------------------------------------------------------------------------------
