@@ -42,6 +42,12 @@ public static class AccountProblems
             carriesRetryAfter: true),
         Row("accounts.request_malformed", 400, "The request body could not be read",
             "The request body must be a JSON object matching the documented shape."),
+
+        // review 2026-09-23 (second re-review) P-05(b): an unhandled exception used to leave the
+        // one handler with no code to publish at all, although Problem.required (openapi.yaml)
+        // names `code` as required on every problem this API can return.
+        Row("accounts.unexpected", 500, "An unexpected error occurred",
+            "An unexpected error occurred."),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>

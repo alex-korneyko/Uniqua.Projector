@@ -26,8 +26,13 @@ public static class ProblemDetailsSetup
                 // writes the framework's generic "Bad Request" ProblemDetails directly through
                 // this same customization hook rather than throwing (so no IExceptionHandler ever
                 // sees it). Caught here it would ship with no `code` at all (review 2026-09-22-2
-                // N-06c); this reshapes it into the one declared problem instead.
-                if (context.ProblemDetails.Status == StatusCodes.Status400BadRequest
+                // N-06c); this reshapes it into the one declared problem instead. A wrong
+                // Content-Type on the same two endpoints is refused the same way, as an
+                // undeclared, uncoded 415 (review 2026-09-23 P-05c) — reshaped into the same
+                // declared code rather than adding a second one for what is, from the caller's
+                // side, the same "I could not read your body" refusal.
+                if ((context.ProblemDetails.Status == StatusCodes.Status400BadRequest
+                        || context.ProblemDetails.Status == StatusCodes.Status415UnsupportedMediaType)
                     && !context.ProblemDetails.Extensions.ContainsKey("code")
                     && IsAccountsOrSessionsRequest(context.HttpContext.Request.Path))
                 {
@@ -43,7 +48,7 @@ public static class ProblemDetailsSetup
         return services;
     }
 
-    private static bool IsAccountsOrSessionsRequest(PathString path) =>
+    internal static bool IsAccountsOrSessionsRequest(PathString path) =>
         path.StartsWithSegments("/api/v1/accounts") || path.StartsWithSegments("/api/v1/sessions");
 
     /// <summary>
@@ -91,12 +96,10 @@ public static class ProblemDetailsSetup
 }
 
 /// <summary>
-/// Turns an unhandled exception into a 500 ProblemDetails without leaking the exception itself —
-/// the exception goes to the log instead, under the same traceId the response carries.
+/// Turns an unhandled exception into a ProblemDetails response without leaking the exception
+/// itself — the exception goes to the log instead, under the same traceId the response carries.
 /// </summary>
-internal sealed class UnhandledExceptionHandler(
-    IProblemDetailsService problemDetailsService,
-    ILogger<UnhandledExceptionHandler> logger)
+internal sealed class UnhandledExceptionHandler(ILogger<UnhandledExceptionHandler> logger)
     : IExceptionHandler
 {
     public async ValueTask<bool> TryHandleAsync(
@@ -115,19 +118,20 @@ internal sealed class UnhandledExceptionHandler(
             httpContext.Request.Path,
             httpContext.TraceIdentifier);
 
-        httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        // Development sets minimal APIs' ThrowOnBadRequest=true, so there a malformed body never
+        // reaches the CustomizeProblemDetails hook above as a plain 400 to reshape — it throws
+        // instead, and lands here as an unhandled exception (review 2026-09-23 P-05a). Reshaped
+        // into the same declared code the "Testing"/"Production" path already answers with, so the
+        // caller sees one contract regardless of environment.
+        var code = exception is BadHttpRequestException
+                && ProblemDetailsSetup.IsAccountsOrSessionsRequest(httpContext.Request.Path)
+            ? "accounts.request_malformed"
+            : "accounts.unexpected";
 
-        return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext
-        {
-            HttpContext = httpContext,
-            // Deliberately not handed the exception: the framework would otherwise be free to
-            // describe it, and a caller must learn nothing about what failed inside.
-            ProblemDetails = new ProblemDetails
-            {
-                Status = StatusCodes.Status500InternalServerError,
-                Title = "An unexpected error occurred.",
-                Type = "https://datatracker.ietf.org/doc/html/rfc9110#section-15.6.1",
-            },
-        });
+        // Written directly through the wording table rather than IProblemDetailsService: the
+        // caller must learn nothing about what failed beyond the fixed sentence that code names,
+        // and this is the same path every other declared refusal in this file takes.
+        await httpContext.WriteAccountProblemAsync(code);
+        return true;
     }
 }

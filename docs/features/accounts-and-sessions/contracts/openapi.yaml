@@ -99,6 +99,11 @@ paths:
             name is empty or longer than 50 characters (AC-01 / AC-11 bound it at 1..50 — reconciled
             from the implementation, review 2026-09-22 R-15). Nothing is written — no account, no
             session, no counter (flow 3 postcondition).
+
+            `accounts.request_malformed` is the same code a wrong Content-Type answers with (a
+            request that is not readable JSON, whichever reason), and the same code every
+            environment answers with — including Development, where minimal APIs would otherwise
+            throw on a malformed body before this reshaping ever ran (review 2026-09-23 P-05a/c).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -177,6 +182,8 @@ paths:
                 detail: "Too many accounts have been created from here in the past minute."
                 code: "accounts.registration_rate_limited"
                 retry_after_seconds: 37
+        "500":
+          $ref: "#/components/responses/Unexpected"
 
   /api/v1/accounts/me:
     get:
@@ -204,6 +211,8 @@ paths:
                 display_name: "Test User"
         "401":
           $ref: "#/components/responses/SessionNotRecognised"
+        "500":
+          $ref: "#/components/responses/Unexpected"
 
   /api/v1/sessions:
     post:
@@ -265,7 +274,8 @@ paths:
           description: |
             The body was not readable JSON at all, so no credential was ever looked at — reached
             before the per-source cap is even reserved. `accounts.request_malformed` is the one
-            code either endpoint returns for this (review 2026-09-22-2 N-06c).
+            code either endpoint returns for this (review 2026-09-22-2 N-06c), in every
+            environment and for a wrong Content-Type as well (review 2026-09-23 P-05a/c).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -300,6 +310,8 @@ paths:
                 detail: "Too many failed sign-in attempts have come from here recently."
                 code: "accounts.sign_in_rate_limited"
                 retry_after_seconds: 412
+        "500":
+          $ref: "#/components/responses/Unexpected"
 
   /api/v1/sessions/current:
     delete:
@@ -332,6 +344,8 @@ paths:
           $ref: "#/components/responses/SessionNotRecognised"
         "403":
           $ref: "#/components/responses/AntiforgeryFailed"
+        "500":
+          $ref: "#/components/responses/Unexpected"
 
 components:
   securitySchemes:
@@ -371,6 +385,22 @@ components:
             status: 403
             detail: "The request could not be verified as coming from this application."
             code: "accounts.antiforgery_failed"
+
+    Unexpected:
+      description: |
+        An unhandled failure — declared on every operation this API exposes (review 2026-09-23
+        (second re-review) P-05b) rather than left as the one response shape a caller could not
+        anticipate. The body carries a stable `code` and nothing else about what failed; the detail
+        an operator needs is in the log, keyed by the same `traceId`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/accounts/unexpected"
+            title: "An unexpected error occurred"
+            status: 500
+            detail: "An unexpected error occurred."
+            code: "accounts.unexpected"
 
     SessionNotRecognised:
       description: |

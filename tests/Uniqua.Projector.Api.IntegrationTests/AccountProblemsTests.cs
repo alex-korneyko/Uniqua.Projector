@@ -50,6 +50,11 @@ public sealed class AccountProblemsTests
     [InlineData("accounts.request_malformed", 400,
         "The request body could not be read",
         "The request body must be a JSON object matching the documented shape.")]
+    // review 2026-09-23 (second re-review) P-05(b): the 500 an unhandled exception produces was
+    // not declared anywhere and its body carried no `code`, although Problem.required names it.
+    [InlineData("accounts.unexpected", 500,
+        "An unexpected error occurred",
+        "An unexpected error occurred.")]
     public void Each_contract_code_is_published_exactly_as_the_contract_states(
         string code, int status, string title, string detail)
     {
@@ -80,6 +85,7 @@ public sealed class AccountProblemsTests
             "accounts.sign_in_rate_limited",
             "accounts.display_name_invalid",
             "accounts.request_malformed",
+            "accounts.unexpected",
         ];
 
         Assert.Equal(declared.Order(), AccountProblems.Codes.Order());
