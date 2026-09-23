@@ -274,6 +274,102 @@ public sealed class SessionEndpointTests(ApiFactory factory)
                 .RootElement.GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task A_correct_password_for_a_different_address_from_a_capped_source_is_accepted()
+    {
+        // review 2026-09-23 P-01: the cap re-keyed to (source, normalised address), so a source
+        // that has capped one address must still admit a correct password for a different one —
+        // the shared-address, one-oracle failure the second re-review found is what this pins.
+        factory.Clock.Reset();
+        var owner = await ARegisteredAccountAsync();
+        var attackedAddress = $"{Guid.NewGuid():N}@example.test";
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = attackedAddress, password = "not-the-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        Assert.Equal(
+            HttpStatusCode.TooManyRequests,
+            (await client.PostAsJsonAsync(
+                Sessions, new { email = attackedAddress, password = "not-the-password" })).StatusCode);
+
+        var response2 = await client.PostAsJsonAsync(
+            Sessions, new { email = owner.Email, password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Created, response2.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_capped_address_still_refuses_the_correct_password_from_the_same_source()
+    {
+        // review 2026-09-23 P-01: the accepted residual, recorded in spec §6.1 and the ADR 0010
+        // amendment — a guesser sharing the owner's source and targeting the owner's own address
+        // can still block them for up to 15 minutes. Re-keying the cap must not accidentally
+        // remove this; it only narrows who else the block reaches.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+        }
+
+        var response = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task The_per_source_ceiling_refuses_once_reached_across_many_addresses()
+    {
+        // review 2026-09-23 P-01: the looser per-source ceiling bounds address rotation from one
+        // source, so a guesser spreading failures across many addresses — none of which alone
+        // reaches the per-address cap of 20 — is still refused once the source's own ceiling is
+        // reached.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerSourceWindow; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions,
+                new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions,
+            new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_unknown_source_is_never_capped()
+    {
+        // review 2026-09-23 P-01: when RequestSource.Of cannot resolve a source (RemoteIpAddress
+        // is null), applying the cap would make every caller with no resolvable address share one
+        // budget — a missing remote address must not do that, so the cap is skipped for it.
+        factory.Clock.Reset();
+        var address = $"{Guid.NewGuid():N}@example.test";
+        var client = await ClientWithNoPeerAsync();
+
+        const int attempts = SignInRateLimit.PermittedFailuresPerWindow + 5;
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = address, password = "not-the-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+    }
+
     // ---- AC-08: signing out --------------------------------------------------------------------
 
     [Fact]
@@ -543,6 +639,29 @@ public sealed class SessionEndpointTests(ApiFactory factory)
         if (sessionCookie is not null)
         {
             client.DefaultRequestHeaders.Add("Cookie", sessionCookie);
+        }
+
+        var token = response.Headers.GetValues("Set-Cookie")
+            .First(value => value.StartsWith("XSRF-TOKEN=", StringComparison.Ordinal));
+        client.DefaultRequestHeaders.Add(
+            AntiforgerySetup.HeaderName, token["XSRF-TOKEN=".Length..].Split(';')[0]);
+
+        return client;
+    }
+
+    /// <summary>
+    /// A client with the antiforgery pair but no <see cref="TestPeerAddress"/> header, so
+    /// <c>Connection.RemoteIpAddress</c> stays null and <c>RequestSource.Of</c> resolves to
+    /// "unknown" — review 2026-09-23 P-01.
+    /// </summary>
+    private async Task<HttpClient> ClientWithNoPeerAsync()
+    {
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/health");
+        foreach (var cookie in response.Headers.GetValues("Set-Cookie"))
+        {
+            client.DefaultRequestHeaders.Add("Cookie", cookie.Split(';')[0]);
         }
 
         var token = response.Headers.GetValues("Set-Cookie")

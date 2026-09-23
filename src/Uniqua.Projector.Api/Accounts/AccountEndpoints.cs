@@ -91,15 +91,26 @@ public static class AccountEndpoints
 
             // Reserved before the password is verified at all (review 2026-09-22-2 N-01): a client
             // that hangs up, or several running in parallel, still consume the slot they took,
-            // because none of that changes what the reservation itself already recorded.
-            var decision = limit.Reserve(source);
-            if (!decision.IsPermitted)
+            // because none of that changes what the reservation itself already recorded. Keyed by
+            // (source, normalised address) with a looser per-source ceiling across all addresses
+            // (review 2026-09-23 P-01), and skipped entirely when the source is unresolved.
+            var reservation = limit.Reserve(source, request.Email ?? string.Empty);
+            if (reservation.Skipped)
+            {
+                // spec §6.1: a missing remote address must not make every such caller share one
+                // budget, so the cap is skipped rather than keyed on the literal "unknown" — said
+                // loudly, since it means this caller's failures are never capped at all.
+                logger.LogWarning(
+                    "module=accounts event=sign_in_rate_limit_skipped "
+                    + "consequence=uncapped_failures_for_this_source");
+            }
+            else if (!reservation.IsPermitted)
             {
                 logger.LogWarning(
                     "module=accounts event=sign_in_rate_limited source={Source}", source);
 
                 await context.WriteAccountProblemAsync(
-                    "accounts.sign_in_rate_limited", decision.RetryAfterSeconds);
+                    "accounts.sign_in_rate_limited", reservation.RetryAfterSeconds);
                 return;
             }
 
@@ -118,7 +129,7 @@ public static class AccountEndpoints
             }
 
             // A correct password is never counted against the cap, from any source (AC-12).
-            limit.Release(source, decision);
+            limit.Release(reservation);
 
             SessionCookie.Issue(context, result.Value.SessionId);
 
@@ -185,6 +196,14 @@ public sealed record RegisterAccountRequest(
 public static class RequestSource
 {
     /// <summary>
+    /// The value <see cref="Of"/> returns when no request address could be resolved — never a
+    /// real request source, so a caller can compare against it directly (review 2026-09-23 P-01:
+    /// <see cref="SignInRateLimit"/> skips its cap entirely for this value, rather than keying a
+    /// cap on it and giving every such caller one shared budget).
+    /// </summary>
+    public const string Unknown = "unknown";
+
+    /// <summary>
     /// The key AC-01b's limit counts against.
     /// </summary>
     /// <remarks>
@@ -207,6 +226,6 @@ public static class RequestSource
             "module=accounts event=request_source_unknown "
             + "consequence=registration_limit_shared_by_all_callers");
 
-        return "unknown";
+        return Unknown;
     }
 }
