@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — Q-13"
-status: "todo"
+status: "done"
 ---
 
 # T51 — Make the contention test, the test clock and the test peer addresses deterministic

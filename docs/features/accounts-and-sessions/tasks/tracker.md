@@ -55,7 +55,7 @@
 | T48 | Give a malformed body its declared problem in every environment, and declare coded 500 and 415 problems | ports | Alex Korneiko | S | — | done |
 | T49 | Raise the stale-cleanup alert after a short grace period when no sweep has ever succeeded | infra | Alex Korneiko | S | — | done |
 | T50 | Prove the sign-in cap's claims end to end, and make the two tests that could not fail discriminating | tests | Alex Korneiko | S | T46, T47 | done |
-| T51 | Make the contention test, the test clock and the test peer addresses deterministic | tests | Alex Korneiko | S | T50 | todo |
+| T51 | Make the contention test, the test clock and the test peer addresses deterministic | tests | Alex Korneiko | S | T50 | done |
 | T52 | Re-baseline the sign-in throughput regression check so it measures a regression, not machine noise | tests | Alex Korneiko | S | — | done |
 | T53 | Trace the sign-in cap through sad, test-plan, session rules and README, fix the boundary rows, and retire the registration-only wording | docs | Alex Korneiko | S | T46, T47, T48, T49 | done |
 
