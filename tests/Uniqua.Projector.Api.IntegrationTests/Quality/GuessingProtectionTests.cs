@@ -74,6 +74,69 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
         factory.Clock.Reset();
     }
 
+    [Fact]
+    public async Task A_run_of_429s_does_not_keep_the_failure_count_alive()
+    {
+        // review 2026-09-23 (fourth re-review) U-06: AC-12's reworded reset clause — "a 429 ...
+        // does not, by itself, keep the count alive" — had no test. The test above covers a
+        // 15-minute window with no attempts at all; this one covers a window full of them, all
+        // refused by SignInRateLimit before verification.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync();
+
+        // Twenty wrong passwords cap the (source, address) pair. Every one of them reaches
+        // verification, so the last is the "last failure that reached verification" the reset
+        // clause counts 15 minutes from.
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        Assert.Equal(SignInRateLimit.PermittedFailuresPerWindow, await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
+
+        // Capped: the 21st attempt is refused before a password is even checked.
+        var capped = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+
+        // A run of further 429s, spread across most of the 15-minute window. If a 429 touched
+        // either stored column, one of these would push the reset 15 minutes further out than the
+        // last verified failure, and the window below would never be reached.
+        factory.Clock.Advance(TimeSpan.FromMinutes(10));
+        var stillCapped = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, stillCapped.StatusCode);
+
+        factory.Clock.Advance(TimeSpan.FromMinutes(4) + TimeSpan.FromSeconds(30));
+        var stillCappedAgain = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, stillCappedAgain.StatusCode);
+
+        Assert.Equal(SignInRateLimit.PermittedFailuresPerWindow, await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
+
+        // Past 15 minutes since the last verified failure — and past SignInRateLimit.Window, which
+        // shares the same figure, so the per-pair cap has reopened too — the next wrong password
+        // reaches verification again: counted as failure #1, with no delay, exactly as it would be
+        // against an account with no history at all. The run of 429s in between did not keep the
+        // count alive.
+        factory.Clock.Advance(TimeSpan.FromSeconds(31));
+        factory.Clock.ClearRequestedDelays();
+        var reopened = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, reopened.StatusCode);
+        Assert.Equal(TimeSpan.Zero, factory.Clock.LongestRequestedDelay);
+        Assert.Equal(1, await factory.ScalarAsync<int>(
+            $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{account.Id}'"));
+
+        factory.Clock.Reset();
+    }
+
     // ---- AC-12: the per-source failed-sign-in cap, counted before verification (N-01) -----------
 
     [Fact]
