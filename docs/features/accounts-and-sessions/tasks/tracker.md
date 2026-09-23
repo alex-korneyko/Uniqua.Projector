@@ -50,7 +50,15 @@
 | T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | done |
 | T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | done |
 | T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | done |
+| T46 | Count failed sign-ins per source and address with a looser per-source ceiling, and skip the cap for an unresolved source | ports | Alex Korneiko | S | — | todo |
+| T47 | Normalise request sources (IPv4-mapped to IPv4, IPv6 to its /64) and bound how many sources a limiter tracks | ports | Alex Korneiko | S | T46 | todo |
+| T48 | Give a malformed body its declared problem in every environment, and declare coded 500 and 415 problems | ports | Alex Korneiko | S | — | todo |
+| T49 | Raise the stale-cleanup alert after a short grace period when no sweep has ever succeeded | infra | Alex Korneiko | S | — | todo |
+| T50 | Prove the sign-in cap's claims end to end, and make the two tests that could not fail discriminating | tests | Alex Korneiko | S | T46, T47 | todo |
+| T51 | Make the contention test, the test clock and the test peer addresses deterministic | tests | Alex Korneiko | S | T50 | todo |
+| T52 | Re-baseline the sign-in throughput regression check so it measures a regression, not machine noise | tests | Alex Korneiko | S | — | todo |
+| T53 | Trace the sign-in cap through sad, test-plan, session rules and README, fix the boundary rows, and retire the registration-only wording | docs | Alex Korneiko | S | T46, T47, T48, T49 | todo |
 
-**Total:** 45 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review), ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).
+**Total:** 53 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review; T46–T53 from the second re-review, 2026-09-23), ~16 person-days (12 × M at ~1 day, 8 × S at ~0.5 day).
 
 > **Sizing trigger fired.** sad §11 predicted this: «if `/sdd:tasks` emits more than roughly 12 tasks or more than about 3 days of work, re-run `/sdd:classify-size accounts-and-sessions`». Both thresholds are crossed — 20 tasks and ~16 person-days against a declared size of **M**. The breakdown is honest at that size because the feature carries two surfaces (ADR 0006), a custom authentication handler, three migrations and a background service; the decision on whether to re-size, re-route or split the feature belongs to the owner.
