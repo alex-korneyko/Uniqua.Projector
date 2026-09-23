@@ -43,15 +43,17 @@ public sealed class SignInRateLimitCeilingTests
         Assert.True(newSourceReservation.IsPermitted);
         Assert.Equal(Capacity, limit.TrackedSourceCount);
 
-        // 2) The ceiling is logged at error level, naming the per-source limiter (review
-        //    2026-09-23 fourth re-review V-02): an operator reading this line must be able to
-        //    tell which of the two limiters is full, not just that one of them is.
+        // 2) The ceiling is logged at error level, naming the per-source limiter and its own
+        //    consequence on the same line (review 2026-09-23 fourth re-review V-02): an operator
+        //    reading this line must be able to tell which of the two limiters is full, not just
+        //    that one of them is, and what not tracking a new source actually means.
         var ceilingLines = CeilingLines(logger);
         Assert.NotEmpty(ceilingLines);
         Assert.Contains(ceilingLines, line => line.Level == LogLevel.Error);
         Assert.Contains(
             ceilingLines,
-            line => line.Message.Contains("limiter=sign_in_per_source", StringComparison.Ordinal));
+            line => line.Message.Contains("limiter=sign_in_per_source", StringComparison.Ordinal)
+                && line.Message.Contains("consequence=new_sources_uncapped", StringComparison.Ordinal));
 
         // 3) A source already tracked ("source-0", from the fill above, with one reservation
         //    already counted against it) is still refused once it exceeds its own per-source
@@ -115,11 +117,9 @@ public sealed class SignInRateLimitCeilingTests
         Assert.Contains(addressCeilingLines, line => line.Level == LogLevel.Error);
         Assert.Contains(
             addressCeilingLines,
-            line => line.Message.Contains("limiter=sign_in_per_address", StringComparison.Ordinal));
-        Assert.Contains(
-            addressCeilingLines,
-            line => line.Message.Contains(
-                "consequence=pair_uncapped_per_source_cap_still_applies", StringComparison.Ordinal));
+            line => line.Message.Contains("limiter=sign_in_per_address", StringComparison.Ordinal)
+                && line.Message.Contains(
+                    "consequence=pair_uncapped_per_source_cap_still_applies", StringComparison.Ordinal));
         Assert.DoesNotContain(
             addressCeilingLines,
             line => line.Message.Contains("consequence=source_not_rate_limited", StringComparison.Ordinal));
@@ -229,10 +229,15 @@ public sealed class SignInRateLimitCeilingTests
         FillWithDistinctPairs(limit);
         Assert.Equal(Capacity, limit.TrackedSourceCount);
 
-        // Stamp both throttles once at capacity, then note how many ceiling lines exist so far.
+        // Stamp both throttles once at capacity, then note how many ceiling lines exist so far and
+        // how many forced reclaims the per-source limiter has run. This first reserve is itself the
+        // one that stamps the forced-prune throttle at T0, exactly as the fill loop above never
+        // does (it never sees TrackedSourceCount >= Capacity until the very last insert).
         limit.Reserve("first-over-capacity", "first-over-capacity@example.test");
         var linesBeforeStep = CeilingLines(logger).Count;
+        var forcedPrunesBeforeStep = limit.PerSourceForcedPruneCount;
         Assert.True(linesBeforeStep >= 1);
+        Assert.Equal(1, forcedPrunesBeforeStep);
 
         // The clock steps back an hour — well past both the one-second forced-prune interval and
         // the 15-minute window, so if a negative elapsed time were still read as "not due", nothing
@@ -242,6 +247,17 @@ public sealed class SignInRateLimitCeilingTests
         var afterStep = limit.Reserve("after-the-backwards-step", "after-the-backwards-step@example.test");
 
         Assert.True(afterStep.IsPermitted);
+
+        // review of T64 (fourth re-review V-03, follow-up finding on the first fix): the ceiling
+        // line alone does not distinguish the forced reclaim from LogCeilingReachedIfDue's own,
+        // separately-throttled check — a regression that reverted ForcePruneIfDue's use of
+        // IsWithinInterval, but left LogCeilingReachedIfDue's fixed, would still pass an
+        // assertion on the ceiling line count alone. Asserting the forced-prune count directly
+        // pins the forced reclaim itself, not just its neighbour.
+        Assert.True(
+            limit.PerSourceForcedPruneCount > forcedPrunesBeforeStep,
+            "a backwards clock step silenced the per-source limiter's forced reclaim instead of "
+            + "the negative elapsed time being treated as due.");
         Assert.True(
             CeilingLines(logger).Count > linesBeforeStep,
             "a backwards clock step silenced the ceiling alarm instead of the negative elapsed "

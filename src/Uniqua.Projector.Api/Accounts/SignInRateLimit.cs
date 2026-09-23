@@ -105,6 +105,19 @@ public sealed class SignInRateLimit
     public int TrackedAddressKeyCount => _perAddress.TrackedSourceCount;
 
     /// <summary>
+    /// How many forced reclaims the per-source limiter has run at its tracked-source ceiling. For
+    /// tests, so the forced reclaim (review 2026-09-23 fourth re-review V-03) is observable
+    /// directly rather than inferred from timing or from the ceiling log line alone.
+    /// </summary>
+    public long PerSourceForcedPruneCount => _perSource.ForcedPruneCount;
+
+    /// <summary>
+    /// How many forced reclaims the per-address limiter has run at its tracked-key ceiling. Same
+    /// reason as <see cref="PerSourceForcedPruneCount"/>, for the other limiter.
+    /// </summary>
+    public long PerAddressForcedPruneCount => _perAddress.ForcedPruneCount;
+
+    /// <summary>
     /// Holds this (source, address) pair's slot and this source's own slot for a sign-in attempt
     /// about to be verified, or says how long until one frees up. Called before
     /// <c>SignIn.ExecuteAsync</c>, so a refusal here never touches the password.
