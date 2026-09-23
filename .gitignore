@@ -19,16 +19,14 @@ src/Uniqua.Projector.Api/appsettings.*.*.json
 ###############################################################################
 
 # Build output
+# Platform (x64/x86/ARM/ARM64) and publish output land under bin/ or obj/ in this
+# solution, so those two already cover them; an unanchored x64/, publish/, etc.
+# would otherwise also match unrelated source folders with those names.
 [Bb]in/
 [Oo]bj/
-x64/
-x86/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
 /[Ll]og/
 /[Ll]ogs/
 /artifacts/
-publish/
 *.binlog
 
 # User-specific files
