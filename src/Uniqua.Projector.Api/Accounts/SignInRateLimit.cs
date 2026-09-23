@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging.Abstractions;
 using Uniqua.Projector.Application.Accounts.Ports;
@@ -87,6 +89,12 @@ public sealed class SignInRateLimit
     public int TrackedSourceCount => _perSource.TrackedSourceCount;
 
     /// <summary>
+    /// How many (source, address) keys currently hold a slot. For tests and for anyone watching
+    /// memory (review 2026-09-23 (third re-review) S-01).
+    /// </summary>
+    public int TrackedAddressKeyCount => _perAddress.TrackedSourceCount;
+
+    /// <summary>
     /// Holds this (source, address) pair's slot and this source's own slot for a sign-in attempt
     /// about to be verified, or says how long until one frees up. Called before
     /// <c>SignIn.ExecuteAsync</c>, so a refusal here never touches the password.
@@ -105,20 +113,24 @@ public sealed class SignInRateLimit
             return SignInReservation.SkippedCap();
         }
 
+        // review 2026-09-23 (third re-review) S-01: the per-source ceiling is checked first, so a
+        // source already refused there never creates a per-address entry at all — a flood of
+        // brand-new addresses from a capped source would otherwise grow _perAddress without bound,
+        // one hashed key per attempt, however cheap each attempt was to send.
+        var sourceDecision = _perSource.Reserve(source);
+        if (!sourceDecision.IsPermitted)
+        {
+            return SignInReservation.Refused(sourceDecision.RetryAfterSeconds);
+        }
+
         var addressKey = CompoundKey(source, email);
         var addressDecision = _perAddress.Reserve(addressKey);
         if (!addressDecision.IsPermitted)
         {
+            // The per-source slot just reserved must not outlive an attempt the per-address cap
+            // refuses on its own.
+            _perSource.Release(source, sourceDecision);
             return SignInReservation.Refused(addressDecision.RetryAfterSeconds);
-        }
-
-        var sourceDecision = _perSource.Reserve(source);
-        if (!sourceDecision.IsPermitted)
-        {
-            // The per-address slot just reserved must not outlive an attempt refused outright by
-            // the source's own ceiling.
-            _perAddress.Release(addressKey, addressDecision);
-            return SignInReservation.Refused(sourceDecision.RetryAfterSeconds);
         }
 
         return SignInReservation.Permitted(source, addressKey, sourceDecision, addressDecision);
@@ -140,8 +152,16 @@ public sealed class SignInRateLimit
         _perSource.Release(reservation.Source, reservation.SourceDecision);
     }
 
-    private string CompoundKey(string source, string email) =>
-        $"{source}{KeySeparator}{_normalizer.NormalizeEmail(email.Trim()) ?? string.Empty}";
+    // review 2026-09-23 (third re-review) S-01: hashed rather than plain, and to a fixed length,
+    // exactly as InMemoryUnknownAddressAttempts.Key hashes the same normalised value — a key's
+    // length no longer grows with what was submitted, so a huge address is as cheap to hold a slot
+    // for as a short one, and no submitted address is ever held in plain text.
+    private string CompoundKey(string source, string email)
+    {
+        var normalized = _normalizer.NormalizeEmail(email.Trim()) ?? string.Empty;
+        var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+        return $"{source}{KeySeparator}{hash}";
+    }
 }
 
 /// <summary>

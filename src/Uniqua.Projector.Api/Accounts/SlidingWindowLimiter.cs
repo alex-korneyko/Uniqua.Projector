@@ -105,6 +105,12 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     /// Hands back the slot <see cref="Reserve"/> took, because the caller's outcome says it should
     /// not have counted after all.
     /// </summary>
+    /// <remarks>
+    /// review 2026-09-23 (third re-review) S-01: a list this call empties is dropped at once, only
+    /// that exact list (as <see cref="PruneExpired"/> does), rather than left in <c>_entries</c>
+    /// until the next periodic or forced prune — the same unbounded-growth shape S-01 found, just
+    /// reached by releasing instead of by never reserving.
+    /// </remarks>
     public void Release(string source, RateLimitDecision reservation)
     {
         if (!reservation.IsPermitted || !_entries.TryGetValue(source, out var entries))
@@ -115,6 +121,10 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
         lock (entries)
         {
             entries.Remove(reservation.ReservedAt);
+            if (entries.Count is 0)
+            {
+                _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries));
+            }
         }
     }
 

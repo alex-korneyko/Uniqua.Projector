@@ -182,6 +182,82 @@ public sealed class SessionEndpointTests(ApiFactory factory)
         Assert.DoesNotContain("System.Text.Json", body, StringComparison.Ordinal);
     }
 
+    // ---- AC-05b / S-01: over-long credentials are refused before Reserve or a lookup -------------
+
+    [Fact]
+    public async Task An_overlong_email_gets_the_same_refusal_as_a_wrong_password_and_consumes_no_slot()
+    {
+        // review 2026-09-23 (third re-review) S-01: openapi's maxLength: 256 on email was not
+        // enforced, so an attacker could grow the per-address key without bound just by typing a
+        // longer address. The refusal must depend on length alone (never on account state, so it
+        // adds no AC-05b oracle) and must happen before SignInRateLimit.Reserve is ever called.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var limit = factory.Services.GetRequiredService<SignInRateLimit>();
+
+        var overlongEmail = new string('a', 250) + "@example.test"; // 261 chars, past the 256 cap.
+        var wrongPassword = await client.PostAsJsonAsync(
+            Sessions, new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+
+        // Captured only after the ordinary wrong-credentials attempt above, which does legitimately
+        // reserve a slot — the over-long attempt below must add nothing further to either count.
+        var trackedAddressesBefore = limit.TrackedAddressKeyCount;
+        var trackedSourcesBefore = limit.TrackedSourceCount;
+
+        var overlong = await client.PostAsJsonAsync(
+            Sessions, new { email = overlongEmail, password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, overlong.StatusCode);
+        Assert.Equal(
+            "accounts.credentials_invalid",
+            JsonDocument.Parse(await overlong.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("code").GetString());
+
+        // Byte-identical to the ordinary wrong-credentials refusal — the same problem, not a
+        // length-specific one, so the two are indistinguishable to whoever is probing.
+        Assert.Equal(
+            await NormalisedBodyAsync(wrongPassword), await NormalisedBodyAsync(overlong));
+        Assert.Equal(InterestingHeaders(wrongPassword), InterestingHeaders(overlong));
+
+        // Reserve was never called for this attempt, so it consumed neither the per-address nor
+        // the per-source slot.
+        Assert.Equal(trackedAddressesBefore, limit.TrackedAddressKeyCount);
+        Assert.Equal(trackedSourcesBefore, limit.TrackedSourceCount);
+    }
+
+    [Fact]
+    public async Task An_overlong_password_gets_the_same_refusal_as_a_wrong_password_and_consumes_no_slot()
+    {
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var limit = factory.Services.GetRequiredService<SignInRateLimit>();
+
+        var overlongPassword = new string('a', 129); // past the 128-character cap.
+        var wrongPassword = await client.PostAsJsonAsync(
+            Sessions, new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+
+        var trackedAddressesBefore = limit.TrackedAddressKeyCount;
+        var trackedSourcesBefore = limit.TrackedSourceCount;
+
+        // A brand-new address, never named before in this test, so a slot mistakenly reserved for
+        // this attempt would show up as a new entry rather than hiding behind one already tracked.
+        var overlong = await client.PostAsJsonAsync(
+            Sessions,
+            new { email = $"{Guid.NewGuid():N}@example.test", password = overlongPassword });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, overlong.StatusCode);
+        Assert.Equal(
+            "accounts.credentials_invalid",
+            JsonDocument.Parse(await overlong.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            await NormalisedBodyAsync(wrongPassword), await NormalisedBodyAsync(overlong));
+        Assert.Equal(InterestingHeaders(wrongPassword), InterestingHeaders(overlong));
+
+        Assert.Equal(trackedAddressesBefore, limit.TrackedAddressKeyCount);
+        Assert.Equal(trackedSourcesBefore, limit.TrackedSourceCount);
+    }
+
     // ---- AC-12 / AC-05b: the per-source failed-sign-in cap (review 2026-09-22-2 N-01) -----------
 
     [Fact]

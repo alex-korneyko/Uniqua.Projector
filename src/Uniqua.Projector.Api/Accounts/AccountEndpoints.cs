@@ -89,6 +89,19 @@ public static class AccountEndpoints
             ILogger<SignInRateLimit> logger,
             CancellationToken cancellationToken) =>
         {
+            // review 2026-09-23 (third re-review) S-01: refused before Reserve and before any
+            // account lookup, on length alone — never on whether the address is registered — so
+            // this adds no AC-05b oracle. Without it, an attacker could grow SignInRateLimit's
+            // per-address key without bound just by typing a longer address (openapi's
+            // maxLength: 256 on email was declared but never enforced); the password limit mirrors
+            // it for the same reason.
+            if ((request.Email?.Length ?? 0) > CreateSessionRequest.MaxEmailLength
+                || (request.Password?.Length ?? 0) > CreateSessionRequest.MaxPasswordLength)
+            {
+                await context.WriteAccountProblemAsync(AccountErrors.CredentialsInvalid);
+                return;
+            }
+
             var source = RequestSource.Of(context, logger);
 
             // Reserved before the password is verified at all (review 2026-09-22-2 N-01): a client
@@ -173,15 +186,28 @@ public static class AccountEndpoints
 }
 
 /// <summary>
-/// The sign-in body. Note what is absent: no format or length constraint on either field. A
-/// pre-check here would refuse a malformed address faster than a wrong password, and that
-/// difference in speed is itself an answer to "is this address registered?".
+/// The sign-in body. Note what is absent: no *format* constraint on either field — a pre-check
+/// that rejected a malformed address faster than a wrong password would itself answer "is this
+/// address registered?". A *length* cap is different (review 2026-09-23 (third re-review) S-01):
+/// <see cref="MaxEmailLength"/> and <see cref="MaxPasswordLength"/> are enforced in
+/// <c>AccountEndpoints</c> before <c>SignInRateLimit.Reserve</c> and before any account lookup,
+/// because the refusal depends on the length submitted alone, the same for every account and every
+/// unregistered address — it carries no information a client could use to tell them apart, so it
+/// adds no AC-05b oracle, and it stops SignInRateLimit's per-address key from being grown without
+/// bound by an over-long address (openapi's declared <c>maxLength: 256</c>, previously unenforced).
 /// </summary>
 /// <param name="Email">The address as typed; normalised by the application.</param>
 /// <param name="Password">Verified against the stored hash, or against a dummy one (AC-05b).</param>
 public sealed record CreateSessionRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("email")] string? Email,
-    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password);
+    [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password)
+{
+    /// <summary>openapi's declared <c>maxLength: 256</c> for email, now enforced (S-01).</summary>
+    public const int MaxEmailLength = 256;
+
+    /// <summary>openapi's declared <c>maxLength: 128</c> for password, now enforced (S-01).</summary>
+    public const int MaxPasswordLength = 128;
+}
 
 /// <summary>The registration body, exactly as the contract's RegisterAccountRequest states it.</summary>
 /// <param name="Email">Normalised by the application; the normalised form carries the unique index.</param>
