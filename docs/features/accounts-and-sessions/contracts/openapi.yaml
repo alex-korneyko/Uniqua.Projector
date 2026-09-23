@@ -394,15 +394,20 @@ components:
         (second re-review) P-05b) rather than left as the one response shape a caller could not
         anticipate. The body carries a stable `code` and nothing else about what failed; the detail
         an operator needs is in the log, keyed by the same `traceId`.
+
+        Renamed from `accounts.unexpected` to the feature-neutral `api.unexpected` (review
+        2026-09-23 (third re-review) T-06): the one exception handler gives this same 500 to every
+        route, including `/boom` and any future board or card endpoint, so tying it to this
+        feature's namespace was wrong.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
           example:
-            type: "https://projector.example.com/problems/accounts/unexpected"
+            type: "https://projector.example.com/problems/api/unexpected"
             title: "An unexpected error occurred"
             status: 500
             detail: "An unexpected error occurred."
-            code: "accounts.unexpected"
+            code: "api.unexpected"
 
     SessionNotRecognised:
       description: |

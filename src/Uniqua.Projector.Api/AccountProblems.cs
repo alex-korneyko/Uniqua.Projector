@@ -47,8 +47,21 @@ public static class AccountProblems
         // review 2026-09-23 (second re-review) P-05(b): an unhandled exception used to leave the
         // one handler with no code to publish at all, although Problem.required (openapi.yaml)
         // names `code` as required on every problem this API can return.
-        Row("accounts.unexpected", 500, "An unexpected error occurred",
+        //
+        // review 2026-09-23 (third re-review) T-06: renamed from accounts.unexpected — the one
+        // handler gives this same 500 to every route, including /boom and any future board or card
+        // endpoint, so tying it to one feature's namespace was wrong. `api.*` rather than
+        // `accounts.*` on purpose, even though this table still lives beside the accounts feature.
+        Row("api.unexpected", 500, "An unexpected error occurred",
             "An unexpected error occurred."),
+
+        // review 2026-09-23 (third re-review) T-02: a BadHttpRequestException carrying a status
+        // other than 400 — a body over Kestrel's configured MaxRequestBodySize answers 413 — used
+        // to fall through to the generic unhandled-exception path instead of answering its own
+        // coded 4xx. Feature-neutral for the same reason api.unexpected is: the limit is enforced
+        // by Kestrel itself, ahead of any accounts or sessions routing.
+        Row("api.request_too_large", 413, "The request body is too large",
+            "The request body is larger than this server accepts."),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>

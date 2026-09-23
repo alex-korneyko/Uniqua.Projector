@@ -3,7 +3,12 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
@@ -96,11 +101,47 @@ public sealed class RequestShapeTests(ApiFactory factory)
         // review 2026-09-23 P-05(b): the 500 was not declared on any operation and its body had no
         // `code` at all, although Problem.required (openapi.yaml) names `code` as required on every
         // problem this API can return.
+        //
+        // review 2026-09-23 (third re-review) T-06: the one exception handler's 500 used to be
+        // tagged accounts.unexpected on every route, including this feature-neutral /boom skeleton
+        // endpoint and any future board or card endpoint. Renamed to a feature-neutral api.unexpected
+        // (code and type URI) so a cross-cutting failure is not tied to one feature's namespace.
         var response = await factory.CreateClient().GetAsync("/boom");
 
         Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("accounts.unexpected", await CodeOfAsync(response));
+        Assert.Equal("api.unexpected", await CodeOfAsync(response));
+    }
+
+    [Theory]
+    [InlineData("/api/v1/accounts")]
+    [InlineData("/api/v1/sessions")]
+    public async Task A_body_over_the_configured_limit_answers_its_own_coded_413_in_development(
+        string path)
+    {
+        // review 2026-09-23 (third re-review) T-02: in Development (ThrowOnBadRequest=true), a
+        // BadHttpRequestException with a status other than 400 — a body over Kestrel's configured
+        // limit answers 413 — used to fall through to the generic unhandled-exception path and
+        // answer 500 accounts.unexpected instead of its own 4xx. The one handler must answer that
+        // same status as a coded problem, in Development as well as everywhere else.
+        await using var development = new KestrelDevelopmentApiFactory(factory.ConnectionString);
+        var (client, baseAddress) = await KestrelClientAsync(development);
+
+        var oversized = new string('a', 8192);
+        var request = new HttpRequestMessage(HttpMethod.Post, new Uri(baseAddress, path))
+        {
+            Content = new StringContent(
+                $"{{\"padding\":\"{oversized}\"}}", Encoding.UTF8, "application/json"),
+        };
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        var code = await CodeOfAsync(response);
+        Assert.NotNull(code);
+        Assert.NotEqual("api.unexpected", code);
+        Assert.Equal(AccountProblems.For(code!).Status, (int)response.StatusCode);
     }
 
     // ---- Helpers ------------------------------------------------------------------------------
@@ -127,6 +168,61 @@ public sealed class RequestShapeTests(ApiFactory factory)
             AntiforgerySetup.HeaderName, token["XSRF-TOKEN=".Length..].Split(';')[0]);
 
         return client;
+    }
+
+    /// <summary>
+    /// A client and base address bound to a real, running Kestrel instance — not the in-memory
+    /// TestServer <see cref="ClientAsync"/> uses. Kestrel's own body-size enforcement (the
+    /// BadHttpRequestException a body over the configured limit throws) lives in Kestrel's HTTP/1.1
+    /// transport, which TestServer never exercises, so the 413 path can only be reached through a
+    /// real socket.
+    /// </summary>
+    private static async Task<(HttpClient Client, Uri BaseAddress)> KestrelClientAsync(
+        KestrelDevelopmentApiFactory factory)
+    {
+        // WebApplicationFactory<T>'s own EnsureServer() calls CreateHost (our override, which
+        // builds and starts the real Kestrel host and records it on factory.Host) and only then
+        // casts the started IServer to TestServer — which this factory deliberately is not, since
+        // Kestrel's own body-size enforcement, the thing under test, only exists on a real socket.
+        // That cast throws every time, after CreateHost has already run, so it is triggered and
+        // discarded here rather than avoided.
+        try
+        {
+            _ = factory.Services;
+        }
+        catch (InvalidCastException)
+        {
+        }
+
+        var server = factory.Host.Services.GetRequiredService<IServer>();
+        var baseAddress = new Uri(
+            server.Features.Get<IServerAddressesFeature>()!.Addresses.First());
+
+        // Every cookie this application sets is Secure — the antiforgery system refuses to issue a
+        // token over a plain request rather than downgrading (see ApiFactory) — so this real socket
+        // has to speak actual TLS, using the local machine's ASP.NET Core dev certificate. The
+        // client only needs to trust that one certificate to complete the handshake, not the whole
+        // system trust store.
+        var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback =
+                HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+        };
+        var client = new HttpClient(handler);
+        var response = await client.GetAsync(new Uri(baseAddress, "/health"));
+
+        foreach (var cookie in response.Headers.GetValues("Set-Cookie"))
+        {
+            client.DefaultRequestHeaders.Add("Cookie", cookie.Split(';')[0]);
+        }
+
+        var token = response.Headers.GetValues("Set-Cookie")
+            .First(value => value.StartsWith("XSRF-TOKEN=", StringComparison.Ordinal));
+
+        client.DefaultRequestHeaders.Add(
+            AntiforgerySetup.HeaderName, token["XSRF-TOKEN=".Length..].Split(';')[0]);
+
+        return (client, baseAddress);
     }
 
     private static async Task<string?> CodeOfAsync(HttpResponseMessage response)
@@ -165,6 +261,55 @@ public sealed class RequestShapeTests(ApiFactory factory)
             builder.UseSetting("ConnectionStrings:Default", _connectionString);
             builder.UseEnvironment("Development");
             builder.ConfigureLogging(logging => logging.AddProvider(Logs));
+        }
+    }
+
+    /// <summary>
+    /// A Development-environment boot over a real, running Kestrel instance rather than the
+    /// in-memory TestServer, with a small <c>MaxRequestBodySize</c> so a body a few kilobytes over
+    /// it is cheap to send from a test. Plain HTTP, not HTTPS: the antiforgery cookie pair is copied
+    /// onto the request by hand (see <see cref="KestrelClientAsync"/>), which does not depend on the
+    /// scheme, and a real TLS handshake would need a trusted dev certificate this sandbox cannot
+    /// assume is present.
+    /// </summary>
+    private sealed class KestrelDevelopmentApiFactory : WebApplicationFactory<Program>
+    {
+        private readonly string _connectionString;
+
+        public KestrelDevelopmentApiFactory(string connectionString) => _connectionString = connectionString;
+
+        /// <summary>Comfortably above the antiforgery pair and the health response, well below the oversized body the test sends.</summary>
+        private const long MaxRequestBodySize = 1024;
+
+        /// <summary>
+        /// The real host this factory started, so a caller can reach its <see cref="IServer"/>
+        /// without going through the base class's <c>Services</c> property, which assumes — and
+        /// casts to — a TestServer.
+        /// </summary>
+        public IHost Host { get; private set; } = null!;
+
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            builder.ConfigureWebHost(webHostBuilder =>
+            {
+                webHostBuilder.UseKestrel(options =>
+                {
+                    options.Limits.MaxRequestBodySize = MaxRequestBodySize;
+                    options.Listen(
+                        System.Net.IPAddress.Loopback, 0, listenOptions => listenOptions.UseHttps());
+                });
+            });
+
+            var host = builder.Build();
+            host.Start();
+            Host = host;
+            return host;
+        }
+
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            builder.UseSetting("ConnectionStrings:Default", _connectionString);
+            builder.UseEnvironment("Development");
         }
     }
 

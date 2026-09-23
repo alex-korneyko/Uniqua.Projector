@@ -52,9 +52,19 @@ public sealed class AccountProblemsTests
         "The request body must be a JSON object matching the documented shape.")]
     // review 2026-09-23 (second re-review) P-05(b): the 500 an unhandled exception produces was
     // not declared anywhere and its body carried no `code`, although Problem.required names it.
-    [InlineData("accounts.unexpected", 500,
+    //
+    // review 2026-09-23 (third re-review) T-06: renamed from accounts.unexpected — the one handler
+    // gives this same 500 to every route, including /boom and future board and card endpoints, so
+    // tying it to one feature's namespace was wrong.
+    [InlineData("api.unexpected", 500,
         "An unexpected error occurred",
         "An unexpected error occurred.")]
+    // review 2026-09-23 (third re-review) T-02: a BadHttpRequestException with a 4xx status other
+    // than 400 — a body over Kestrel's configured limit, among others — must answer that same
+    // status as its own coded problem rather than falling into the generic 500 path.
+    [InlineData("api.request_too_large", 413,
+        "The request body is too large",
+        "The request body is larger than this server accepts.")]
     public void Each_contract_code_is_published_exactly_as_the_contract_states(
         string code, int status, string title, string detail)
     {
@@ -85,7 +95,8 @@ public sealed class AccountProblemsTests
             "accounts.sign_in_rate_limited",
             "accounts.display_name_invalid",
             "accounts.request_malformed",
-            "accounts.unexpected",
+            "api.unexpected",
+            "api.request_too_large",
         ];
 
         Assert.Equal(declared.Order(), AccountProblems.Codes.Order());
