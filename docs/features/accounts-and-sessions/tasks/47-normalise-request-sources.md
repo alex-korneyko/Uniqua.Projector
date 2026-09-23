@@ -12,7 +12,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — P-02"
-status: "todo"
+status: "done"
 ---
 
 # T47 — Normalise request sources (IPv4-mapped to IPv4, IPv6 to its /64) and bound how many sources a limiter tracks

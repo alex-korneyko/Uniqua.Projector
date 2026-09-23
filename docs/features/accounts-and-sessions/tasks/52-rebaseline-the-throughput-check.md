@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — Q-14"
-status: "todo"
+status: "done"
 ---
 
 # T52 — Re-baseline the sign-in throughput regression check so it measures a regression, not machine noise
