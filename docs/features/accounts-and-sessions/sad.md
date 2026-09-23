@@ -322,48 +322,53 @@ sequenceDiagram
     Note over Visitor,Db: Precondition: the visitor owns an account and holds no active session
     Visitor->>Spa: Fills in the address and the password
     Spa->>Api: Submits the sign-in
-    Api->>Api: Reserve a slot for this (request source, address) pair and for this request source (SignInRateLimit, review 2026-09-23 P-01)
-    Note over Api: When the request source cannot be resolved, neither slot is reserved at all - the attempt proceeds uncapped rather than sharing one budget with every such caller (spec §6.1)
-    alt Either cap is already exhausted for this window
-        Api-->>Spa: Refused - sign-in is temporarily limited (429), with when to retry
-        Spa-->>Visitor: Shows the limit and the retry time, nothing else typed is lost
-    else Both slots are reserved
-        Api->>App: Sign in with these credentials
-        App->>Infra: Find the account for this address, normalised the same way registration normalised it
-        Infra->>Db: Look the address up
-        Db-->>Infra: The account, or nothing
-        Infra-->>App: The account, or nothing
-        alt No account was ever registered with that address
-            App->>Infra: Verify the password against a dummy credential so the attempt costs the same time
-            Infra-->>App: Rejected
-            App-->>Api: Refused - the address or the password is incorrect
-            Api-->>Spa: The same wording and a comparable wait as a wrong password
-            Spa-->>Visitor: Shows one message that names neither of the two
-        else The account exists and the password is wrong
-            App->>Infra: Verify the password
-            Infra-->>App: Rejected
-            App->>Infra: Record one more consecutive failure against the account
-            Note over Infra,Db: persists the consecutive-failure count and the time of this attempt on the account - see flow 6
-            Infra->>Db: Update the account
-            Db-->>Infra: Updated
-            App-->>Api: Refused - the address or the password is incorrect
-            Api-->>Spa: Refusal
-            Spa-->>Visitor: Shows the same message, word for word
-        else The account exists and the password is correct
-            App->>Infra: Verify the password
-            Infra-->>App: Accepted
-            App->>Infra: Return the consecutive-failure count to zero and open a session
-            Note over Infra,Db: persists a session record - the account it belongs to, when it was opened, when it was last seen
-            Infra->>Db: Write the session record and the cleared counter
-            Db-->>Infra: Written
-            Infra-->>App: Session reference
-            App-->>Api: Session opened
-            Api->>Api: Release both slots - a correct password is never counted against either cap, from any source
-            Api-->>Spa: Signed in, session cookie set
-            Spa-->>Visitor: Shows their own display name
+    alt The trimmed email exceeds 256 characters, or the password exceeds 128
+        Api-->>Spa: Refused - the address or the password is incorrect (401), before any slot is reserved (review 2026-09-23 (third re-review) S-01, re-review V-01)
+        Spa-->>Visitor: Shows the same message a wrong password would
+    else Both are within bound
+        Api->>Api: Reserve a slot for this (request source, address) pair and for this request source (SignInRateLimit, review 2026-09-23 P-01)
+        Note over Api: When the request source cannot be resolved, neither slot is reserved at all - the attempt proceeds uncapped rather than sharing one budget with every such caller (spec §6.1)
+        alt Either cap is already exhausted for this window
+            Api-->>Spa: Refused - sign-in is temporarily limited (429), with when to retry
+            Spa-->>Visitor: Shows the limit and the retry time, nothing else typed is lost
+        else Both slots are reserved
+            Api->>App: Sign in with these credentials
+            App->>Infra: Find the account for this address, normalised the same way registration normalised it
+            Infra->>Db: Look the address up
+            Db-->>Infra: The account, or nothing
+            Infra-->>App: The account, or nothing
+            alt No account was ever registered with that address
+                App->>Infra: Verify the password against a dummy credential so the attempt costs the same time
+                Infra-->>App: Rejected
+                App-->>Api: Refused - the address or the password is incorrect
+                Api-->>Spa: The same wording and a comparable wait as a wrong password
+                Spa-->>Visitor: Shows one message that names neither of the two
+            else The account exists and the password is wrong
+                App->>Infra: Verify the password
+                Infra-->>App: Rejected
+                App->>Infra: Record one more consecutive failure against the account
+                Note over Infra,Db: persists the consecutive-failure count and the time of this attempt on the account - see flow 6
+                Infra->>Db: Update the account
+                Db-->>Infra: Updated
+                App-->>Api: Refused - the address or the password is incorrect
+                Api-->>Spa: Refusal
+                Spa-->>Visitor: Shows the same message, word for word
+            else The account exists and the password is correct
+                App->>Infra: Verify the password
+                Infra-->>App: Accepted
+                App->>Infra: Return the consecutive-failure count to zero and open a session
+                Note over Infra,Db: persists a session record - the account it belongs to, when it was opened, when it was last seen
+                Infra->>Db: Write the session record and the cleared counter
+                Db-->>Infra: Written
+                Infra-->>App: Session reference
+                App-->>Api: Session opened
+                Api->>Api: Release both slots - a correct password is never counted against either cap, from any source
+                Api-->>Spa: Signed in, session cookie set
+                Spa-->>Visitor: Shows their own display name
+            end
         end
     end
-    Note over Visitor,Db: Postcondition: either a session exists, the failure count is zero and both cap slots are released, or nothing about the account changed except its failure count and the reserved slots
+    Note over Visitor,Db: Postcondition: either a session exists, the failure count is zero and both cap slots are released, or nothing about the account changed except its failure count and the reserved slots, or the request never reached the point of reserving anything
 ```
 
 **Critical flow 5: recognising a session on an ordinary read (AC-06, AC-07, AC-07b, AC-10)**
@@ -443,7 +448,7 @@ sequenceDiagram
     alt The owner supplies the correct password
         App-->>Api: Accepted with no delay at all, and a session opened as in flow 4
         App->>Infra: Return the count to zero
-    else Fifteen minutes pass in which no attempt is made at all
+    else Fifteen minutes pass in which no failed attempt reaches verification
         Note over App,Infra: The reset is derived from the last-attempt time on the next read, not kept alive by a timer - so a restart cannot lose it
     end
     Note over Guesser,Db: Postcondition: guessing is progressively futile, the owner is never locked out, and nothing about the refusal reveals that this account is under attack
@@ -490,9 +495,9 @@ sequenceDiagram
 | AC-02 password too short | flow 3, inner branch |
 | AC-02b unusable address | flow 3, inner branch |
 | AC-03 address already registered | flow 1, first branch |
-| AC-04 | flow 4, third branch |
-| AC-05 wrong password | flow 4, second branch |
-| AC-05b unknown address | flow 4, first branch — same wording, comparable wait |
+| AC-04 | flow 4, innermost alt, third branch |
+| AC-05 wrong password | flow 4, innermost alt, second branch |
+| AC-05b unknown address | flow 4, innermost alt, first branch — same wording, comparable wait; the over-long-credential branch (outermost alt, first branch) is the same code and wording too, added in review 2026-09-23 (fourth re-review) U-04 |
 | AC-06 survives a browser close | flow 5, live branch |
 | AC-07 14 days idle | flow 5, expired branch |
 | AC-07b 90 days absolute | flow 5, expired branch |
@@ -575,7 +580,7 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 
 **QG-1. Security of the single authentication boundary**
 - **When:** someone submits wrong passwords against one account repeatedly, or probes the sign-in form with addresses that own no account.
-- **Then:** the 6th consecutive failure is delayed ≥ 2 s and the 10th ≥ 30 s; a correct password is never delayed; the failure count returns to zero after 15 min with no attempt; one password verification costs ≥ 100 ms per attempt; an address no account was registered with is refused in the same words and in a comparable time as a wrong password.
+- **Then:** the 6th consecutive failure is delayed ≥ 2 s and the 10th ≥ 30 s; a correct password is never delayed; the failure count returns to zero after 15 min in which no failed attempt reaches verification; one password verification costs ≥ 100 ms per attempt; an address no account was registered with is refused in the same words and in a comparable time as a wrong password.
 - **How verify:** integration test against a controllable clock for the delay curve and the reset; a unit test over the hashing parameters for the ≥ 100 ms floor; a timing-comparison test for AC-05b; **and a regression test asserting that an account with many recent failures still accepts the correct password immediately** — that is the test which catches someone re-enabling the framework lockout ADR 0010 deliberately switched off.
 
 **QG-2. Session continuity with a bounded lifetime**

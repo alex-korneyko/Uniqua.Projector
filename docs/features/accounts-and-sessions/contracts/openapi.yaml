@@ -91,7 +91,8 @@ paths:
                 display_name: "Test User"
         "400":
           description: |
-            The submission is malformed. Either the body was not readable JSON at all —
+            The submission is malformed. Either the body was not readable JSON at all, or names a
+            field the documented shape does not have (`additionalProperties: false`, T63) —
             `accounts.request_malformed`, reached before any field is looked at — or it parsed but a
             field's own shape failed (sad.md §6 flow 3, inner branches): `accounts.password_invalid`
             for AC-02 (shorter than 8 or longer than 128 characters); `accounts.email_invalid` for AC-02b
@@ -206,6 +207,15 @@ paths:
       responses:
         "200":
           description: Recognised (AC-06). The display name is what the client shows.
+          headers:
+            Set-Cookie:
+              description: |
+                A readable `XSRF-TOKEN` cookie (`AntiforgerySetup.IssueClientReadableToken`), issued
+                on this and every other safe response. The client echoes its value in the
+                `X-XSRF-TOKEN` header (see `AntiforgeryToken`) on the next state-changing request —
+                the acquisition path `api-sync-report.md` OQ-API-1 previously left open.
+              schema: { type: string }
+              example: "XSRF-TOKEN=<readable-token>; Path=/; Secure; SameSite=Strict"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
@@ -215,6 +225,8 @@ paths:
                 display_name: "Test User"
         "401":
           $ref: "#/components/responses/SessionNotRecognised"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
         "500":
           $ref: "#/components/responses/Unexpected"
 
@@ -281,7 +293,8 @@ paths:
                 code: "accounts.credentials_invalid"
         "400":
           description: |
-            The body was not readable JSON at all, so no credential was ever looked at — reached
+            The body was not readable JSON at all, or names a field the documented shape does not
+            have (`additionalProperties: false`, T63), so no credential was ever looked at — reached
             before the per-source cap is even reserved. `accounts.request_malformed` is the one
             code either endpoint returns for this (review 2026-09-22-2 N-06c), in every
             environment and for a wrong Content-Type as well (review 2026-09-23 P-05a/c).
@@ -367,6 +380,8 @@ paths:
           $ref: "#/components/responses/SessionNotRecognised"
         "403":
           $ref: "#/components/responses/AntiforgeryFailed"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
         "500":
           $ref: "#/components/responses/Unexpected"
 
@@ -387,11 +402,14 @@ components:
     AntiforgeryToken:
       in: header
       name: X-XSRF-TOKEN
-      required: true   # unresolved — OQ-API-1 (acquisition undrawn; owner: sequences)
+      required: true
       description: |
         Antiforgery token, required on every state-changing request (sad.md §8, ADR 0003 negative
-        consequence, ADR 0007). How the client obtains it is an open question this contract does not
-        answer — see `api-sync-report.md` OQ-API-1.
+        consequence, ADR 0007) — the framework's standard cookie-and-header pair
+        (`Api/Antiforgery/AntiforgerySetup.cs`). Every safe (GET) response, including `getCurrentAccount`,
+        sets a readable `XSRF-TOKEN` cookie; the client echoes that cookie's value back in this header
+        on a state-changing request, and it is validated against a paired httpOnly cookie the server
+        also holds. `api-sync-report.md` OQ-API-1, closed.
       schema: { type: string, maxLength: 512 }
 
   responses:
@@ -451,24 +469,43 @@ components:
     RequestRejected:
       description: |
         The request was rejected before any endpoint read it, with a 4xx status no more specific
-        response on this operation declares — for example 408 when the body trickles in below
-        Kestrel's `MinRequestBodyDataRate`, 411, 414 or 431. One feature-neutral family rather than
-        a row per status: `status` (and the response status) is the rejection's own 4xx, while
-        `type`, `title`, `detail` and `code` are fixed. A 400 or 415 on this operation is still the
-        declared 400 `accounts.request_malformed` and a 413 is `RequestTooLarge`; this family
-        covers the rest, in every environment, Development included, logged at Warning as
-        `event=request_rejected` rather than as an unhandled exception (review of T58, finding 2).
-        A rejection Kestrel answers before the request reaches this application at all (a
-        malformed request line, say) has no body of this shape.
+        response on this operation declares — 408 when the body trickles in below Kestrel's
+        `MinRequestBodyDataRate`, or 405 for a method this operation does not accept. One
+        feature-neutral family rather than a row per status: `status` (and the response status) is
+        the rejection's own 4xx, while `type`, `title`, `detail` and `code` are fixed. A 400 or 415
+        on this operation is still the declared 400 `accounts.request_malformed` and a 413 is
+        `RequestTooLarge`; this family covers the rest, in every environment, Development included,
+        logged at Warning as `event=request_rejected` rather than as an unhandled exception (review
+        of T58, finding 2).
+
+        411 (no `Content-Length`), 414 (URI too long) and 431 (headers too large) are also in
+        `ProblemDetailsSetup`'s rejection set, but in practice Kestrel answers them itself while
+        parsing the request line or headers, before routing runs and before this application ever
+        sees the request — so they most likely come back with **no body of this shape at all**, the
+        same as a malformed request line (review 2026-09-23 (fourth re-review) U-05). Only 408 and
+        405 are declared here as examples because only they are known to actually reach the app;
+        `RequestShapeTests` exercises the mapping itself through synthetic endpoints, not through a
+        real socket for every status.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
-          example:
-            type: "https://projector.example.com/problems/api/request-rejected"
-            title: "The request was rejected"
-            status: 408
-            detail: "The request could not be accepted as it was sent."
-            code: "api.request_rejected"
+          examples:
+            request_body_stalled:
+              summary: 408 — the request body arrived too slowly
+              value:
+                type: "https://projector.example.com/problems/api/request-rejected"
+                title: "The request was rejected"
+                status: 408
+                detail: "The request could not be accepted as it was sent."
+                code: "api.request_rejected"
+            method_not_allowed:
+              summary: 405 — this operation does not accept the method used
+              value:
+                type: "https://projector.example.com/problems/api/request-rejected"
+                title: "The request was rejected"
+                status: 405
+                detail: "The request could not be accepted as it was sent."
+                code: "api.request_rejected"
 
     SessionNotRecognised:
       description: |

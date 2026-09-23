@@ -20,7 +20,7 @@ ADR 0003 lists «lockout after repeated attempts» among the positive consequenc
 ## Decision drivers
 
 - Spec AC-12: guessing becomes futile «without the account ever becoming unusable to its owner».
-- Spec §6: 6th consecutive failure delayed ≥ 2 s, 10th ≥ 30 s, a correct password never delayed, the counter returning to zero after 15 minutes with no attempt.
+- Spec §6: 6th consecutive failure delayed ≥ 2 s, 10th ≥ 30 s, a correct password never delayed, the counter returning to zero after 15 minutes in which no failed attempt reached verification.
 - Spec §1: OWASP's *Blocking Brute Force Attacks* documents account lockout as a denial-of-service vector against a named person and as a username-harvesting oracle.
 - Spec §3: there is no password recovery and no address verification, so an account locked out by a stranger has no self-service way back.
 - `architecture-map.md`: Identity is already the account store, and it already maintains a consecutive-failure count.
@@ -42,7 +42,7 @@ ADR 0003 lists «lockout after repeated attempts» among the positive consequenc
 **Positive**
 - The owner of an account cannot be locked out by someone else's guessing, which matters more than usual here because there is no recovery path.
 - No new table and no new column: the counter is already in the Identity schema, so `data-model` carries nothing extra for this.
-- The delay is computed, so the §6 numbers (≥ 2 s at the 6th, ≥ 30 s at the 10th, reset after 15 minutes idle) are directly testable against a controllable clock.
+- The delay is computed, so the §6 numbers (≥ 2 s at the 6th, ≥ 30 s at the 10th, reset after 15 minutes in which no failed attempt reaches verification) are directly testable against a controllable clock.
 
 **Negative**
 - The framework's lockout must be deliberately switched off. If someone later turns it back on because it looks like the safe default, AC-12 breaks silently — this is worth a test that asserts a locked-looking account still accepts the correct password.

@@ -129,7 +129,7 @@ columns at the bottom of the table are this feature's own additions to the Ident
 | `EmailConfirmed`, `PhoneNumber`, `PhoneNumberConfirmed`, `TwoFactorEnabled` | Identity defaults | | Present because the default schema is kept; unused — spec §3 rules address verification, recovery and second factors out of the product |
 | `DisplayName` | `nvarchar(50)` | NOT NULL | *This feature's addition.* 50 is bound from AC-01 («a display name of at most 50 characters»). The label other board members see |
 | `NormalizedDisplayName` | `nvarchar(50)` | NOT NULL, **UNIQUE** (`DisplayNameIndex`) | *This feature's addition.* AC-11 / AC-11b: a display name identifies exactly one account to the people who see it |
-| `LastFailedAttemptAt` | `datetimeoffset` | NULL | *This feature's addition.* The time of the most recent failed sign-in. AC-12's «returns to zero after 15 minutes in which no attempt is made» is derived from this column on the next read, never from a timer — so a restart cannot lose it (sad §6 flow 6). **This is the one column ADR 0010 said would not be needed** — see the audit report |
+| `LastFailedAttemptAt` | `datetimeoffset` | NULL | *This feature's addition.* The time of the most recent failed sign-in. AC-12's «returns to zero after 15 minutes in which no failed attempt reached verification» is derived from this column on the next read, never from a timer — so a restart cannot lose it (sad §6 flow 6). **This is the one column ADR 0010 said would not be needed** — see the audit report |
 
 **Aggregate root:** root.
 

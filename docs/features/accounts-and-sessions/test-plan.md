@@ -79,6 +79,7 @@ happens when someone guesses at a password — behaves exactly as the repository
 - Display name at 50 and 51 characters (AC-01) → accepted, refused.
 - An address that cannot be an address, and an address differing from a registered one only in case or surrounding whitespace (AC-02b, AC-03) → the first refused as unusable, the second refused as already registered.
 - Sign-in with an address no account was ever registered with (AC-05b) → the wrong-password refusal, word for word and in a comparable time.
+- Sign-in with a trimmed email of 257 characters, or a password of 129 (AC-05b, AC-12) → refused with the identical `accounts.credentials_invalid` body a wrong password gets, before `SignInRateLimit` reserves a slot and before any account lookup, so no slot is taken (review 2026-09-23 (fourth re-review) U-04).
 - A session one minute before 14 days + 1 hour idle (measured from the last activity stamp), and at it; one minute before 90 days old, and at it (AC-07, AC-07b) → live, dead; live, dead. `IsExpired` uses `>=`, so the instant itself is already dead (review 2026-09-23 P-04).
 - A 21st failed sign-in against one (source, address) pair within 15 minutes, including one refused outright by an in-flight attempt's reserved slot rather than a completed one (AC-12) → refused before verification, `accounts.sign_in_rate_limited` (429), the count unmoved.
 - A 101st failed sign-in from one source across addresses it has tried, none of them individually capped (AC-12) → refused the same way, regardless of which address the 101st names.

@@ -104,7 +104,7 @@ prescribed handling, not a waived check.
 | `accounts.registration_rate_limited` | 429 | AC-01b | flow 3, first |
 | `accounts.credentials_invalid` | 401 | AC-05, AC-05b, AC-12 | flow 4 (branches 1–2), flow 6 |
 | `accounts.session_not_recognised` | 401 | AC-07, AC-07b, AC-08, AC-10 | flow 5 (branches 1, expired), flow 2 |
-| `accounts.antiforgery_failed` | 403 | *none* — sad.md §8 only | *none* → **OQ-API-1** |
+| `accounts.antiforgery_failed` | 403 | *none* — sad.md §8 only | *none* → **OQ-API-1 (closed)** |
 
 All eight match `^[a-z_]+\.[a-z_]+$`. The `accounts.` module prefix follows CONTEXT.md's *account*
 glossary term, not a framework idiom.
@@ -185,21 +185,22 @@ correct by design, not a gap.
 
 ## Open questions and accepted findings
 
-### OQ-API-1 — the antiforgery token has no acquisition path *(open)*
+### OQ-API-1 — the antiforgery token has no acquisition path *(closed)*
 
 - **Finding.** `sad.md` §8 requires an antiforgery token on every state-changing request (ADR 0003's
   negative consequence, ADR 0007), and the contract therefore declares `X-XSRF-TOKEN` required on
-  `registerAccount`, `createSession` and `deleteCurrentSession`. But **no §6 flow and no §5 AC shows
-  how the client obtains one**, and `accounts.antiforgery_failed` is consequently the only error code
+  `registerAccount`, `createSession` and `deleteCurrentSession`. But **no §6 flow and no §5 AC showed
+  how the client obtains one**, and `accounts.antiforgery_failed` was consequently the only error code
   in the contract with no acceptance criterion behind it. Its `maxLength: 512` is likewise an
   inference with no source (Section A, the one `low` row).
-- **Classification.** A sequence gap, not an api bug — the hole is upstream.
-- **Resolution.** **Save as Open Question**, per the user's decision on 2026-09-21.
-  **Owner: `sequences`** (`sad.md` §6). **Due: before the contract is finalized.** The header stays
-  required in `openapi.yaml`, carrying an `# unresolved` note at
-  `components.parameters.AntiforgeryToken`. Once the handshake is drawn as a §6 flow, run
-  `/sdd:api accounts-and-sessions --reconcile` — it will bind the header (and any acquisition
-  operation) to a real origin and raise the `low` row's confidence.
+- **Classification.** A sequence gap, not an api bug — the hole was upstream.
+- **Resolution.** **Closed (review 2026-09-23 (fourth re-review) U-03).** The code already hands out
+  the token on every safe response, as a readable `XSRF-TOKEN` cookie
+  (`Api/Antiforgery/AntiforgerySetup.cs:13-29,90-105`) — the framework's standard cookie-and-header
+  pair, needing no new endpoint. `openapi.yaml` now declares that `Set-Cookie` on `getCurrentAccount`'s
+  200 and describes the cookie-and-header pair in `components.parameters.AntiforgeryToken`, whose
+  `# unresolved` note is dropped. The `maxLength: 512` inference (Section A) is unaffected and stays
+  `low`.
 
 ### F-2 — AC-09's mechanism is off-contract *(accepted — pre-existing, not new)*
 

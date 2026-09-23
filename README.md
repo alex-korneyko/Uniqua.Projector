@@ -15,13 +15,14 @@ line each:
 - **What ends it** — signing out (exactly the session it travelled on, and no other), or either time
   limit. A redeploy ends nothing.
 - **What happens when someone guesses at a password** — a per-account delay that grows with each
-  consecutive failure, resetting on success or after 15 minutes idle, plus a cap of 20 failed
-  sign-ins or attempts still in flight per (request source, address), and a looser cap of 100 per
-  request source across every address it has tried, in that window — past either one, `429` until
-  it clears. A correct password is never delayed; either cap can still refuse the owner for
-  up to 15 minutes — a guesser who shares their request source and targets their address, or
-  whose source has separately reached its own per-source ceiling of 100, can each do it (accepted,
-  spec §6.1).
+  consecutive failure, resetting on success or after
+  15 minutes in which no failed attempt reached verification,
+  plus a cap of 20 failed sign-ins or attempts still in flight per (request source, address), and a
+  looser cap of 100 per request source across every address it has tried, in that window — past
+  either one, `429` until it clears. A correct password is never delayed; either cap can still
+  refuse the owner for up to 15 minutes — a guesser who shares their request source and targets
+  their address, or whose source has separately reached its own per-source ceiling of 100, can each
+  do it (accepted, spec §6.1).
 
 **→ [`docs/session-rules.md`](docs/session-rules.md)** has each of those with the file that enforces
 it, the test that proves it, and how to verify it yourself.

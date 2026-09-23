@@ -20,8 +20,8 @@ public static class GuessingDelay
     public const int FreeAttempts = 5;
 
     /// <summary>
-    /// AC-12's "after 15 minutes in which no attempt is made at all". The only place this figure
-    /// appears.
+    /// AC-12's "after 15 minutes in which no failed attempt reached verification" (review
+    /// 2026-09-23 (third re-review) S-03). The only place this figure appears.
     /// </summary>
     public static readonly TimeSpan ResetAfter = TimeSpan.FromMinutes(15);
 
@@ -38,10 +38,10 @@ public static class GuessingDelay
     /// number the failure being made will carry.
     /// </summary>
     /// <remarks>
-    /// This is where AC-12's "returns to zero ... after 15 minutes in which no attempt is made"
-    /// lives: a failure after the quiet period is the first of a fresh count, however high the
-    /// stored figure was. Keeping the rule here, rather than in the store's SQL, is what lets it
-    /// be tested without a database and changed in one place.
+    /// This is where AC-12's "returns to zero ... after 15 minutes in which no failed attempt
+    /// reached verification" lives: a failure after the quiet period is the first of a fresh count,
+    /// however high the stored figure was. Keeping the rule here, rather than in the store's SQL,
+    /// is what lets it be tested without a database and changed in one place.
     /// </remarks>
     /// <param name="storedFailures">The counter as the store holds it.</param>
     /// <param name="lastFailedAttemptAt">
