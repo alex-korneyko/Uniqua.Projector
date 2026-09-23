@@ -98,6 +98,92 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
         Assert.Equal(burst - SignInRateLimit.PermittedFailuresPerWindow, capped);
     }
 
+    [Fact]
+    public async Task An_abandoned_delay_still_holds_its_slot_so_the_next_attempt_is_capped()
+    {
+        // Q-11: nothing previously proved that an attempt whose delay never returns — the shape a
+        // client that hangs up mid-wait takes — still holds the slot Reserve took for it. The
+        // reservation happens before SignIn.ExecuteAsync runs at all (AccountEndpoints.cs), and
+        // there is no catch around that call the way registration has one, so an attempt that
+        // throws instead of finishing must still have consumed its slot. AbandonDelays makes every
+        // held delay behave exactly like that: recorded, then cancelled.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync();
+        factory.Clock.AbandonDelays = true;
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+        }
+
+        factory.Clock.AbandonDelays = false;
+
+        var refused = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, refused.StatusCode);
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public async Task More_correct_sign_ins_than_the_cap_from_one_source_and_address_are_never_refused()
+    {
+        // Q-11: SignInRateLimit.Release hands the slot back on success (AC-12: "a correct password
+        // is never counted against the cap, from any source"). Deleting that Release call would
+        // let successes accumulate exactly like failures, and this is the test that catches it —
+        // more successful sign-ins than the per-window cap, from one source against one address,
+        // must all still succeed.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow + 5; attempt++)
+        {
+            var response = await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = AccountFixtures.Password });
+
+            Assert.True(
+                response.StatusCode == HttpStatusCode.Created,
+                $"attempt {attempt + 1} with the correct password was refused with "
+                + $"{response.StatusCode}, although a correct password must never be counted "
+                + "against the cap (AC-12).");
+        }
+
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public async Task Advancing_the_clock_past_the_cap_window_lets_the_next_attempt_reach_verification()
+    {
+        // Q-11: no test previously moved the clock past SignInRateLimit.Window, so nothing proved
+        // the cap ever actually reopens rather than refusing forever once tripped.
+        factory.Clock.Reset();
+        var account = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+        }
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+
+        factory.Clock.Advance(SignInRateLimit.Window + TimeSpan.FromSeconds(1));
+
+        // The correct password proves verification ran at all — a still-capped attempt would be
+        // refused with 429 before the password is ever checked.
+        var afterWindow = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = AccountFixtures.Password });
+
+        Assert.Equal(HttpStatusCode.Created, afterWindow.StatusCode);
+        factory.Clock.Reset();
+    }
+
     // ---- AC-05b: the refusal that costs the same either way -------------------------------------
 
     [Fact]

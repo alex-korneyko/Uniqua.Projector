@@ -289,12 +289,18 @@ public sealed class SessionRecognitionTests(ApiFactory factory)
 
         var response = await client.GetAsync(Me);
 
-        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
-        Assert.True((int)response.StatusCode is < 200 or >= 300);
+        // Q-12: a bare "not 2xx" would pass on the ordinary 401 the four refusal causes already
+        // produce, which is exactly the outcome this test exists to distinguish an outage from.
+        // The store failing is a fifth, different outcome, and it must announce itself as one: a
+        // 500 carrying a code other than the one AC-10's four causes already share.
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
 
         var body = await response.Content.ReadAsStringAsync();
         var problem = JsonDocument.Parse(body).RootElement;
+
+        Assert.NotEqual(
+            "accounts.session_not_recognised", problem.GetProperty("code").GetString());
 
         // Never the account shape: no "id" the way a 200 from /me would carry.
         Assert.False(problem.TryGetProperty("id", out _));

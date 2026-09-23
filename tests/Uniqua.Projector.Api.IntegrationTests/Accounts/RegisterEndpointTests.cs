@@ -415,19 +415,34 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
         // N-11: Release must be a no-op for a refusal — RateLimitDecision.Refused carries a
         // default ReservedAt, so releasing it must not free a slot another registration could
         // then take.
+        //
+        // Q-12: a refused decision's ReservedAt is always the struct's default, which never
+        // matches a *permitted* decision's real timestamp — so the old version of this test
+        // stayed green whether or not SlidingWindowLimiter.Release actually checked
+        // `!reservation.IsPermitted` first: either way, "remove `default`" found nothing to
+        // remove. Forging a refusal that carries a real, held ReservedAt (one of the five slots
+        // just taken, `IsPermitted: false` and all) is what makes the guard itself load-bearing:
+        // with it, Release still does nothing for a decision it is told is a refusal; without it,
+        // Release frees that slot regardless of what it actually holds.
         var clock = new TestClock();
         var limit = new RegistrationRateLimit(clock);
         var source = $"198.51.100.{Random.Shared.Next(1, 254)}";
 
+        RateLimitDecision firstHeldSlot = default;
         for (var accepted = 0; accepted < RegistrationRateLimit.PermittedPerWindow; accepted++)
         {
-            Assert.True(limit.Reserve(source).IsPermitted);
+            var decision = limit.Reserve(source);
+            Assert.True(decision.IsPermitted);
+            if (accepted == 0)
+            {
+                firstHeldSlot = decision;
+            }
         }
 
-        var refused = limit.Reserve(source);
-        Assert.False(refused.IsPermitted);
+        Assert.False(limit.Reserve(source).IsPermitted);
 
-        limit.Release(source, refused);
+        var forgedRefusal = new RateLimitDecision(false, 0, firstHeldSlot.ReservedAt);
+        limit.Release(source, forgedRefusal);
 
         Assert.False(limit.Reserve(source).IsPermitted);
     }
