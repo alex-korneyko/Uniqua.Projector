@@ -113,12 +113,24 @@ public sealed class LatencyBudgetTests(ApiFactory factory)
         AssertPercentile(samples, budgetMs: 800, "register");
     }
 
+    /// <summary>
+    /// How much slower than the §6 throughput figure this machine is allowed to be. Wider than
+    /// <see cref="CiMargin"/> deliberately: a single batch on this development machine has been
+    /// observed anywhere from 2.4 to 3.3 sign-ins a second, and a margin sized for the percentile
+    /// checks (3.0× → a 3.33/s floor) sits inside that noise and fails roughly one run in three
+    /// (review 2026-09-23 Q-14). Taking the median of several batches absorbs most of that noise
+    /// by itself; this margin exists for what the median doesn't absorb, while still catching a
+    /// path that has become an order of magnitude slower — a tenfold regression from a ~3/s
+    /// baseline lands under 1/s, well below the floor this margin sets.
+    /// </summary>
+    private const double ThroughputCiMargin = 6.0;
+
     [Fact]
     public async Task Sign_ins_sustain_the_throughput_row_as_a_regression_check_only()
     {
         // spec §6 asks for ≥ 10 sign-ins a second on the reference machine. CI is not that
         // machine, so what is asserted is that the path has not become an order of magnitude
-        // slower — the figure itself is the smoke run's to measure.
+        // slower — the figure itself is the smoke run's to measure (review 2026-09-23 Q-14).
         factory.Clock.Reset();
         var account = await factory.AnAccountAsync();
         var client = await factory.AWritingClientAsync();
@@ -126,10 +138,43 @@ public sealed class LatencyBudgetTests(ApiFactory factory)
         await client.PostAsJsonAsync(
             "/api/v1/sessions", new { email = account.Email, password = AccountFixtures.Password });
 
-        const int attempts = 10;
+        // Warm up: an untimed batch pays for JIT and connection-pool ramp-up, which a throughput
+        // check over a running service should not be charged for.
+        await SignInBatchAsync(client, account, count: 5);
+
+        // Several timed batches rather than one long run: a single batch on a shared development
+        // machine is noisy enough to make the raw figure meaningless (2.4-3.3/s against a 3.3/s
+        // floor, review 2026-09-23 Q-14). The median of several batches is the regression signal;
+        // an individual slow batch — a GC pause, a scheduler hiccup — does not fail the test on
+        // its own the way a single-sample check would.
+        const int batches = 5;
+        const int attemptsPerBatch = 6;
+        var perSecondByBatch = new List<double>(batches);
+
+        for (var batch = 0; batch < batches; batch++)
+        {
+            var elapsed = await SignInBatchAsync(client, account, attemptsPerBatch);
+            perSecondByBatch.Add(attemptsPerBatch / elapsed.TotalSeconds);
+        }
+
+        perSecondByBatch.Sort();
+        var median = perSecondByBatch[perSecondByBatch.Count / 2];
+        var floor = 10 / ThroughputCiMargin;
+
+        Assert.True(
+            median >= floor,
+            $"median of {batches} batches was {median:F1} sign-ins a second (batch rates: "
+            + string.Join(", ", perSecondByBatch.Select(rate => $"{rate:F1}"))
+            + $"), against the §6 figure of 10 on the reference machine and a CI margin of "
+            + $"{ThroughputCiMargin}× (a {floor:F1}/s floor). The real figure is the smoke run's.");
+    }
+
+    private static async Task<TimeSpan> SignInBatchAsync(
+        HttpClient client, TestAccount account, int count)
+    {
         var elapsed = Stopwatch.StartNew();
 
-        for (var attempt = 0; attempt < attempts; attempt++)
+        for (var attempt = 0; attempt < count; attempt++)
         {
             var response = await client.PostAsJsonAsync(
                 "/api/v1/sessions",
@@ -139,12 +184,7 @@ public sealed class LatencyBudgetTests(ApiFactory factory)
         }
 
         elapsed.Stop();
-
-        var perSecond = attempts / elapsed.Elapsed.TotalSeconds;
-        Assert.True(
-            perSecond >= 10 / CiMargin,
-            $"{perSecond:F1} sign-ins a second, against the §6 figure of 10 on the reference "
-            + $"machine and a CI margin of {CiMargin}×. The real figure is the smoke run's.");
+        return elapsed.Elapsed;
     }
 
     private static void AssertPercentile(List<double> samples, double budgetMs, string what)
