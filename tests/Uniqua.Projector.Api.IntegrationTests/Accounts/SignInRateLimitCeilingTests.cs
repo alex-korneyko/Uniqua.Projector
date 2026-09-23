@@ -71,7 +71,9 @@ public sealed class SignInRateLimitCeilingTests
             + "capacity; the per-source ceiling (spec §6.1) must still bound it.");
         Assert.Equal(SignInRateLimitCap.PerSource, overLimit.Cap);
 
-        // 4) After the clock passes the window, a new source is tracked again.
+        // 4) After the clock passes the window, a new source is tracked again. The periodic prune
+        //    is due by then, so this does not isolate the forced reclaim; the test further down
+        //    does.
         clock.Advance(SignInRateLimit.Window + TimeSpan.FromSeconds(1));
         var afterWindow = limit.Reserve("tracked-again-source", "tracked-again@example.test");
 
@@ -125,7 +127,9 @@ public sealed class SignInRateLimitCeilingTests
             + "only to a pair that isn't tracked yet.");
         Assert.Equal(SignInRateLimitCap.PerAddress, overLimit.Cap);
 
-        // 4) After the clock passes the window, a new pair is tracked again.
+        // 4) After the clock passes the window, a new pair is tracked again. The periodic prune
+        //    is due by then, so this does not isolate the forced reclaim; the test further down
+        //    does.
         clock.Advance(SignInRateLimit.Window + TimeSpan.FromSeconds(1));
         var afterWindow = limit.Reserve("tracked-again-source", "tracked-again@example.test");
 
@@ -135,6 +139,58 @@ public sealed class SignInRateLimitCeilingTests
             $"after the window passed, {limit.TrackedAddressKeyCount} pairs were still tracked "
             + $"against a ceiling of {Capacity}; a new pair must be tracked again once expired "
             + "entries are reclaimed.");
+    }
+
+    // ---- Review of T56: the forced reclaim, on its own, frees a slot in both limiters -------------
+
+    [Fact]
+    public void At_capacity_the_forced_reclaim_alone_frees_a_slot_in_both_limiters_once_the_fill_has_expired()
+    {
+        // Review of T56: step (4) of the two tests above cannot tell the forced reclaim from the
+        // periodic prune — once the clock passes Window from the fill, the periodic prune is due
+        // and reclaims every expired entry before the forced path runs. Here the fill has expired
+        // but neither limiter's periodic prune is due yet, so only the forced reclaim can free a
+        // slot for the new source and the new pair.
+        var clock = new TestClock();
+        var limit = new SignInRateLimit(clock);
+        var window = SignInRateLimit.Window;
+
+        // T0: stamp both limiters' periodic prune, then hand both slots straight back.
+        limit.Release(limit.Reserve("stamp-source", "stamp@example.test"));
+        Assert.Equal(0, limit.TrackedSourceCount);
+        Assert.Equal(0, limit.TrackedAddressKeyCount);
+
+        // T0 + W/2: fill both limiters to capacity.
+        clock.Advance(window / 2);
+        FillWithDistinctPairs(limit);
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+        Assert.Equal(Capacity, limit.TrackedAddressKeyCount);
+
+        // T0 + W + 1s: both periodic prunes are due, run, find nothing of the fill expired yet, and
+        // restamp. The pair ("source-0", "fill-0") is already tracked in both limiters, so this
+        // reserve never reaches either forced path.
+        clock.Advance((window / 2) + TimeSpan.FromSeconds(1));
+        Assert.True(limit.Reserve("source-0", "fill-0@example.test").IsPermitted);
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+        Assert.Equal(Capacity, limit.TrackedAddressKeyCount);
+
+        // T0 + 1.5W + 1s: every fill entry but source-0's second one has expired, and neither
+        // periodic prune is due for another half window.
+        clock.Advance(window / 2);
+        Assert.True(limit.Reserve("after-the-fill-expired", "after@example.test").IsPermitted);
+
+        // source-0 / its pair (still inside the window) and the new one: tracked, not waved
+        // through uncounted.
+        Assert.True(
+            limit.TrackedSourceCount == 2,
+            $"{limit.TrackedSourceCount} sources were tracked after a new source arrived at "
+            + "capacity once the whole fill had expired; the per-source limiter's forced reclaim "
+            + "must free the expired entries and track the new source, not fail open.");
+        Assert.True(
+            limit.TrackedAddressKeyCount == 2,
+            $"{limit.TrackedAddressKeyCount} pairs were tracked after a new pair arrived at capacity "
+            + "once the whole fill had expired; the per-address limiter's forced reclaim must free "
+            + "the expired entries and track the new pair, not fail open.");
     }
 
     // ---- Helpers -------------------------------------------------------------------------------

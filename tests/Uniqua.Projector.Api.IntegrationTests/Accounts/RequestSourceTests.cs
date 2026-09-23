@@ -260,6 +260,8 @@ public sealed class RequestSourceTests
         Assert.True(atCeiling.IsPermitted);
         Assert.Equal(capacity, limit.TrackedSourceCount);
 
+        // The periodic prune is due by now, so this does not isolate the forced reclaim; the test
+        // below does.
         clock.Advance(RegistrationRateLimit.Window + TimeSpan.FromSeconds(1));
 
         var afterWindow = limit.Reserve("tracked-again");
@@ -270,6 +272,46 @@ public sealed class RequestSourceTests
             $"after the window passed, {limit.TrackedSourceCount} sources were still tracked "
             + $"against a ceiling of {capacity}; a new key must be tracked again once expired "
             + "entries are reclaimed.");
+    }
+
+    // ---- Review of T56: the forced reclaim, on its own, frees a slot at the ceiling ---------------
+
+    [Fact]
+    public void At_capacity_the_forced_reclaim_alone_frees_a_slot_once_the_fill_has_expired()
+    {
+        // Review of T56: the check above cannot tell the forced reclaim from the periodic prune —
+        // once the clock passes Window from the fill, the periodic prune is due and reclaims every
+        // expired entry before the forced path runs. Here the fill has expired but the periodic
+        // prune is not due yet, so only the forced reclaim can free a slot for the new key.
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+        var window = RegistrationRateLimit.Window;
+
+        // T0: stamp the periodic prune, then hand the slot straight back so it tracks nothing.
+        limit.Release("stamp", limit.Reserve("stamp"));
+        Assert.Equal(0, limit.TrackedSourceCount);
+
+        // T0 + W/2: fill to capacity.
+        clock.Advance(window / 2);
+        FillToCapacity(limit);
+
+        // T0 + W + 1s: the periodic prune is due, runs, finds nothing of the fill expired yet, and
+        // restamps. "fill-0" is already tracked, so this reserve never reaches the forced path.
+        clock.Advance((window / 2) + TimeSpan.FromSeconds(1));
+        Assert.True(limit.Reserve("fill-0").IsPermitted);
+        Assert.Equal(Capacity, limit.TrackedSourceCount);
+
+        // T0 + 1.5W + 1s: every fill entry but fill-0's second one has expired, and the periodic
+        // prune is not due for another half window.
+        clock.Advance(window / 2);
+        Assert.True(limit.Reserve("after-the-fill-expired").IsPermitted);
+
+        // fill-0 (still inside its window) and the new key: tracked, not waved through uncounted.
+        Assert.True(
+            limit.TrackedSourceCount == 2,
+            $"{limit.TrackedSourceCount} sources were tracked after a new key arrived at capacity "
+            + "once the whole fill had expired; the forced reclaim must free the expired entries "
+            + "and track the new key (2 = fill-0 plus the new key), not fail open at the ceiling.");
     }
 
     // ---- Helpers -------------------------------------------------------------------------------
