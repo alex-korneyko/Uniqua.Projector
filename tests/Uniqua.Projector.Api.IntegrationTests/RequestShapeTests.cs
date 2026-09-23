@@ -172,6 +172,22 @@ public sealed class RequestShapeTests(ApiFactory factory)
             seenViaDirectHandshake.GetCertHashString(HashAlgorithmName.SHA256));
     }
 
+    [Fact]
+    public async Task Disposing_the_Kestrel_fixture_disposes_its_throwaway_certificate()
+    {
+        // review 2026-09-23-3 V-04: X509CertificateLoader.LoadPkcs12 without PersistKeySet or
+        // EphemeralKeySet writes the private key to a temporary key container on disk (on Windows,
+        // under the user profile). That file is removed only when the certificate handle is
+        // released, and nothing disposed Certificate, so every run of a Kestrel-fixture test left
+        // an orphaned key file behind. Disposing the fixture must also dispose Certificate.
+        var development = new KestrelDevelopmentApiFactory(factory.ConnectionString);
+        var certificate = development.Certificate;
+
+        await development.DisposeAsync();
+
+        Assert.Equal(IntPtr.Zero, certificate.Handle);
+    }
+
     /// <summary>
     /// Connects to the fixture's real socket and hands back whatever certificate it actually
     /// presented during the TLS handshake, with no pinning — a check independent of the
@@ -496,6 +512,17 @@ public sealed class RequestShapeTests(ApiFactory factory)
         {
             builder.UseSetting("ConnectionStrings:Default", _connectionString);
             builder.UseEnvironment("Development");
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await base.DisposeAsync();
+
+            // review 2026-09-23-3 V-04: LoadPkcs12 below (without PersistKeySet or
+            // EphemeralKeySet) writes the private key to a temporary key container on disk, which
+            // is removed only when the certificate handle is released. Nothing else disposes
+            // Certificate, so this is the one place that has to.
+            Certificate.Dispose();
         }
 
         private static X509Certificate2 CreateSelfSignedCertificate()
