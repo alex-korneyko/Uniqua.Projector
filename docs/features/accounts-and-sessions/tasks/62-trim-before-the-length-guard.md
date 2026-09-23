@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — V-01"
-status: "todo"
+status: "done"
 ---
 
 # T62 — Measure the sign-in length guard on the trimmed address against the Domain limits

@@ -17,7 +17,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — U-01, U-03, U-04, U-05"
-status: "todo"
+status: "done"
 ---
 
 # T69 — Bring sad, ADR 0010, data-model, README, test-plan and openapi in line with the reset rule, the length guard, antiforgery and the rejection statuses

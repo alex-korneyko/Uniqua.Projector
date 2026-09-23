@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — U-06"
-status: "todo"
+status: "done"
 ---
 
 # T66 — Prove AC-12's reset clause: a run of 429s does not keep the failure count alive

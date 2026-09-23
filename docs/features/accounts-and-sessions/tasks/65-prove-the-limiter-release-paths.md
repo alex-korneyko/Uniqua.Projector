@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — V-05, V-06"
-status: "todo"
+status: "done"
 ---
 
 # T65 — Prove that a per-address refusal gives back its per-source slot, and that Release racing Reserve loses no reservation

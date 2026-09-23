@@ -11,7 +11,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — U-02"
-status: "todo"
+status: "done"
 ---
 
 # T63 — Refuse request bodies with unknown fields, as the contract's additionalProperties: false says

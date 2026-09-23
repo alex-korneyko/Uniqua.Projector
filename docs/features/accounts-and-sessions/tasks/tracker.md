@@ -66,14 +66,14 @@
 | T59 | Prove the cleanup service's grace-deadline reschedule by driving ExecuteAsync itself | tests | Alex Korneiko | S | — | done |
 | T60 | Anchor the .gitignore build-output patterns so they cannot swallow source or docs folders | config | Alex Korneiko | S | — | done |
 | T61 | Bring spec, ADR 0010, sad, openapi, test-plan, session rules and README in line with the bounded, re-keyed cap | docs | Alex Korneiko | S | T54, T55, T57, T58 | done |
-| T62 | Measure the sign-in length guard on the trimmed address against the Domain limits | ports | Alex Korneiko | S | — | todo |
-| T63 | Refuse request bodies with unknown fields, as the contract's additionalProperties: false says | ports | Alex Korneiko | S | T62 | todo |
-| T64 | Name which limiter hit its ceiling, give each its true consequence, and keep the throttles working after the clock steps back | ports | Alex Korneiko | S | — | todo |
-| T65 | Prove that a per-address refusal gives back its per-source slot, and that Release racing Reserve loses no reservation | tests | Alex Korneiko | S | T64 | todo |
-| T66 | Prove AC-12's reset clause: a run of 429s does not keep the failure count alive | tests | Alex Korneiko | S | T62 | todo |
-| T67 | Give the real-Kestrel request-shape test its own throwaway certificate, and correct its comment | tests | Alex Korneiko | S | — | todo |
-| T68 | Anchor or drop the remaining unanchored .gitignore build-output patterns | config | Alex Korneiko | S | — | todo |
-| T69 | Bring sad, ADR 0010, data-model, README, test-plan and openapi in line with the reset rule, the length guard, antiforgery and the rejection statuses | docs | Alex Korneiko | S | T62, T63, T64 | todo |
+| T62 | Measure the sign-in length guard on the trimmed address against the Domain limits | ports | Alex Korneiko | S | — | done |
+| T63 | Refuse request bodies with unknown fields, as the contract's additionalProperties: false says | ports | Alex Korneiko | S | T62 | done |
+| T64 | Name which limiter hit its ceiling, give each its true consequence, and keep the throttles working after the clock steps back | ports | Alex Korneiko | S | — | done |
+| T65 | Prove that a per-address refusal gives back its per-source slot, and that Release racing Reserve loses no reservation | tests | Alex Korneiko | S | T64 | done |
+| T66 | Prove AC-12's reset clause: a run of 429s does not keep the failure count alive | tests | Alex Korneiko | S | T62 | done |
+| T67 | Give the real-Kestrel request-shape test its own throwaway certificate, and correct its comment | tests | Alex Korneiko | S | — | done |
+| T68 | Anchor or drop the remaining unanchored .gitignore build-output patterns | config | Alex Korneiko | S | — | done |
+| T69 | Bring sad, ADR 0010, data-model, README, test-plan and openapi in line with the reset rule, the length guard, antiforgery and the rejection statuses | docs | Alex Korneiko | S | T62, T63, T64 | done |
 
 **Total:** 69 tasks (T21–T34 are follow-ups from review 2026-09-22; T35–T45 from its re-review; T46–T53 from the second re-review, 2026-09-23; T54–T61 from the third re-review, 2026-09-23; T62–T69 from the fourth re-review, 2026-09-23), ~40.5 person-days (12 × M at ~1 day, 57 × S at ~0.5 day).
 

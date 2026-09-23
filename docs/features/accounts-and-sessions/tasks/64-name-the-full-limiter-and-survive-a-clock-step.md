@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — V-02, V-03"
-status: "todo"
+status: "done"
 ---
 
 # T64 — Name which limiter hit its ceiling, give each its true consequence, and keep the throttles working after the clock steps back

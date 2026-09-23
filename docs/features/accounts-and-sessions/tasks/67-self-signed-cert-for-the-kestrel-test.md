@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — V-04"
-status: "todo"
+status: "done"
 ---
 
 # T67 — Give the real-Kestrel request-shape test its own throwaway certificate, and correct its comment

@@ -9,7 +9,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (fourth re-review) — V-07"
-status: "todo"
+status: "done"
 ---
 
 # T68 — Anchor or drop the remaining unanchored .gitignore build-output patterns
