@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.Antiforgery;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
+using Uniqua.Projector.Domain.Accounts;
 
 namespace Uniqua.Projector.Api.IntegrationTests.Accounts;
 
@@ -244,6 +245,73 @@ public sealed class SessionEndpointTests(ApiFactory factory)
         var overlong = await client.PostAsJsonAsync(
             Sessions,
             new { email = $"{Guid.NewGuid():N}@example.test", password = overlongPassword });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, overlong.StatusCode);
+        Assert.Equal(
+            "accounts.credentials_invalid",
+            JsonDocument.Parse(await overlong.Content.ReadAsStringAsync())
+                .RootElement.GetProperty("code").GetString());
+        Assert.Equal(
+            await NormalisedBodyAsync(wrongPassword), await NormalisedBodyAsync(overlong));
+        Assert.Equal(InterestingHeaders(wrongPassword), InterestingHeaders(overlong));
+
+        Assert.Equal(trackedAddressesBefore, limit.TrackedAddressKeyCount);
+        Assert.Equal(trackedSourcesBefore, limit.TrackedSourceCount);
+    }
+
+    // ---- AC-04 / AC-05b — V-01: the guard measures the trimmed address ----------------------------
+
+    [Fact]
+    public async Task A_256_character_address_signs_in_when_sent_padded_with_a_trailing_space()
+    {
+        // review 2026-09-23 (fourth re-review) V-01: registration, the store lookup and the cap key
+        // all trim the address, but the guard above used to measure request.Email.Length before
+        // trimming. An owner registered at exactly Account.MaxEmailLength who pastes their address
+        // with a trailing space was refused every time, even though their real address is fine.
+        factory.Clock.Reset();
+        var email = AddressOfLength(Account.MaxEmailLength);
+        await RegisterAsync(email);
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Sessions, new { email = email + " ", password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_256_character_address_signs_in_when_sent_padded_with_a_leading_newline()
+    {
+        factory.Clock.Reset();
+        var email = AddressOfLength(Account.MaxEmailLength);
+        await RegisterAsync(email);
+        var client = await ClientAsync();
+
+        var response = await client.PostAsJsonAsync(
+            Sessions, new { email = "\n" + email, password = GoodPassword });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_257_character_address_after_trimming_is_still_refused_and_consumes_no_slot()
+    {
+        // The guard has to measure the trimmed length, not skip the check for anything padded: one
+        // character over the cap once whitespace is removed must still be refused before Reserve is
+        // ever called.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var limit = factory.Services.GetRequiredService<SignInRateLimit>();
+
+        var overlongAfterTrim = AddressOfLength(Account.MaxEmailLength + 1);
+        var wrongPassword = await client.PostAsJsonAsync(
+            Sessions, new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+
+        var trackedAddressesBefore = limit.TrackedAddressKeyCount;
+        var trackedSourcesBefore = limit.TrackedSourceCount;
+
+        var overlong = await client.PostAsJsonAsync(
+            Sessions, new { email = " " + overlongAfterTrim + " ", password = GoodPassword });
 
         Assert.Equal(HttpStatusCode.Unauthorized, overlong.StatusCode);
         Assert.Equal(
@@ -818,5 +886,26 @@ public sealed class SessionEndpointTests(ApiFactory factory)
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         return new Registered(email, displayName);
+    }
+
+    private async Task RegisterAsync(string email)
+    {
+        var client = await ClientAsync();
+        var response = await client.PostAsJsonAsync(
+            Accounts, new { email, password = GoodPassword, display_name = $"se-{Guid.NewGuid():N}" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A registrable address of exactly <paramref name="length"/> characters — unique per call, so
+    /// two calls in the same test never collide on the store's unique index.
+    /// </summary>
+    private static string AddressOfLength(int length)
+    {
+        const string domain = "@example.test";
+        var unique = Guid.NewGuid().ToString("N");
+        var local = unique.PadRight(length - domain.Length, 'a');
+        return local + domain;
     }
 }
