@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Uniqua.Projector.Application.Accounts.Ports;
 
 namespace Uniqua.Projector.Api.IntegrationTests.Fixtures;
@@ -11,18 +12,21 @@ public sealed class TestClock : IClock
 {
     private DateTimeOffset _now = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);
 
-    private readonly List<TimeSpan> _delays = [];
+    // Q-13(b): a parallel-burst test calls DelayAsync from many requests in flight at once, and a
+    // plain List<T> is not safe for concurrent writers — a lost add or a corrupted enumeration is
+    // silent, not a crash, so it could under-report exactly the count a burst test relies on.
+    private readonly ConcurrentQueue<TimeSpan> _delays = new();
 
     public DateTimeOffset UtcNow => _now;
 
     /// <summary>
-    /// Every delay the application asked for, in order. The wait is recorded rather than served,
-    /// so a test can assert that the 10th consecutive failure was held for 30 seconds without
-    /// spending 30 seconds finding out.
+    /// Every delay the application asked for, in no particular order under concurrent callers. The
+    /// wait is recorded rather than served, so a test can assert that the 10th consecutive failure
+    /// was held for 30 seconds without spending 30 seconds finding out.
     /// </summary>
-    public IReadOnlyList<TimeSpan> RequestedDelays => _delays;
+    public IReadOnlyCollection<TimeSpan> RequestedDelays => [.. _delays];
 
-    public TimeSpan LongestRequestedDelay => _delays.Count is 0 ? TimeSpan.Zero : _delays.Max();
+    public TimeSpan LongestRequestedDelay => _delays.IsEmpty ? TimeSpan.Zero : _delays.Max();
 
     /// <summary>
     /// When set, every non-zero delay behaves as a request the client abandoned mid-wait: it is
@@ -33,7 +37,7 @@ public sealed class TestClock : IClock
 
     public Task DelayAsync(TimeSpan duration, CancellationToken cancellationToken)
     {
-        _delays.Add(duration);
+        _delays.Enqueue(duration);
         return AbandonDelays && duration > TimeSpan.Zero
             ? Task.FromCanceled(new CancellationToken(canceled: true))
             : Task.CompletedTask;

@@ -22,13 +22,27 @@ public sealed class TestPeerAddress : IStartupFilter
     /// <summary>The test-only header naming the peer a request should appear to come from.</summary>
     public const string HeaderName = "X-Test-Peer";
 
-    /// <summary>A fresh address, so one test's registrations never count against another's.</summary>
+    // Q-13(c): 16 random bits from Guid.NewGuid() collide well inside the size of a full suite run
+    // (a birthday-bound problem at a few hundred draws from a 65536-address space), and
+    // TestClock.Reset() only rewinds the clock, not any per-source counter a rate limiter keeps —
+    // so a peer that collided with an already-exhausted one earlier in the run stays exhausted for
+    // every test after it, for no reason a single test can see. A monotonic counter can never repeat
+    // an address within a run, so no two tests can ever be handed the same peer.
+    private static long _next = -1;
+
+    /// <summary>A fresh address, never handed out before in this run, so one test's registrations
+    /// never count against another's.</summary>
     public static string Fresh()
     {
-        var octets = Guid.NewGuid().ToByteArray();
+        // 198.18.0.0/15 is reserved for benchmarking, so these can never be a real client. The
+        // range holds 2^17 addresses (198.18.0.0-198.19.255.255); the counter is taken modulo that
+        // so it can never walk outside it even after an implausibly long run.
+        var offset = (uint)(Interlocked.Increment(ref _next) & 0x1FFFF);
+        var secondOctet = (byte)(18 + (offset >> 16));
+        var thirdOctet = (byte)(offset >> 8);
+        var fourthOctet = (byte)offset;
 
-        // 198.18.0.0/15 is reserved for benchmarking, so these can never be a real client.
-        return new IPAddress([198, 18, octets[0], octets[1]]).ToString();
+        return new IPAddress([198, secondOctet, thirdOctet, fourthOctet]).ToString();
     }
 
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>

@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Testcontainers.MsSql;
 using Uniqua.Projector.Application.Accounts.Ports;
 using Uniqua.Projector.Api.IntegrationTests.Fixtures;
@@ -52,6 +53,11 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await _database.StartAsync();
 
+        // The container only has a connection string once it has started, and ContentionForcer
+        // reads this property lazily (at interception time, not at registration time), so setting
+        // it here — before Services is ever touched — is enough.
+        Contention.ConnectionString = _database.GetConnectionString();
+
         // Bring the schema up the same way deployment does — through the migrations, not EnsureCreated.
         using var scope = Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.MigrateAsync();
@@ -72,6 +78,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>The SQL the application actually sent, for the promises that are about shape.</summary>
     public CommandRecorder Commands { get; } = new();
 
+    /// <summary>
+    /// Bumps the row under <c>RecordFailureAsync</c>'s compare-and-set out from under it, on
+    /// demand, so the contention test (Q-13a) can force the blind-increment fallback
+    /// deterministically instead of racing real concurrent workers.
+    /// </summary>
+    public ContentionForcer Contention { get; } = new();
+
+    /// <summary>Every log entry the application wrote during this run (Q-13a's contended=true line).</summary>
+    public LogRecorder Logs { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("ConnectionStrings:Default", _database.GetConnectionString());
@@ -87,11 +103,14 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 
             // EF Core picks up interceptors registered in the application's service provider.
             services.AddSingleton<IInterceptor>(Commands);
+            services.AddSingleton<IInterceptor>(Contention);
 
             // Test-only, and only here: it lets each test present its own apparent TCP peer so
             // the per-source registration limit does not make the suite share one counter.
             services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, TestPeerAddress>();
         });
+
+        builder.ConfigureLogging(logging => logging.AddProvider(Logs));
     }
 
     /// <summary>

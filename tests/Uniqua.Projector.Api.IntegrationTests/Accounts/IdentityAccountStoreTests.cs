@@ -222,9 +222,22 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
     {
         // N-09: once the retry budget is spent, the fallback's blind increment must be reported
         // honestly — the count the write actually landed as, never the `next` a stale earlier
-        // read predicted. Real, heavy concurrent writing against one row is what forces the
-        // compare-and-set to keep losing for the whole retry budget.
-        const int HammerWorkers = 4;
+        // read predicted.
+        //
+        // Q-13(a): the previous version of this test depended on real concurrent workers racing
+        // the call under test in real time, could fail with entirely correct code (it did once in
+        // the gate run that raised this finding), and never actually confirmed the fallback path
+        // had run at all — a bug that always took the uncontended, single-UPDATE path could still
+        // pass it by coincidence. ContentionForcer instead forces every one of the retry budget's
+        // compare-and-set attempts to lose deterministically, by bumping the row itself, on its
+        // own connection, immediately before each conditional UPDATE the store sends — no races,
+        // no busy-polling for the hammer to get ahead.
+        //
+        // IdentityAccountStore.MaxFailureWriteAttempts (IdentityAccountStore.cs:26) is 8 and is
+        // private, so it is restated here; a mismatch would mean the interceptor stopped matching
+        // the SQL shape the retry loop actually sends, which is exactly the thing this test must
+        // catch rather than silently pass around.
+        const int ExpectedRetryBudget = 8;
 
         Guid accountId;
         using (var setup = factory.Services.CreateScope())
@@ -232,40 +245,11 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
             accountId = (await CreateAccountAsync(Store(setup))).Id;
         }
 
-        using var stop = new CancellationTokenSource();
-        var hammer = Task.WhenAll(Enumerable.Range(0, HammerWorkers).Select(_ => Task.Run(async () =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                try
-                {
-                    await factory.ExecuteAsync(
-                        $"""
-                        UPDATE [dbo].[AspNetUsers]
-                        SET [AccessFailedCount] = [AccessFailedCount] + 1,
-                            [LastFailedAttemptAt] = SYSDATETIMEOFFSET()
-                        WHERE [Id] = '{accountId}';
-                        """);
-                }
-                catch (Exception)
-                {
-                    // A row briefly locked by the call under test is expected; the point of this
-                    // loop is to keep the row moving, not to win every single race.
-                }
-            }
-        })));
+        factory.Contention.Reset();
+        factory.Contention.TargetAccountId = accountId;
+        factory.Contention.Enabled = true;
+        factory.Logs.Clear();
 
-        // Let the hammer get well ahead before the call under test even starts, so its first
-        // round already loses and the row keeps moving throughout the retry budget rather than
-        // racing the thread pool's own warm-up.
-        while (await factory.ScalarAsync<int>(
-                   $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{accountId}'")
-               < 50)
-        {
-        }
-
-        // A deliberately stale seed: the row has already moved by the time this call starts, and
-        // the hammer above keeps moving it for the whole retry budget, so every round loses.
         int returned;
         using (var scope = factory.Services.CreateScope())
         {
@@ -273,20 +257,24 @@ public sealed class IdentityAccountStoreTests(ApiFactory factory)
                 accountId, 0, null, CancellationToken.None);
         }
 
-        // Stop the hammer the instant the call under test returns, then give any single write
-        // already in flight per worker time to land before reading — a small, bounded margin
-        // rather than an open-ended race.
-        stop.Cancel();
-        await hammer;
+        factory.Contention.Enabled = false;
+
+        // Every single conditional UPDATE the retry loop could possibly send was bumped out from
+        // under it, so the loop must have exhausted its whole retry budget before falling back.
+        Assert.Equal(ExpectedRetryBudget, factory.Contention.InterceptedAttempts);
 
         var stored = await factory.ScalarAsync<int>(
             $"SELECT [AccessFailedCount] FROM [dbo].[AspNetUsers] WHERE [Id] = '{accountId}'");
 
-        // At most one more write per hammer worker can have been in flight — already started,
-        // uncancellable — at the instant the call under test returned. A correct implementation
-        // never reports less than that band; the pre-fix bug reported a count computed long
-        // before the fallback write and regularly missed by far more than this band.
-        Assert.InRange(returned, stored - HammerWorkers, stored);
+        // The count the fallback reports must be the count actually stored — never the stale
+        // `next` a much earlier, already-superseded read predicted.
+        Assert.Equal(stored, returned);
+
+        // And it must have taken, and logged, the fallback path rather than merely landing on the
+        // right number by coincidence.
+        Assert.Contains(factory.Logs.Entries, entry =>
+            entry.Message.Contains("event=sign_in_failure_recorded", StringComparison.Ordinal)
+            && entry.Message.Contains("contended=true", StringComparison.Ordinal));
     }
 
     [Fact]

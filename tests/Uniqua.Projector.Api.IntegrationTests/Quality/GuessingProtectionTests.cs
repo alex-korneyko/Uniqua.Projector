@@ -96,6 +96,15 @@ public sealed class GuessingProtectionTests(ApiFactory factory)
         var capped = responses.Count(response => response.StatusCode == HttpStatusCode.TooManyRequests);
 
         Assert.Equal(burst - SignInRateLimit.PermittedFailuresPerWindow, capped);
+
+        // Q-13(b): counting only the 429s left every other status code unexamined, so a bug that
+        // let a refused attempt through as something other than the ordinary wrong-password 401
+        // (a 500 from the reservation racing its own release, for instance) would still pass this
+        // test as long as the 429 count came out right. Every response that was not throttled must
+        // be the ordinary, unauthenticated refusal — nothing else.
+        Assert.All(
+            responses.Where(response => response.StatusCode != HttpStatusCode.TooManyRequests),
+            response => Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode));
     }
 
     [Fact]
