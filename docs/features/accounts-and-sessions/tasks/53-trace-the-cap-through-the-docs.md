@@ -20,7 +20,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — P-03, P-04, Q-10, Q-15"
-status: "todo"
+status: "done"
 ---
 
 # T53 — Trace the sign-in cap through sad, test-plan, session rules and README, fix the boundary rows, and retire the registration-only wording

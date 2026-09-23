@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — Q-11, Q-12"
-status: "todo"
+status: "done"
 ---
 
 # T50 — Prove the sign-in cap's claims end to end, and make the two tests that could not fail discriminating
