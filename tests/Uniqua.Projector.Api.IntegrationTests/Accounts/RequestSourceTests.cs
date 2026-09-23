@@ -74,6 +74,81 @@ public sealed class RequestSourceTests
             + "rotation among them) must not grow this without bound.");
     }
 
+    // ---- T-01 (review 2026-09-23 third re-review): the forced prune and the ceiling log line ------
+    // ---- are both throttled once the limiter sits at capacity -------------------------------------
+
+    [Fact]
+    public void At_capacity_a_flood_of_new_keys_within_one_interval_logs_the_ceiling_at_most_once()
+    {
+        // T-01: before the fix, every one of these 1,000 new-key attempts at capacity ran its own
+        // unthrottled forced PruneExpired over all 100,000 tracked entries and wrote its own
+        // tracked_source_ceiling_reached line. The fix claims the forced prune through a
+        // compare-and-set like PruneIfDue's, at most once per a short named interval, so the
+        // ceiling is logged at most once per window — carrying how many keys went untracked since
+        // the last line — rather than once per request.
+        var clock = new TestClock();
+        var logger = new RecordingLogger<RegistrationRateLimit>();
+        var limit = new RegistrationRateLimit(clock, logger);
+
+        const int capacity = 100_000;
+        for (var source = 0; source < capacity; source++)
+        {
+            limit.Reserve($"fill-{source}");
+        }
+
+        Assert.Equal(capacity, limit.TrackedSourceCount);
+
+        const int flood = 1_000;
+        for (var source = 0; source < flood; source++)
+        {
+            var reservation = limit.Reserve($"flood-{source}");
+
+            // Fail-open at the ceiling is unchanged: a new key past capacity is still permitted,
+            // just not tracked.
+            Assert.True(reservation.IsPermitted);
+        }
+
+        var ceilingLines = logger.Entries
+            .Count(entry => entry.Message.Contains(
+                "tracked_source_ceiling_reached", StringComparison.Ordinal));
+
+        Assert.True(
+            ceilingLines <= 1,
+            $"{ceilingLines} separate tracked_source_ceiling_reached lines were logged for {flood} "
+            + "new keys inside one window; T-01 asks for at most one line per window, carrying how "
+            + "many keys went untracked since the last one, not one line per refused request.");
+    }
+
+    [Fact]
+    public void A_key_is_tracked_again_once_the_clock_passes_the_window()
+    {
+        var clock = new TestClock();
+        var limit = new RegistrationRateLimit(clock);
+
+        const int capacity = 100_000;
+        for (var source = 0; source < capacity; source++)
+        {
+            limit.Reserve($"fill-{source}");
+        }
+
+        Assert.Equal(capacity, limit.TrackedSourceCount);
+
+        var atCeiling = limit.Reserve("still-at-ceiling");
+        Assert.True(atCeiling.IsPermitted);
+        Assert.Equal(capacity, limit.TrackedSourceCount);
+
+        clock.Advance(RegistrationRateLimit.Window + TimeSpan.FromSeconds(1));
+
+        var afterWindow = limit.Reserve("tracked-again");
+        Assert.True(afterWindow.IsPermitted);
+
+        Assert.True(
+            limit.TrackedSourceCount < capacity,
+            $"after the window passed, {limit.TrackedSourceCount} sources were still tracked "
+            + $"against a ceiling of {capacity}; a new key must be tracked again once expired "
+            + "entries are reclaimed.");
+    }
+
     // ---- Helpers -------------------------------------------------------------------------------
 
     private static string SourceOf(string remoteAddress)

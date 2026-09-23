@@ -29,12 +29,35 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     /// </summary>
     internal const int Capacity = 100_000;
 
+    /// <summary>
+    /// How long the forced prune at <see cref="Capacity"/> and the ceiling log line it can trigger
+    /// are each throttled to at most once per, so a limiter kept full costs one scan and one log
+    /// line per interval rather than one of each per request (review 2026-09-23 third re-review
+    /// T-01).
+    /// </summary>
+    private static readonly TimeSpan ForcedPruneInterval = TimeSpan.FromSeconds(1);
+
     private readonly ConcurrentDictionary<string, List<DateTimeOffset>> _entries = new();
 
     private long _lastPrunedAtTicks;
+    private long _lastForcedPruneAtTicks;
+    private long _lastCeilingLoggedAtTicks;
+
+    /// <summary>
+    /// An approximate count kept with <see cref="Interlocked"/> on add and remove, rather than
+    /// <see cref="ConcurrentDictionary{TKey,TValue}.Count"/>, which takes every bucket's lock in
+    /// turn — a cost this type used to pay on every reserve once it sat at <see cref="Capacity"/>
+    /// (review 2026-09-23 third re-review T-01). Approximate because a release racing a prune can
+    /// leave it briefly off by one; the ceiling check below tolerates that the same way it already
+    /// tolerated a stale read of <c>_entries.Count</c>.
+    /// </summary>
+    private long _trackedSourceCount;
+
+    /// <summary>How many keys were turned away, uncounted, since the last ceiling line was logged.</summary>
+    private long _untrackedSinceLastCeilingLog;
 
     /// <summary>How many sources currently hold a slot. For tests and for anyone watching memory.</summary>
-    public int TrackedSourceCount => _entries.Count;
+    public int TrackedSourceCount => (int)Interlocked.Read(ref _trackedSourceCount);
 
     /// <summary>
     /// Holds one of this source's slots for an attempt about to be made, or says how long until one
@@ -52,27 +75,41 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
         var now = clock.UtcNow;
         PruneIfDue(now);
 
-        if (!_entries.ContainsKey(source) && _entries.Count >= Capacity)
+        if (!_entries.ContainsKey(source) && TrackedSourceCount >= Capacity)
         {
             // The periodic prune above runs at most once a window; force an immediate reclaim of
-            // whatever has already expired before turning a new source away for good.
-            PruneExpired(now);
+            // whatever has already expired before turning a new source away for good. Throttled
+            // the same way the periodic prune is (review 2026-09-23 third re-review T-01): a
+            // limiter kept full by a flood of new keys must cost one scan per interval, not one
+            // per request.
+            ForcePruneIfDue(now);
         }
 
-        if (!_entries.ContainsKey(source) && _entries.Count >= Capacity)
+        if (!_entries.ContainsKey(source) && TrackedSourceCount >= Capacity)
         {
             // Not tracked at all rather than refused: refusing would need a slot to refuse *from*,
             // and there is none left to give this source. Permitted and uncounted, exactly as
-            // InMemoryUnknownAddressAttempts treats an address past its own capacity.
-            logger.LogError(
-                "module=accounts event=tracked_source_ceiling_reached "
-                + "consequence=source_not_rate_limited ceiling={Ceiling}",
-                Capacity);
+            // InMemoryUnknownAddressAttempts treats an address past its own capacity. Logged at
+            // most once per interval too, carrying how many keys were turned away since the last
+            // line (review 2026-09-23 third re-review T-01) rather than once per refused request.
+            LogCeilingReachedIfDue(now);
             return RateLimitDecision.Permitted(now);
         }
 
         var windowOpenedAt = now - window;
-        var entries = _entries.GetOrAdd(source, _ => []);
+        var isNewSource = false;
+        var entries = _entries.GetOrAdd(
+            source,
+            _ =>
+            {
+                isNewSource = true;
+                return [];
+            });
+
+        if (isNewSource)
+        {
+            Interlocked.Increment(ref _trackedSourceCount);
+        }
 
         lock (entries)
         {
@@ -121,9 +158,10 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
         lock (entries)
         {
             entries.Remove(reservation.ReservedAt);
-            if (entries.Count is 0)
+            if (entries.Count is 0
+                && _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries)))
             {
-                _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries));
+                Interlocked.Decrement(ref _trackedSourceCount);
             }
         }
     }
@@ -146,6 +184,51 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
     }
 
     /// <summary>
+    /// Throttles the forced reclaim <see cref="Reserve"/> runs before turning away a new source at
+    /// <see cref="Capacity"/> to at most once per <see cref="ForcedPruneInterval"/>, the same
+    /// compare-and-set shape as <see cref="PruneIfDue"/> — otherwise a flood of new keys while the
+    /// limiter sits at capacity pays for a full scan, locking every bucket, on every single request
+    /// (review 2026-09-23 third re-review T-01).
+    /// </summary>
+    private void ForcePruneIfDue(DateTimeOffset now)
+    {
+        var last = Interlocked.Read(ref _lastForcedPruneAtTicks);
+        if (now.UtcTicks - last < ForcedPruneInterval.Ticks
+            || Interlocked.CompareExchange(ref _lastForcedPruneAtTicks, now.UtcTicks, last) != last)
+        {
+            return;
+        }
+
+        PruneExpired(now);
+    }
+
+    /// <summary>
+    /// Logs <c>tracked_source_ceiling_reached</c> at most once per <see cref="ForcedPruneInterval"/>,
+    /// the same throttle shape as <see cref="ForcePruneIfDue"/>, carrying how many keys were turned
+    /// away uncounted since the previous line rather than writing one line per refused request
+    /// (review 2026-09-23 third re-review T-01).
+    /// </summary>
+    private void LogCeilingReachedIfDue(DateTimeOffset now)
+    {
+        Interlocked.Increment(ref _untrackedSinceLastCeilingLog);
+
+        var last = Interlocked.Read(ref _lastCeilingLoggedAtTicks);
+        if (now.UtcTicks - last < ForcedPruneInterval.Ticks
+            || Interlocked.CompareExchange(ref _lastCeilingLoggedAtTicks, now.UtcTicks, last) != last)
+        {
+            return;
+        }
+
+        var untrackedSinceLastLine = Interlocked.Exchange(ref _untrackedSinceLastCeilingLog, 0);
+        logger.LogError(
+            "module=accounts event=tracked_source_ceiling_reached "
+            + "consequence=source_not_rate_limited ceiling={Ceiling} "
+            + "untracked_since_last_line={UntrackedSinceLastLine}",
+            Capacity,
+            untrackedSinceLastLine);
+    }
+
+    /// <summary>
     /// Removes every entry whose window has already closed, right now rather than waiting for the
     /// periodic sweep above — the forced reclaim <see cref="Reserve"/> runs before turning away a
     /// new source at <see cref="Capacity"/>, so a source count only looks exhausted because nothing
@@ -160,10 +243,11 @@ internal sealed class SlidingWindowLimiter(IClock clock, int permittedPerWindow,
             lock (entries)
             {
                 entries.RemoveAll(recorded => recorded <= windowOpenedAt);
-                if (entries.Count is 0)
+                if (entries.Count is 0
+                    && _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries)))
                 {
                     // Only this exact list, so a slot reserved concurrently is never thrown away.
-                    _entries.TryRemove(new KeyValuePair<string, List<DateTimeOffset>>(source, entries));
+                    Interlocked.Decrement(ref _trackedSourceCount);
                 }
             }
         }
