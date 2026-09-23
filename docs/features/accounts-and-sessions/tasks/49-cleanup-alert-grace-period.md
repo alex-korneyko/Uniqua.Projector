@@ -10,7 +10,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — Q-09"
-status: "todo"
+status: "done"
 ---
 
 # T49 — Raise the stale-cleanup alert after a short grace period when no sweep has ever succeeded

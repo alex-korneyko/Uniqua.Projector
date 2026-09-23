@@ -16,7 +16,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — P-01"
-status: "todo"
+status: "done"
 ---
 
 # T46 — Count failed sign-ins per source and address with a looser per-source ceiling, and skip the cap for an unresolved source

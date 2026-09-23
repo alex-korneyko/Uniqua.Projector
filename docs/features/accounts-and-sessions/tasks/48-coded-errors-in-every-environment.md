@@ -13,7 +13,7 @@ files_hint:
 owner: "Alex Korneiko"
 estimate: "S"
 origin: "review 2026-09-23 (second re-review) — P-05"
-status: "todo"
+status: "done"
 ---
 
 # T48 — Give a malformed body its declared problem in every environment, and declare coded 500 and 415 problems

@@ -50,10 +50,10 @@
 | T43 | Move keyboard focus to the new form when switching between sign-in and registration | ui | Alex Korneiko | S | T36 | done |
 | T44 | Darken the input border and focus-ring tokens to at least 3:1 against the background | ui | Alex Korneiko | S | — | done |
 | T45 | Remove the tracked crash dump and bring every task file status in line with the tracker | config | Alex Korneiko | S | T35, T36, T37, T38, T39, T40, T41, T42, T43, T44 | done |
-| T46 | Count failed sign-ins per source and address with a looser per-source ceiling, and skip the cap for an unresolved source | ports | Alex Korneiko | S | — | todo |
+| T46 | Count failed sign-ins per source and address with a looser per-source ceiling, and skip the cap for an unresolved source | ports | Alex Korneiko | S | — | done |
 | T47 | Normalise request sources (IPv4-mapped to IPv4, IPv6 to its /64) and bound how many sources a limiter tracks | ports | Alex Korneiko | S | T46 | todo |
-| T48 | Give a malformed body its declared problem in every environment, and declare coded 500 and 415 problems | ports | Alex Korneiko | S | — | todo |
-| T49 | Raise the stale-cleanup alert after a short grace period when no sweep has ever succeeded | infra | Alex Korneiko | S | — | todo |
+| T48 | Give a malformed body its declared problem in every environment, and declare coded 500 and 415 problems | ports | Alex Korneiko | S | — | done |
+| T49 | Raise the stale-cleanup alert after a short grace period when no sweep has ever succeeded | infra | Alex Korneiko | S | — | done |
 | T50 | Prove the sign-in cap's claims end to end, and make the two tests that could not fail discriminating | tests | Alex Korneiko | S | T46, T47 | todo |
 | T51 | Make the contention test, the test clock and the test peer addresses deterministic | tests | Alex Korneiko | S | T50 | todo |
 | T52 | Re-baseline the sign-in throughput regression check so it measures a regression, not machine noise | tests | Alex Korneiko | S | — | todo |
