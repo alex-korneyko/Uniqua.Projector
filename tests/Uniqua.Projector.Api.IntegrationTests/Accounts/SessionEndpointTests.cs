@@ -428,6 +428,63 @@ public sealed class SessionEndpointTests(ApiFactory factory)
     }
 
     [Fact]
+    public async Task A_per_address_refusal_logs_which_cap_refused_it()
+    {
+        // review 2026-09-23 (third re-review) S-04: sad §7 lists which cap refused each sign-in as
+        // a monitored metric, so a refusal by the tighter per-(source, address) pair must be
+        // distinguishable in the log from one by the looser per-source ceiling. The 429 body itself
+        // stays silent about which cap fired (AC-12) — only the log line carries it.
+        factory.Clock.Reset();
+        var account = await ARegisteredAccountAsync();
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerWindow; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions, new { email = account.Email, password = "not-the-password" });
+        }
+
+        factory.Logs.Clear();
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions, new { email = account.Email, password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+        Assert.Contains(factory.Logs.Entries, entry =>
+            entry.Message.Contains("event=sign_in_rate_limited", StringComparison.Ordinal)
+            && entry.Message.Contains("cap=per_address", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_per_source_refusal_logs_which_cap_refused_it()
+    {
+        // The mirror of the per-address case above: once the looser per-source ceiling itself is
+        // what refuses the attempt — none of the individual addresses alone reached the
+        // per-address cap — the log line must name that cap instead, so sad §7's per-cap breakdown
+        // can be built from the logs without re-deriving it from the request shape.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+
+        for (var attempt = 0; attempt < SignInRateLimit.PermittedFailuresPerSourceWindow; attempt++)
+        {
+            await client.PostAsJsonAsync(
+                Sessions,
+                new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+        }
+
+        factory.Logs.Clear();
+
+        var capped = await client.PostAsJsonAsync(
+            Sessions,
+            new { email = $"{Guid.NewGuid():N}@example.test", password = "not-the-password" });
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, capped.StatusCode);
+        Assert.Contains(factory.Logs.Entries, entry =>
+            entry.Message.Contains("event=sign_in_rate_limited", StringComparison.Ordinal)
+            && entry.Message.Contains("cap=per_source", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task An_unknown_source_is_never_capped()
     {
         // review 2026-09-23 P-01: when RequestSource.Of cannot resolve a source (RemoteIpAddress

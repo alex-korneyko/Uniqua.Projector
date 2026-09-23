@@ -121,8 +121,11 @@ public static class AccountEndpoints
             }
             else if (!reservation.IsPermitted)
             {
+                // review 2026-09-23 (third re-review) S-04: sad §7's per-cap breakdown is built
+                // from this field — the 429 body itself stays silent about which cap fired.
+                var cap = reservation.Cap == SignInRateLimitCap.PerAddress ? "per_address" : "per_source";
                 logger.LogWarning(
-                    "module=accounts event=sign_in_rate_limited source={Source}", source);
+                    "module=accounts event=sign_in_rate_limited source={Source} cap={Cap}", source, cap);
 
                 await context.WriteAccountProblemAsync(
                     "accounts.sign_in_rate_limited", reservation.RetryAfterSeconds);

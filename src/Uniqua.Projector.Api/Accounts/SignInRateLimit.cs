@@ -120,7 +120,7 @@ public sealed class SignInRateLimit
         var sourceDecision = _perSource.Reserve(source);
         if (!sourceDecision.IsPermitted)
         {
-            return SignInReservation.Refused(sourceDecision.RetryAfterSeconds);
+            return SignInReservation.Refused(sourceDecision.RetryAfterSeconds, SignInRateLimitCap.PerSource);
         }
 
         var addressKey = CompoundKey(source, email);
@@ -130,7 +130,7 @@ public sealed class SignInRateLimit
             // The per-source slot just reserved must not outlive an attempt the per-address cap
             // refuses on its own.
             _perSource.Release(source, sourceDecision);
-            return SignInReservation.Refused(addressDecision.RetryAfterSeconds);
+            return SignInReservation.Refused(addressDecision.RetryAfterSeconds, SignInRateLimitCap.PerAddress);
         }
 
         return SignInReservation.Permitted(source, addressKey, sourceDecision, addressDecision);
@@ -181,6 +181,11 @@ public sealed class SignInRateLimit
 /// <param name="AddressKey">The compound key the per-address slot was reserved under, or <c>null</c> if refused or skipped.</param>
 /// <param name="SourceDecision">The per-source slot to hand back on <see cref="SignInRateLimit.Release"/>.</param>
 /// <param name="AddressDecision">The per-address slot to hand back on <see cref="SignInRateLimit.Release"/>.</param>
+/// <param name="Cap">
+/// Which cap refused the attempt (review 2026-09-23 (third re-review) S-04), or <c>null</c> if the
+/// attempt was permitted or the cap was skipped. Logged so sad §7's per-cap breakdown can be built
+/// from the logs; never put in the 429 body, which stays silent about which cap fired.
+/// </param>
 public readonly record struct SignInReservation(
     bool IsPermitted,
     int RetryAfterSeconds,
@@ -188,14 +193,28 @@ public readonly record struct SignInReservation(
     string? Source,
     string? AddressKey,
     RateLimitDecision SourceDecision,
-    RateLimitDecision AddressDecision)
+    RateLimitDecision AddressDecision,
+    SignInRateLimitCap? Cap)
 {
     public static SignInReservation Permitted(
         string source, string addressKey, RateLimitDecision sourceDecision, RateLimitDecision addressDecision) =>
-        new(true, 0, false, source, addressKey, sourceDecision, addressDecision);
+        new(true, 0, false, source, addressKey, sourceDecision, addressDecision, null);
 
-    public static SignInReservation Refused(int retryAfterSeconds) =>
-        new(false, retryAfterSeconds, false, null, null, default, default);
+    public static SignInReservation Refused(int retryAfterSeconds, SignInRateLimitCap cap) =>
+        new(false, retryAfterSeconds, false, null, null, default, default, cap);
 
-    public static SignInReservation SkippedCap() => new(true, 0, true, null, null, default, default);
+    public static SignInReservation SkippedCap() => new(true, 0, true, null, null, default, default, null);
+}
+
+/// <summary>
+/// Which of <see cref="SignInRateLimit"/>'s two caps refused a sign-in attempt
+/// (review 2026-09-23 (third re-review) S-04).
+/// </summary>
+public enum SignInRateLimitCap
+{
+    /// <summary>The tighter per-(source, address) pair cap, <see cref="SignInRateLimit.PermittedFailuresPerWindow"/>.</summary>
+    PerAddress,
+
+    /// <summary>The looser per-source ceiling across every address, <see cref="SignInRateLimit.PermittedFailuresPerSourceWindow"/>.</summary>
+    PerSource,
 }
