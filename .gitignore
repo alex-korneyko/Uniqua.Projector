@@ -21,15 +21,13 @@ src/Uniqua.Projector.Api/appsettings.*.*.json
 # Build output
 [Bb]in/
 [Oo]bj/
-[Dd]ebug/
-[Rr]elease/
 x64/
 x86/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
-[Ll]og/
-[Ll]ogs/
-artifacts/
+/[Ll]og/
+/[Ll]ogs/
+/artifacts/
 publish/
 *.binlog
 
@@ -46,8 +44,8 @@ publish/
 # MSBuild / NuGet
 *.nupkg
 *.snupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
+/[Pp]ackages/*
+!/[Pp]ackages/build/
 *.nuget.props
 *.nuget.targets
 project.lock.json
@@ -116,7 +114,7 @@ lerna-debug.log*
 # JetBrains Rider / ReSharper (per-user files)
 ###############################################################################
 
-# The whole .idea folder is per-user here; team settings live in *.sln.DotSettings
+# The whole .idea folder is per-user here; team settings live in *.slnx.DotSettings
 .idea/
 *.iml
 *.ipr
