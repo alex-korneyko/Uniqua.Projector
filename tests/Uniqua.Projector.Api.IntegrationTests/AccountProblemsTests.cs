@@ -65,8 +65,14 @@ public sealed class AccountProblemsTests
     [InlineData("api.request_too_large", 413,
         "The request body is too large",
         "The request body is larger than this server accepts.")]
+    // review of T58, finding 2: every other 4xx a request can be rejected with before it reaches an
+    // endpoint (a body that trickles in too slowly is 408; 411 and 431 are similar) is one declared
+    // family whose status is the rejection's own, not a fixed one — so the row declares none.
+    [InlineData("api.request_rejected", null,
+        "The request was rejected",
+        "The request could not be accepted as it was sent.")]
     public void Each_contract_code_is_published_exactly_as_the_contract_states(
-        string code, int status, string title, string detail)
+        string code, int? status, string title, string detail)
     {
         var problem = AccountProblems.For(code);
 
@@ -97,6 +103,7 @@ public sealed class AccountProblemsTests
             "accounts.request_malformed",
             "api.unexpected",
             "api.request_too_large",
+            "api.request_rejected",
         ];
 
         Assert.Equal(declared.Order(), AccountProblems.Codes.Order());

@@ -1,10 +1,13 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -139,9 +142,54 @@ public sealed class RequestShapeTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
         var code = await CodeOfAsync(response);
-        Assert.NotNull(code);
-        Assert.NotEqual("api.unexpected", code);
+        Assert.Equal("api.request_too_large", code);
         Assert.Equal(AccountProblems.For(code!).Status, (int)response.StatusCode);
+    }
+
+    [Theory]
+    [InlineData(408)]
+    [InlineData(411)]
+    [InlineData(431)]
+    public async Task A_thrown_rejection_other_than_413_answers_its_own_status_as_a_coded_problem(
+        int status)
+    {
+        // review of T58, finding 2: only 413 had a code, so every other 4xx BadHttpRequestException
+        // — a body trickling in below Kestrel's MinRequestBodyDataRate throws one carrying 408, and
+        // 411 and 431 are similar — still fell through to event=unhandled_exception and a 500
+        // api.unexpected. A test-only endpoint throws one directly, since none of these is cheap or
+        // deterministic to provoke through a real socket.
+        await using var development = new DevelopmentApiFactory(factory.ConnectionString);
+        var client = development.CreateClient();
+
+        var response = await client.GetAsync($"{TestOnlyRejections.ThrowPath}?status={status}");
+
+        Assert.Equal(status, (int)response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("api.request_rejected", await CodeOfAsync(response));
+        Assert.Equal(status, await StatusMemberOfAsync(response));
+        AssertLoggedAsARejectionNotAnOutage(development, status);
+    }
+
+    [Theory]
+    [InlineData(408)]
+    [InlineData(411)]
+    [InlineData(431)]
+    public async Task A_bare_rejection_status_other_than_413_answers_a_coded_problem(int status)
+    {
+        // review of T58, finding 2, the other path: where the framework catches the rejection itself
+        // and completes with a bare status (the path the 413 above takes), UseStatusCodePages writes
+        // the body through the CustomizeProblemDetails hook — which used to add a code for 400, 415
+        // and 413 only, so a 408 shipped with no `code` at all, although Problem.required names it.
+        await using var development = new DevelopmentApiFactory(factory.ConnectionString);
+        var client = development.CreateClient();
+
+        var response = await client.GetAsync($"{TestOnlyRejections.StatusPath}?status={status}");
+
+        Assert.Equal(status, (int)response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("api.request_rejected", await CodeOfAsync(response));
+        Assert.Equal(status, await StatusMemberOfAsync(response));
+        AssertLoggedAsARejectionNotAnOutage(development, status);
     }
 
     // ---- Helpers ------------------------------------------------------------------------------
@@ -234,6 +282,71 @@ public sealed class RequestShapeTests(ApiFactory factory)
             : null;
     }
 
+    private static async Task<int?> StatusMemberOfAsync(HttpResponseMessage response)
+    {
+        var body = await response.Content.ReadAsStringAsync();
+
+        return JsonDocument.Parse(body).RootElement.TryGetProperty("status", out var status)
+            ? status.GetInt32()
+            : null;
+    }
+
+    /// <summary>
+    /// A rejected request is a routine client mistake: logged at Warning as event=request_rejected
+    /// with its own status, so the traceId in the response has a line behind it, but never as an
+    /// error and never tagged event=unhandled_exception.
+    /// </summary>
+    private static void AssertLoggedAsARejectionNotAnOutage(DevelopmentApiFactory factory, int status)
+    {
+        Assert.DoesNotContain(
+            factory.Logs.Entries,
+            entry => entry.Level >= LogLevel.Error
+                || entry.Message.Contains("event=unhandled_exception", StringComparison.Ordinal));
+        Assert.Contains(
+            factory.Logs.Entries,
+            entry => entry.Level == LogLevel.Warning
+                && entry.Message.Contains("event=request_rejected", StringComparison.Ordinal)
+                && entry.Message.Contains($"status={status}", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Test-only endpoints, appended after the application's own pipeline (so still inside its one
+    /// exception handler and its status-code pages) by <see cref="DevelopmentApiFactory"/>. The
+    /// paths end in a file extension so the client fallback route (<c>{*path:nonfile}</c>) never
+    /// claims them first.
+    /// </summary>
+    private sealed class TestOnlyRejections : IStartupFilter
+    {
+        /// <summary>Throws a <see cref="Microsoft.AspNetCore.Http.BadHttpRequestException"/> carrying <c>?status=</c>.</summary>
+        public const string ThrowPath = "/test-only/throw-rejection.test";
+
+        /// <summary>Completes with a bare <c>?status=</c> and no body, as the framework's own binding does.</summary>
+        public const string StatusPath = "/test-only/bare-rejection.test";
+
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            next(app);
+            app.Use(async (context, nextMiddleware) =>
+            {
+                if (context.Request.Path == ThrowPath)
+                {
+                    throw new Microsoft.AspNetCore.Http.BadHttpRequestException("Test-only rejection.", StatusOf(context));
+                }
+
+                if (context.Request.Path == StatusPath)
+                {
+                    context.Response.StatusCode = StatusOf(context);
+                    return;
+                }
+
+                await nextMiddleware(context);
+            });
+        };
+
+        private static int StatusOf(HttpContext context) =>
+            int.Parse(context.Request.Query["status"].ToString(), CultureInfo.InvariantCulture);
+    }
+
     /// <summary>
     /// A second, throwaway application over the same database, booted as Development — the one
     /// environment minimal APIs treat differently for a malformed body (ThrowOnBadRequest=true).
@@ -261,6 +374,8 @@ public sealed class RequestShapeTests(ApiFactory factory)
             builder.UseSetting("ConnectionStrings:Default", _connectionString);
             builder.UseEnvironment("Development");
             builder.ConfigureLogging(logging => logging.AddProvider(Logs));
+            builder.ConfigureServices(services =>
+                services.AddSingleton<IStartupFilter, TestOnlyRejections>());
         }
     }
 

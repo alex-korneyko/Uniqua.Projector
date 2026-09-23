@@ -182,6 +182,10 @@ paths:
                 detail: "Too many accounts have been created from here in the past minute."
                 code: "accounts.registration_rate_limited"
                 retry_after_seconds: 37
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
         "500":
           $ref: "#/components/responses/Unexpected"
 
@@ -312,6 +316,10 @@ paths:
                 detail: "Too many failed sign-in attempts have come from here recently."
                 code: "accounts.sign_in_rate_limited"
                 retry_after_seconds: 412
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
         "500":
           $ref: "#/components/responses/Unexpected"
 
@@ -408,6 +416,46 @@ components:
             status: 500
             detail: "An unexpected error occurred."
             code: "api.unexpected"
+
+    RequestTooLarge:
+      description: |
+        The request body is larger than this server accepts — enforced by Kestrel's own
+        `MaxRequestBodySize`, ahead of any routing, so the refusal is feature-neutral (`api.*`, not
+        `accounts.*`) and any operation that takes a body can answer it. Answered with this same
+        coded 413 in every environment, Development included, and logged at Warning as
+        `event=request_rejected`, never as an unhandled exception (review 2026-09-23 (third
+        re-review) T-02; review of T58, finding 1).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/api/request-too-large"
+            title: "The request body is too large"
+            status: 413
+            detail: "The request body is larger than this server accepts."
+            code: "api.request_too_large"
+
+    RequestRejected:
+      description: |
+        The request was rejected before any endpoint read it, with a 4xx status no more specific
+        response on this operation declares — for example 408 when the body trickles in below
+        Kestrel's `MinRequestBodyDataRate`, 411, 414 or 431. One feature-neutral family rather than
+        a row per status: `status` (and the response status) is the rejection's own 4xx, while
+        `type`, `title`, `detail` and `code` are fixed. A 400 or 415 on this operation is still the
+        declared 400 `accounts.request_malformed` and a 413 is `RequestTooLarge`; this family
+        covers the rest, in every environment, Development included, logged at Warning as
+        `event=request_rejected` rather than as an unhandled exception (review of T58, finding 2).
+        A rejection Kestrel answers before the request reaches this application at all (a
+        malformed request line, say) has no body of this shape.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/api/request-rejected"
+            title: "The request was rejected"
+            status: 408
+            detail: "The request could not be accepted as it was sent."
+            code: "api.request_rejected"
 
     SessionNotRecognised:
       description: |

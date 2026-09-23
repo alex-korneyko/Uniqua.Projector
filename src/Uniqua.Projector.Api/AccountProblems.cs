@@ -62,6 +62,15 @@ public static class AccountProblems
         // by Kestrel itself, ahead of any accounts or sessions routing.
         Row("api.request_too_large", 413, "The request body is too large",
             "The request body is larger than this server accepts."),
+
+        // review of T58, finding 2: every other 4xx a request can be rejected with before any
+        // endpoint reads it — a body trickling in below Kestrel's MinRequestBodyDataRate is 408,
+        // and 411, 414 and 431 are similar — is one declared family rather than a row per status,
+        // so a rejection nobody listed still cannot fall through to the generic 500. Its status is
+        // the rejection's own (openapi.yaml components/responses/RequestRejected), so the row
+        // declares none and only WriteRequestRejectedAsync can write it.
+        Row("api.request_rejected", status: null, "The request was rejected",
+            "The request could not be accepted as it was sent."),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>
@@ -81,7 +90,7 @@ public static class AccountProblems
 
     private static AccountProblem Row(
         string code,
-        int status,
+        int? status,
         string title,
         string detail,
         bool carriesRetryAfter = false) =>
@@ -91,7 +100,10 @@ public static class AccountProblems
 
 /// <summary>One row of the wording table — an RFC 9457 problem type this feature can return.</summary>
 /// <param name="Code">The <c>accounts.*</c> extension member.</param>
-/// <param name="Status">The HTTP status the contract pairs with this code.</param>
+/// <param name="Status">
+/// The HTTP status the contract pairs with this code, or <see langword="null"/> for the one family
+/// (<c>api.request_rejected</c>) whose status is the rejected request's own 4xx rather than fixed.
+/// </param>
 /// <param name="Title">The short summary of the problem type.</param>
 /// <param name="Detail">The plain-language reason — fixed per code, never an echo of input.</param>
 /// <param name="Type">The URI identifying the problem type.</param>
@@ -101,7 +113,7 @@ public static class AccountProblems
 /// </param>
 public sealed record AccountProblem(
     string Code,
-    int Status,
+    int? Status,
     string Title,
     string Detail,
     string Type,
