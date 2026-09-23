@@ -43,6 +43,13 @@ public sealed class ExpiredSessionCleanupService(
     public static readonly TimeSpan StaleGracePeriod = TimeSpan.FromHours(1);
 
     /// <summary>
+    /// Added to <see cref="StaleGracePeriod"/> when scheduling the one extra pre-first-success
+    /// check in <see cref="TimeUntilStaleGraceCheck"/>, so the check falls a little after the
+    /// grace deadline rather than exactly on it.
+    /// </summary>
+    public static readonly TimeSpan GraceCheckMargin = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// flow 7's idempotency guard. The work has no key of its own, so two overlapping runs would
     /// simply issue the same delete against the same rows.
     /// </summary>
@@ -50,8 +57,10 @@ public sealed class ExpiredSessionCleanupService(
 
     /// <summary>
     /// When this instance was constructed — the fallback staleness baseline for a process that has
-    /// never yet succeeded, so a first sweep failing right at startup does not read as 48 hours
-    /// overdue (review 2026-09-22 re-review, N-08).
+    /// never yet succeeded, measured against the short <see cref="StaleGracePeriod"/> rather than
+    /// the full <see cref="HealthyInterval"/>, so a first sweep failing right at startup does not
+    /// read as stale (review 2026-09-22 re-review, N-08), while a process old enough to have missed
+    /// the grace period still does (review 2026-09-23 second re-review, Q-09).
     /// </summary>
     private readonly DateTimeOffset _startedAt = clock.UtcNow;
 
@@ -143,11 +152,48 @@ public sealed class ExpiredSessionCleanupService(
         }
     }
 
+    /// <summary>
+    /// How long until the one extra check owed to a process that has not yet had a successful
+    /// sweep: <see cref="StaleGracePeriod"/> plus <see cref="GraceCheckMargin"/> since this
+    /// instance was constructed, clamped to zero once that instant has passed. <see
+    /// cref="ExecuteAsync"/> waits this long — not the full 24-hour <see cref="Interval"/> — before
+    /// its second attempt, so an instance restarted more often than every 24 hours still lives long
+    /// enough to run, and be checked for staleness by <see cref="RaiseAlertIfStale"/>, before the
+    /// next restart (review 2026-09-23 second re-review, Q-09: measuring this only at the end of
+    /// each run left the sad §6 flow 7 alert unreachable for exactly that instance). Public so the
+    /// scheduling decision can be proven correct on its own, without waiting on a real timer.
+    /// </summary>
+    public TimeSpan TimeUntilStaleGraceCheck()
+    {
+        var remaining = _startedAt + StaleGracePeriod + GraceCheckMargin - clock.UtcNow;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // The startup run first: the common case is a redeploy, and waiting a day after each one
         // would mean the sweep effectively never ran on a frequently-deployed service.
         await SweepAsync(stoppingToken);
+
+        if (LastSucceededAt is null)
+        {
+            // Nothing has succeeded yet: give it one more try around the short grace period
+            // instead of only ever trying again a full Interval later, which an instance
+            // restarted more often than every 24 hours would never live long enough to reach.
+            try
+            {
+                await clock.DelayAsync(TimeUntilStaleGraceCheck(), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                await SweepAsync(stoppingToken);
+            }
+        }
 
         using var timer = new PeriodicTimer(Interval);
 

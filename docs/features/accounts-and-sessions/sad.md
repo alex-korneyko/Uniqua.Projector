@@ -459,7 +459,7 @@ sequenceDiagram
     Infra-->>Cleanup: Rows removed
     Cleanup->>Cleanup: Record the count and the time this run succeeded, for the section 7 monitoring
     Note over Cleanup,Infra: A failed run is not retried immediately - it is simply attempted again at the next start or the next day, because the sweep is idempotent and a missed run costs nothing but table size
-    alt No run has succeeded for more than 48 hours
+    alt No run has succeeded for more than 48 hours, or, if no run has ever succeeded, for more than a short grace period (about an hour) since the instance started
         Cleanup->>Ops: Raise the section 7 alert
         Note over Cleanup,Ops: There is no dead-letter queue and nothing to replay - the operator is the escalation path, and the rows stay until a run succeeds
     end
@@ -518,7 +518,7 @@ One instance on the owner's self-hosted host, behind a **reverse proxy** that te
 **Alerts:**
 - Session-recognition p95 above 30 ms sustained — the budget ADR 0008's per-request lookup spends.
 - Live session count drops to zero immediately after a deployment — that is KPI 3 failing and means the key ring did not survive.
-- Cleanup has not succeeded for more than 48 hours.
+- Cleanup has not succeeded for more than 48 hours since the last success, or, if no run has ever succeeded, for more than the short grace period (about an hour) since the instance started.
 
 **Scaling thresholds:**
 - Session rows grow with sign-ins rather than with time; at invited-reviewer scale the table stays in the low thousands.

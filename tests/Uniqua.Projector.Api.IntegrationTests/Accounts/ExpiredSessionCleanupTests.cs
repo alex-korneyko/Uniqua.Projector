@@ -140,9 +140,14 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
     [Fact]
     public async Task A_first_sweep_that_fails_at_construction_time_raises_no_alert()
     {
-        // Review 2026-09-22 (re-review) N-08. "Never succeeded" must not by itself count as stale:
-        // a process that has just started and whose first sweep fails (for example because the
-        // database is not ready yet after a redeploy) has not yet had 48 hours to prove itself.
+        // Review 2026-09-22 (re-review) N-08, updated for the grace-period rule (review 2026-09-23
+        // second re-review, Q-09): "never succeeded" must not by itself count as stale — a process
+        // that has just started and whose first sweep fails (for example because the database is
+        // not ready yet after a redeploy) has not yet had even the short StaleGracePeriod to prove
+        // itself. This is the same rule the grace-period test below exercises at a 90-minute
+        // remove; this one is kept as a regression at a much longer remove (49 hours), long past
+        // both the grace period and the full 48-hour HealthyInterval, to prove the alert still
+        // fires for a process that is very badly overdue, not just barely.
         factory.Clock.Reset();
         var logger = new RecordingLogger<ExpiredSessionCleanupService>();
         using var cleanup = new ExpiredSessionCleanupService(
@@ -202,6 +207,44 @@ public sealed class ExpiredSessionCleanupTests(ApiFactory factory)
         var alert = Assert.Single(
             logger.Entries, entry => entry.Message.Contains("event=session_cleanup_stale"));
         Assert.Equal(LogLevel.Error, alert.Level);
+
+        factory.Clock.Reset();
+    }
+
+    [Fact]
+    public void The_real_schedule_reaches_its_second_attempt_around_the_grace_period_not_a_full_day_later()
+    {
+        // Review 2026-09-23 (second re-review) Q-09, stage 2. The test above proves RunOnceAsync
+        // itself alerts correctly once it is called — it always did. What it does not prove is
+        // that ExecuteAsync's real schedule ever calls it again in that window: before this fix,
+        // ExecuteAsync ran the startup sweep and then waited the full 24-hour Interval before
+        // trying again, so an instance restarted more often than every 24 hours never lived long
+        // enough to reach that second call, and session_cleanup_stale never fired no matter how
+        // many startup sweeps failed. This exercises TimeUntilStaleGraceCheck — the scheduling
+        // decision ExecuteAsync consults for that second call — directly, since driving it through
+        // a real BackgroundService would mean either a real hour-long wait or reaching into the
+        // fixture's TestClock, and this proves the same gap is closed without either.
+        factory.Clock.Reset();
+        var logger = new RecordingLogger<ExpiredSessionCleanupService>();
+        using var cleanup = new ExpiredSessionCleanupService(
+            factory.Services.GetRequiredService<IServiceScopeFactory>(), factory.Clock, logger);
+
+        // Right after construction, the next attempt is due in about an hour — nowhere near the
+        // 24-hour Interval a restart loop shorter than a day would never survive to reach.
+        var initialWait = cleanup.TimeUntilStaleGraceCheck();
+        Assert.True(initialWait > TimeSpan.Zero, "the second attempt must not be scheduled for now");
+        Assert.True(
+            initialWait <= ExpiredSessionCleanupService.StaleGracePeriod
+                + ExpiredSessionCleanupService.GraceCheckMargin,
+            $"the second attempt was scheduled {initialWait} out, not around the short grace period");
+        Assert.True(
+            initialWait < ExpiredSessionCleanupService.Interval,
+            "the second attempt must be well before the 24-hour Interval");
+
+        // Once the grace period (plus its small margin) has actually passed, the check is due now.
+        factory.Clock.Advance(
+            ExpiredSessionCleanupService.StaleGracePeriod + ExpiredSessionCleanupService.GraceCheckMargin);
+        Assert.Equal(TimeSpan.Zero, cleanup.TimeUntilStaleGraceCheck());
 
         factory.Clock.Reset();
     }
