@@ -209,6 +209,18 @@ public static class AccountEndpoints
 /// </summary>
 /// <param name="Email">The address as typed; normalised by the application.</param>
 /// <param name="Password">Verified against the stored hash, or against a dummy one (AC-05b).</param>
+/// <remarks>
+/// review 2026-09-23 (fourth re-review) U-02: openapi declares <c>additionalProperties: false</c>
+/// on this body; <see cref="System.Text.Json.Serialization.JsonUnmappedMemberHandlingAttribute"/>
+/// is what makes the record agree, so an unknown member fails deserialization before the endpoint
+/// delegate runs at all and lands on the framework's bare 400 that
+/// <see cref="ProblemDetailsSetup"/> reshapes into <c>accounts.request_malformed</c> — the same
+/// path a malformed body already took. On sign-in that refusal depends only on the body's shape,
+/// never on account state, so it adds no AC-05b oracle, and it happens before
+/// <see cref="SignInRateLimit.Reserve"/>, so it takes no slot.
+/// </remarks>
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(
+    System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record CreateSessionRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("email")] string? Email,
     [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password);
@@ -217,6 +229,12 @@ public sealed record CreateSessionRequest(
 /// <param name="Email">Normalised by the application; the normalised form carries the unique index.</param>
 /// <param name="Password">Bounded by the acceptance criteria, not by a column. Only the hash is stored.</param>
 /// <param name="DisplayName">What other board members see (AC-11).</param>
+/// <remarks>
+/// review 2026-09-23 (fourth re-review) U-02: the same <c>additionalProperties: false</c> refusal
+/// as <see cref="CreateSessionRequest"/>, before the use case can create anything.
+/// </remarks>
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(
+    System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record RegisterAccountRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("email")] string? Email,
     [property: System.Text.Json.Serialization.JsonPropertyName("password")] string? Password,

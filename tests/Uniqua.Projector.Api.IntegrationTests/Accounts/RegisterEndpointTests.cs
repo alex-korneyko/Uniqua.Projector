@@ -203,6 +203,28 @@ public sealed class RegisterEndpointTests(ApiFactory factory)
         Assert.Equal("accounts.request_malformed", await CodeOfAsync(response));
     }
 
+    [Fact]
+    public async Task A_body_with_an_unknown_field_is_refused_and_creates_no_account()
+    {
+        // review 2026-09-23 (fourth re-review) U-02: openapi declares additionalProperties: false
+        // on this body, but nothing enforced it, so a body carrying an extra field was accepted.
+        factory.Clock.Reset();
+        var client = await ClientAsync();
+        var email = NewEmail();
+        var before = await factory.ScalarAsync<int>("SELECT COUNT(*) FROM [dbo].[AspNetUsers]");
+
+        var response = await client.PostAsync(
+            Accounts,
+            new StringContent(
+                $$"""{"email":"{{email}}","password":"{{GoodPassword}}","display_name":"{{NewDisplayName()}}","x":1}""",
+                System.Text.Encoding.UTF8,
+                "application/json"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("accounts.request_malformed", await CodeOfAsync(response));
+        Assert.Equal(before, await factory.ScalarAsync<int>("SELECT COUNT(*) FROM [dbo].[AspNetUsers]"));
+    }
+
     // ---- AC-01b: the per-source limit -------------------------------------------------------------
 
     [Fact]
