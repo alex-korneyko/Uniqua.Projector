@@ -20,7 +20,7 @@ line each:
   request source across every address it has tried, in that window — past either one, `429` until
   it clears. A correct password is never delayed; either cap can still refuse the owner for
   up to 15 minutes — a guesser who shares their request source and targets their address, or
-  whose source has separately reached its own 100-failure ceiling, can each do it (accepted,
+  whose source has separately reached its own per-source ceiling of 100, can each do it (accepted,
   spec §6.1).
 
 **→ [`docs/session-rules.md`](docs/session-rules.md)** has each of those with the file that enforces

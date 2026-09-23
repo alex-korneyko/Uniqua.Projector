@@ -150,9 +150,21 @@ public sealed class SessionRulesDocumentTests
         // flight (it counts the moment the slot is reserved, not the moment it completes), and "the
         // caller's IP address" left out that an IPv6 address is keyed by its /64 prefix, not the
         // full address (RequestSource.Key).
+        // The in-flight wording is checked per figure, not anywhere in the document: the 20-cap
+        // sentence already said "in flight" before this finding, so a bare "in flight" check could
+        // not tell whether the 100-cap sentence had been corrected. Line wraps and bold markers are
+        // flattened so the clause is matched as a reader sees it.
         var rules = Read("docs/session-rules.md");
+        var prose = Regex.Replace(rules.Replace("**", string.Empty, StringComparison.Ordinal), @"\s+", " ");
 
-        Assert.Contains("in flight", rules, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerWindow} failed sign-ins or attempts still in flight",
+            prose,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            $"{Uniqua.Projector.Api.Accounts.SignInRateLimit.PermittedFailuresPerSourceWindow} failed sign-ins or attempts still in flight",
+            prose,
+            StringComparison.OrdinalIgnoreCase);
         Assert.Contains("/64", rules, StringComparison.Ordinal);
     }
 

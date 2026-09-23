@@ -120,14 +120,14 @@ does not wait for its own response.
 On top of the delay, two caps bound a client that hangs up as soon as it has verified whether an
 address is registered, so it pays none of the delay above: past **20 failed sign-ins or attempts
 still in flight** for one (request source, address) pair in 15 minutes, the next attempt against that
-pair is refused with **`429`** before a password is even checked; past **100 failed** sign-ins from
-one request source across every address it has tried in the same window, the next attempt from that
-source is refused regardless of which address it names. A successful sign-in hands back the two slots
-it reserved itself, so it never counts against either cap; failures already counted stay until they
-age out of the window. Both are keyed by request source (in practice, the caller's IP address —
+pair is refused with **`429`** before a password is even checked; past **100 failed sign-ins or
+attempts still in flight** from one request source across every address it has tried in the same
+window, the next attempt from that source is refused regardless of which address it names. A
+successful sign-in hands back the two slots it reserved itself, so it never counts against either
+cap; failures already counted stay until they age out of the window. Both are keyed by request source (in practice, the caller's IP address —
 except an IPv6 address, which is keyed by its **/64 prefix**, the block an ISP hands one customer,
 so rotating within it does not buy a fresh budget) — a guesser who shares the owner's own request
-source, or whose source has separately reached its own 100-failure ceiling, can still refuse the
+source, or whose source has separately reached its own per-source ceiling of 100, can still refuse the
 owner for up to 15 minutes; that residual is accepted and recorded in
 [spec §6.1](features/accounts-and-sessions/spec.md).
 
