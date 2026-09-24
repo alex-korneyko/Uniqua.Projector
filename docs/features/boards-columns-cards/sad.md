@@ -214,31 +214,158 @@ The realtime hub of ADR 0004 is not drawn: it arrives at roadmap step 8 and play
 
 ## 6. Runtime view
 
-<!-- 🎯 Why: the RUNTIME FLOW of 1–2 critical scenarios — who talks to whom, when, in what order.
-     Without §6, §5 is just boxes with no life.
-     📋 Write: a Mermaid sequenceDiagram. Participants are names from §5 (don't invent new ones).
-     Messages are semantic («saves a draft»), NO HTTP verbs / paths / status codes — endpoint-level
-     sequences arrive at the `api` stage.
-     📌 e.g. «author → web: composes draft → web → content API: save». Seed the primary flow(s) here;
-     the `sequences` stage then covers every §5 AC (no cap). Never N/A for M+; XS/S keeps ≥1 happy-path flow. -->
+Three flows are seeded here: the thin path spec §2's first goal is judged by, the order of checks every change passes through (ADR 0014 and ADR 0016), and a race the board's concurrency guard settles (ADR 0015). `/sdd:sequences` then covers every §5 acceptance criterion; participants are §5 container names, and messages stay semantic — endpoints and status codes arrive at the `api` stage.
 
-**Critical flow 1: <flow name>**
+**Critical flow 1: the thin path — a new board, then a card (AC-01, AC-03, AC-12)**
 
 ```mermaid
 sequenceDiagram
-    actor Actor
-    participant Web
-    participant Service
-    participant Store
-    Actor->>Web: <action>
-    Web->>Service: <call>
-    Service->>Store: <write>
-    Store-->>Service: ok
-    Service-->>Web: result
-    Web-->>Actor: confirmation
+    actor Account
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Account,Db: Precondition - a signed-in account on its board list
+    Account->>Spa: Creates a board and names it
+    Spa->>Api: Submits the new board
+    Api->>Api: Count this change attempt against the account
+    Api->>App: Create a board for this account
+    App->>Infra: Read the account's owned-board counter
+    Infra-->>App: Owned-board count and its concurrency token
+    App->>Domain: Build the board - trims and checks the name, checks the 50-board ceiling
+    alt Name empty after trimming or over 100 characters, or 50 boards already owned
+        Domain-->>App: Refused with the rule that failed
+        App-->>Api: Refusal
+        Api-->>Spa: Refusal in plain language
+        Spa-->>Account: Shows the reason and keeps the typed name
+    else Accepted
+        Domain-->>App: Board with To do, In progress, Done and an Owner membership
+        App->>Infra: Save the board, its columns, the membership and the incremented counter
+        Infra->>Db: Write, guarded by the counter's concurrency token
+        Db-->>Infra: Written
+        App-->>Api: The new board
+        Api-->>Spa: The board with its three columns
+        Spa-->>Account: Opens the board
+        Account->>Spa: Adds a card with a title to To do
+        Spa->>Api: Submits the new card
+        Note over Api,Db: Passes the checks of flow 2 - an add is never stale
+        Api-->>Spa: The card summary, placed at the end of its column
+        Spa-->>Account: Shows the title as plain text
+    end
 ```
 
-**Critical flow 2: <e.g. async event propagation>** — <if applicable, otherwise N/A>.
+**Critical flow 2: the order of checks on a change — a member edits a card (AC-13, AC-14, AC-17, AC-23, AC-25, AC-26)**
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - the session is recognised, and the member opened the card at content version N
+    Member->>Spa: Changes the card's title and saves
+    Spa->>Api: Submits the edit with the board, the card and version N
+    Api->>Api: Per-account change limit - reserve a slot for this account
+    alt 120 attempts already counted within the past minute
+        Api-->>Spa: Changes temporarily limited, and when to continue - identical for any board
+        Spa-->>Member: Shows the limit and keeps the typed text
+    else Within the limit
+        Api->>App: Edit this card on this board, for this account
+        App->>Infra: Load the board only if this account is a member
+        Infra->>Db: Read the board joined to this account's membership
+        Db-->>Infra: The board, or nothing
+        alt No such board, or not a member
+            Infra-->>App: Nothing
+            App-->>Api: Board not available
+            Api-->>Spa: The one refusal a nonexistent board gets, with no board content
+            Spa-->>Member: Board not available, typed text kept
+        else A member
+            Infra-->>App: The board
+            App->>Infra: Read the card through this board
+            Infra-->>App: The card at its current content version, or nothing
+            App->>Domain: Apply the edit at version N
+            alt The card is not on this board - another board's card, deleted, or never existed
+                Domain-->>App: Not found on this board
+                App-->>Api: Board not available
+                Api-->>Spa: The same refusal as a nonexistent board, nothing changed on either board
+                Spa-->>Member: Refused as for a card that never existed, typed text kept
+            else Title empty after trimming or over 150 characters, or description over 10,000
+                Domain-->>App: Refused, naming the limit
+                App-->>Api: Refusal
+                Api-->>Spa: Which limit was exceeded
+                Spa-->>Member: Shows the limit, typed text kept
+            else The card's content changed since version N
+                Domain-->>App: Stale, with the card as it is now
+                App-->>Api: Stale refusal carrying the current card
+                Api-->>Spa: The card changed since you opened it, and its current text
+                Spa-->>Member: Shows the current card and keeps the typed text to apply again
+            else Accepted
+                Domain-->>App: Edited at version N plus 1
+                App->>Infra: Save the card
+                Infra->>Db: Write the card
+                Db-->>Infra: Written
+                App-->>Api: The updated card
+                Api-->>Spa: The updated card
+                Spa-->>Member: Shows the saved text, cache patched for the board and the card
+            end
+        end
+    end
+    Note over Member,Db: Postcondition - every refusal changed nothing, the slot stays counted unless the limit itself refused, and no refusal before membership carried board content
+```
+
+**Critical flow 3: two members delete the last two columns at once (AC-10, AC-10b)**
+
+```mermaid
+sequenceDiagram
+    actor A as Member A
+    actor B as Member B
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over A,Db: Precondition - a board with exactly two columns, both empty, both members viewing it
+    A->>Api: Deletes the first column
+    B->>Api: Deletes the second column
+    Api->>App: Delete column one, for A
+    Api->>App: Delete column two, for B
+    App->>Infra: Load the board for A, with its concurrency token T
+    App->>Infra: Load the board for B, with the same token T
+    App->>Domain: A - may this column go
+    Domain-->>App: Yes, one column would remain
+    App->>Domain: B - may this column go
+    Domain-->>App: Yes, one column would remain
+    App->>Infra: Save A's deletion only if the board is still at T
+    Infra->>Db: Update the board where the token is T, and delete the column
+    Db-->>Infra: One row updated, token now T2
+    App->>Infra: Save B's deletion only if the board is still at T
+    Infra->>Db: Update the board where the token is T, and delete the column
+    Db-->>Infra: No row updated - the token moved
+    Infra-->>App: Concurrency conflict for B
+    App->>Infra: Reload the board for B
+    Infra-->>App: One column left, token T2
+    App->>Domain: B - may this column go
+    Domain-->>App: No, a board must keep at least one column
+    App-->>Api: B refused
+    Api-->>B: A board must keep at least one column
+    App-->>Api: A accepted
+    Api-->>A: Column removed
+    Note over A,Db: Postcondition - exactly one deletion succeeded and the board keeps one column, whichever request reached the store first
+```
+
+<!-- Further flows - the board list, column add, rename, move and delete with their stale and
+     ceiling branches, card deletion, the owner-only rename and delete with typed confirmation, a
+     non-member opening a board, a visitor following a board link, and a change submitted after the
+     session ended (typed text kept across sign-in) - are covered by /sdd:sequences against the full
+     AC list. -->
 
 ## 7. Deployment view
 
