@@ -1,7 +1,7 @@
 ---
 status: Draft
 owner: "Alex Korneiko"
-reviewers: ["<Tech Lead>", "<Security Lead>"]
+reviewers: ["Tech Lead", "Security Lead"]
 updated_at: "2026-09-24"
 feature_size: "M"
 target_surfaces: []  # filled in §4 — subset of: backend-service | web-frontend | mobile-app | desktop-app | cli | worker | library-sdk. Read (never re-derived) by api/sequences/tasks/plan-tests/review → _shared/surfaces.md
@@ -15,27 +15,30 @@ target_surfaces: []  # filled in §4 — subset of: backend-service | web-fronte
 
 ## 1. Introduction and goals
 
-<!-- 🎯 Why: durable memory of «what + the three dominant qualities + who cares». A year from
-     now nobody recalls which three qualities were critical for this system.
-     📋 Write: 1 ¶ intent + 3 lines of top-3 quality goals + a stakeholders table.
-     ¶4 is the override slot — critic `Override` resolutions emit «Decision override: <headline>
-     — rationale: <reason>» bullets here so downstream skills see the deliberate choice. -->
-
-**Intent.** <One paragraph from spec §2 Goals — what we're building and for whom.>
+**Intent.** Give a signed-in account a board of its own — create it, shape its columns, capture work as cards — so that a first-time visitor reaches a board holding a card, unaided and in one session: the thin path the first public deployment ships (spec §2). The same feature introduces the product's **first authorisation boundary**. Every read and change is answered only after the board-membership check; an account that is not a member cannot tell a board it does not belong to from one that never existed; and the four board rules of spec §1 — one identical refusal for non-members, every named column and card belonging to the board that was checked, no deleting a non-empty or the last column, no change applied over a newer one — are enforced by the board itself and stated where a reviewer can find them. Every later roadmap step (card move, checklist, invitations, live updates) hangs off the board, column and card introduced here.
 
 **Top-3 quality goals (1-liners; full scenarios in §10):**
 
-1. <e.g. "Availability under partial failure of a downstream module">
-2. <e.g. "Read performance for the dashboard under data-scale growth">
-3. <e.g. "Recoverability with <30 min RTO">
+1. **An indistinguishable membership boundary** — a non-member receives one refusal, field for field identical to the refusal for a board that does not exist, whatever else is wrong with the request; a column or card of another board is treated as nonexistent; no refusal ever carries board content.
+2. **No silent loss under simultaneous changes** — the content ceilings and the column rules hold under races, and a change made from an outdated view is refused and explained rather than applied over a newer one.
+3. **The thin path within the latency budget** — opening a full board and making a single change stay inside the spec §6 p95 targets on the reference machine.
+
+When these conflict, they win in that order: the boundary first, because this feature is the first authorisation boundary the fifteen-minute read examines; latency is the goal that gives way.
 
 **Stakeholders.**
 
 | Role | Interest | Sign-off owner? |
 |---|---|---|
-| <author role from glossary> | <feature usage> | No |
-| <consumer role from glossary> | <read usage> | No |
+| account | Creates boards; finds every board it is a member of, and only those | No |
+| board member | Adds, renames, reorders and deletes columns; adds, edits and deletes cards | No |
+| board owner | Additionally the only one who may rename or delete the board | No |
+| visitor | Follows a board link to the sign-in form without learning anything about the board | No |
+| reviewing engineer | Probes access control from outside with two accounts and reads how it is enforced; spec §1's primary user | No |
 | Tech Lead | SAD approval | Yes |
+| Security Lead | The authorisation boundary and the spec §6.1 abuse cases; a security review is required | Yes |
+
+<!-- `reviewing engineer` is not a CONTEXT.md glossary role; it is kept because spec §1 names it the
+     primary user, exactly as the accounts-and-sessions SAD did. Candidate for `/sdd:glossary`. -->
 
 <!-- Decision overrides (¶4) — populated by the critic resolution loop, empty otherwise. -->
 
