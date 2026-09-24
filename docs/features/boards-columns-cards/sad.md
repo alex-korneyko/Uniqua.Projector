@@ -82,37 +82,39 @@ When these conflict, they win in that order: the boundary first, because this fe
 
 ## 3. Context and scope
 
-<!-- 🎯 Why: draws the SYSTEM BOUNDARY — who talks to it from outside, where the trust zone ends.
-     Without §3, §5 and §8 (authorization) blur — unclear what's «inside» vs «outside».
-     📋 Write: 2–3 sentences of business context + an external-systems table + a C4Context block.
-     📌 «External: none (deliberate, no third-party in v1)» is itself a decision worth stating.
-     Trust boundary — the line past which you don't trust data without checking it.
-     Never N/A — greenfield still draws the planned actors + external systems. -->
+This feature turns an account into the owner of boards and a board member of them. An **account** creates a board and becomes its **board owner** and only **board member**; members shape the board's columns and cards; a **visitor** who follows a link to a board is sent to sign in and learns nothing about it. The trust boundary is the application process, and inside it a second, finer boundary begins here: **the board**. Every identifier a request carries — the board's, a column's, a card's — is untrusted until the membership check has passed for that board and the named column or card has been found *on that board*. Board, column and card text is untrusted content for display as well: it is stored as typed and always shown as literal text (spec AC-16).
 
-<Business context in 2–3 sentences. What the system does for whom.>
-
-<!-- brownfield: <one-line scan summary> (or «N/A — greenfield repo» if no source existed) -->
+<!-- brownfield: four-project .NET 10 solution with accounts-and-sessions shipped (Identity, custom
+     session scheme, antiforgery, in-memory sliding-window limiter, SQL Server via EF Core); React 19
+     client with no router yet. No board, column or card code exists. -->
 
 **External systems (in / out):**
 
 | Actor or system | Type | Interaction |
 |---|---|---|
-| <author role> | Person | <what they do> |
-| <external service> | System (internal/external) | <interaction> |
-| <identity provider> | System (external) | <provides auth tokens> |
+| account | Person | Creates boards; lists the boards it is a member of |
+| board member | Person | Reads a board; adds, renames, reorders and deletes columns; adds, edits and deletes cards |
+| board owner | Person | Additionally renames and deletes the board |
+| visitor | Person | Opens a board link with no session; is shown the sign-in form and nothing about the board |
+| — none — | System (external) | **Deliberate.** The feature has no outbound integration. Identity and sessions are the product's own (accounts-and-sessions), and live updates to other members are roadmap step 8, not this feature. |
 
-**C4 Context (L1):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. -->
+**C4 Context (L1):**
 
 ```mermaid
 C4Context
-    title <feature> — System Context
+    title boards-columns-cards - System Context
 
-    Person(actor, "<Actor role>", "<intent>")
-    System(app, "<Our system>", "<one-sentence description>")
-    System_Ext(ext, "<External system>", "<one-sentence description>")
+    Person(visitor, "Visitor", "No active session; may already own an account")
+    Person(account, "Account", "Signed in; creates boards and lists its own")
+    Person(member, "Board member", "Changes the columns and cards of a board it belongs to")
+    Person(owner, "Board owner", "The member who created the board; alone may rename or delete it")
 
-    Rel(actor, app, "<interaction>", "<protocol>")
-    Rel(app, ext, "<interaction>", "<protocol>")
+    System(projector, "Uniqua.Projector", "Kanban boards. This feature adds boards, columns and cards behind the product's first authorisation boundary.")
+
+    Rel(visitor, projector, "Opens a board link; is sent to sign in", "HTTPS")
+    Rel(account, projector, "Creates a board; lists its boards", "HTTPS")
+    Rel(member, projector, "Reads a board; changes its columns and cards", "HTTPS")
+    Rel(owner, projector, "Renames or deletes the board", "HTTPS")
 ```
 
 ## 4. Solution strategy
