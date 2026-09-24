@@ -369,25 +369,25 @@ sequenceDiagram
 
 ## 7. Deployment view
 
-<!-- 🎯 Why: the TOPOLOGY DevOps must know without reading the deploy charts — how many replicas,
-     where the background worker lives, AT WHAT NUMBERS we scale.
-     📋 Write: 2–3 sentences on topology + monitoring + concrete threshold numbers.
-     📌 e.g. «500 authors → partition by quarter» (not «we'll think about scale later»).
-     🎯 N/A allowed for XS/S that reuses an existing deployment unit with no change.
-     Deployment-diagram scaffold → templates/deployment.md. -->
+**No change to the deployment unit.** The feature runs in the same single instance on the owner's self-hosted host, behind the reverse proxy that terminates TLS, with SQL Server alongside — the topology the accounts-and-sessions SAD §7 describes. The one addition is **one EF Core migration** for the boards schema, applied on startup in development and as the explicit deployment step in production (`CLAUDE.md`).
 
-<Topology in 2–3 sentences. Where it runs, replicas, scaling thresholds.>
+**Exactly one instance is now a stated assumption, not only current practice.** The per-account change limiter (§5) keeps its counts in memory, like the registration and sign-in limits before it. A second replica would give each account 120 changes per minute *per replica*, and a restart gives every account a fresh minute; moving the counter into the store is the precondition for ever running two.
 
 **Monitoring:**
-- <Metrics — e.g. `<metric_name>`>
-- <Alerts — e.g. «worker lag > 10 min → page on-call»>
-- <Tracing — e.g. spans on the request boundary>
+- p95 of opening a board and of a single change — the two spec §6 latency budgets.
+- Changes refused by the per-account change limit (`boards.change_rate_limited`), by account.
+- Concurrency conflicts on the board row, and changes that failed after exhausting their 3 retries (ADR 0015).
+- "Board not available" refusals per account per hour — a rising count from one account is probing (spec §6.1).
+- Database size.
+
+**Alerts:**
+- Any change that fails after exhausting its retries — at this scale it should not happen, so one occurrence is worth a look.
+- Opening-a-board p95 above 300 ms, or single-change p95 above 200 ms, sustained.
+- Database size at **80% of the production edition's size ceiling** — 8 GB if roadmap D1 settles on SQL Server Express, whose ceiling is 10 GB per database. This is the operational watch spec §6.1 chose for the residual spam-creation risk; the threshold follows whatever D1 decides.
 
 **Scaling thresholds:**
-- <e.g. comfortable in one table up to N rows/year>
-- <e.g. partition by quarter above N rows/year>
-
-<!-- For XS/S with no deployment change: <!-- N/A: reuses existing deployment unit, no infra change --> -->
+- The largest board is fixed by the content ceilings — 20 columns and 1,000 cards, roughly 150 KB for the summary read (ADR 0018).
+- The board row is updated by every structural change on that board (ADR 0015); re-measure conflicts and retries once boards have more than a handful of simultaneous members, which is possible only from roadmap step 7.
 
 ## 8. Crosscutting concepts
 
