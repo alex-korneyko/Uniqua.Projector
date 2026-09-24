@@ -365,11 +365,511 @@ sequenceDiagram
     Note over A,Db: Postcondition - exactly one deletion succeeded and the board keeps one column, whichever request reached the store first
 ```
 
-<!-- Further flows - the board list, column add, rename, move and delete with their stale and
-     ceiling branches, card deletion, the owner-only rename and delete with typed confirmation, a
-     non-member opening a board, a visitor following a board link, and a change submitted after the
-     session ended (typed text kept across sign-in) - are covered by /sdd:sequences against the full
-     AC list. -->
+### Flow 4: list my boards (AC-04)
+
+```mermaid
+sequenceDiagram
+    actor Account
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Account,Db: Precondition - a signed-in account, after sign-in, registration or back to my boards (SCR-02)
+    Account->>Spa: Opens the board list
+    Spa->>Api: Asks for my boards
+    Note over Api: A read - not counted against the change limit
+    Api->>App: List the boards this account is a member of
+    App->>Infra: Boards joined to this account's memberships, newest first
+    Infra->>Db: Read memberships by account, with each board's name, creation time and this account's role
+    Note over Infra,Db: reads memberships by account - wants an index on (account, board)
+    Db-->>Infra: Rows
+    Infra-->>App: Board entries with an owned flag
+    App-->>Api: The list
+    Api-->>Spa: Boards, most recently created first, owned ones marked
+    alt No memberships
+        Spa-->>Account: Empty list offering to create a board
+    else One or more
+        Spa-->>Account: Every board it belongs to and no other
+    end
+    Note over Account,Db: Postcondition - no board the account is not a member of appears, and nothing was written
+```
+
+### Flow 5: open a board, then a card (AC-01, AC-16, AC-20, AC-25)
+
+```mermaid
+sequenceDiagram
+    actor Account
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Account,Db: Precondition - a signed-in account opens a board address from its list, a link or a bookmark
+    Account->>Spa: Opens the board address
+    Spa->>Api: Asks for this board
+    Api->>App: Open this board for this account
+    App->>Infra: Load the board only if this account is a member
+    Infra->>Db: Read the board joined to this account's membership
+    Db-->>Infra: The board, or nothing
+    alt Never existed, deleted, or not a member
+        Infra-->>App: Nothing
+        App-->>Api: Board not available
+        Api-->>Spa: The one identical refusal, with no name and no content
+        Spa-->>Account: Board not available screen (SCR-08), back to my boards
+    else A member
+        Infra->>Db: Read the columns in position order and every card summary, without descriptions
+        Note over Infra,Db: reads columns by board and card summaries by board - wants indexes on (board, position) and (board, column, position)
+        Db-->>Infra: Columns and card summaries
+        Infra-->>App: Board, columns, summaries and the version counters
+        App-->>Api: The board as this member sees it, with whether they own it
+        Api-->>Spa: Board, columns and card summaries with their versions
+        Spa-->>Account: The board (SCR-04), every title as literal text, owner controls only for the owner
+        Account->>Spa: Opens a card
+        Spa->>Api: Asks for this card on this board
+        Api->>App: Open this card for this account
+        App->>Infra: Load the board for this member, then the card through it
+        Infra-->>App: The card with its description and content version, or nothing
+        alt Card not on this board
+            App-->>Api: Board not available
+            Api-->>Spa: The same identical refusal
+            Spa-->>Account: Handled as in flow 2 - re-read the board, then refresh it or leave it
+        else Found
+            App-->>Api: The card
+            Api-->>Spa: Title, description and content version
+            Spa-->>Account: Card detail (SCR-05), text exactly as typed, line breaks kept, no links
+        end
+    end
+    Note over Account,Db: Postcondition - a non-member learned nothing, not even whether the board exists, and nothing was written
+```
+
+### Flow 6: add or rename a column (AC-05, AC-06, AC-06b, AC-08, AC-11, AC-18b, AC-21)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - a member viewing the board, past the change limit and the member-scoped load of flow 2. No role is checked here - an owner and any other member are treated alike (AC-21)
+    alt Add a column
+        Member->>Spa: Adds a column with a name
+        Spa->>Api: Submits the new column
+        Api->>App: Add a column to this board
+        App->>Domain: Add the column - trim and check the name, check the 20-column ceiling
+        alt Name empty after trimming or over 50 characters
+            Domain-->>App: Refused - a column name must be 1 to 50 characters
+            App-->>Api: Refusal
+            Api-->>Spa: The rule
+            Spa-->>Member: Shows the rule, typed name kept
+        else 20 columns already
+            Domain-->>App: Refused - a board can hold at most 20 columns
+            App-->>Api: Refusal
+            Api-->>Spa: The ceiling
+            Spa-->>Member: Shows the ceiling
+        else Accepted
+            Domain-->>App: Column at the end, layout version moved on
+            App->>Infra: Save the column and the board only if the board is still at its token
+            Note over Infra,Db: persists the column and the board's column count and layout version - a lost race is re-decided as in flow 3
+            Infra->>Db: Write
+            Db-->>Infra: Written
+            App-->>Api: The column and the new layout version
+            Api-->>Spa: The column
+            Spa-->>Member: Column shown at the end
+        end
+    else Rename a column
+        Member->>Spa: Renames a column it saw at name version K
+        Spa->>Api: Submits the new name with the column and K
+        Api->>App: Rename this column on this board at K
+        App->>Domain: Find the column on this board and rename it at K
+        alt Column not on this board - another board's, or deleted since
+            Domain-->>App: Not found on this board
+            App-->>Api: Board not available
+            Api-->>Spa: The same refusal as a nonexistent board
+            Spa-->>Member: Re-reads the board and refreshes it, typed name kept (AC-18b)
+        else Name empty after trimming or over 50 characters
+            Domain-->>App: Refused - 1 to 50 characters
+            App-->>Api: Refusal
+            Api-->>Spa: The rule
+            Spa-->>Member: Shows the rule, typed name kept
+        else Renamed since K
+            Domain-->>App: Stale, with the current name
+            App-->>Api: Stale refusal carrying the current name
+            Api-->>Spa: Renamed since you last saw it, and the current name
+            Spa-->>Member: Current name shown, typed name kept to apply again
+        else Accepted
+            Domain-->>App: Renamed at K plus 1 - the layout version does not move
+            App->>Infra: Save the column only if it is still at name version K
+            Note over Infra,Db: persists the column name and its name version - no board-row update
+            Infra->>Db: Write where the name version is still K
+            Db-->>Infra: Written, or no row when another rename landed first - then the stale branch answers
+            App-->>Api: The column and its new name version
+            Api-->>Spa: The renamed column
+            Spa-->>Member: New name shown, and every member sees it on next open
+        end
+    end
+    Note over Member,Db: Postcondition - column positions stay 0 to n-1, and a refused change wrote nothing
+```
+
+### Flow 7: move a column (AC-06, AC-24, AC-24b)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - a member viewing the board at column layout version L, past the change limit and the member-scoped load
+    Member->>Spa: Drags a column to a new position
+    Spa->>Api: Submits the move with the column, the position and L
+    Api->>App: Move this column on this board at L
+    App->>Domain: Find the column on this board and move it at L
+    alt Column not on this board
+        Domain-->>App: Not found on this board
+        App-->>Api: Board not available
+        Api-->>Spa: The same refusal as a nonexistent board
+        Spa-->>Member: Re-reads the board and refreshes it
+    else A column was added, moved or deleted since L
+        Domain-->>App: Stale, with the current columns and order
+        App-->>Api: Stale refusal carrying the current order
+        Api-->>Spa: The columns changed since you last saw them, and the current order
+        Spa-->>Member: Current columns and order shown
+    else Only renames or card changes since L - neither moves L (AC-24b)
+        Domain-->>App: Moved - every column renumbered 0 to n-1, layout version L plus 1
+        App->>Infra: Save the new positions and the board only if the board is still at its token
+        Note over Infra,Db: persists every column position of the board and the layout version - one board, at most 20 rows
+        Infra->>Db: Write
+        Db-->>Infra: Written, or a conflict - then reload and re-decide as in flow 3
+        App-->>Api: The new order and layout version
+        Api-->>Spa: The new order
+        Spa-->>Member: Columns in the new order, and every member sees it on next open
+    end
+    Note over Member,Db: Postcondition - every column holds exactly one distinct position from 0 to n-1
+```
+
+### Flow 8: delete a column (AC-06b, AC-07, AC-09, AC-10, AC-18b)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - a member viewing the board, who saw the column at name version K, past the change limit and the member-scoped load. No confirmation is asked, since only an empty column can go (ux-flows)
+    Member->>Spa: Deletes a column
+    Spa->>Api: Submits the deletion with the column and K
+    Api->>App: Delete this column on this board at K
+    App->>Domain: Find the column on this board and delete it at K
+    alt Column not on this board - another board's, or deleted since
+        Domain-->>App: Not found on this board
+        App-->>Api: Board not available
+        Api-->>Spa: The same refusal as a nonexistent board
+        Spa-->>Member: Re-reads the board and refreshes it (AC-18b)
+    else Renamed since K
+        Domain-->>App: Stale, with the current name
+        App-->>Api: Stale refusal carrying the current name
+        Api-->>Spa: Renamed since you last saw it, and the current name
+        Spa-->>Member: Current name shown, nothing deleted
+    else The column still holds at least one card
+        Domain-->>App: Refused - a column that still holds cards cannot be deleted
+        App-->>Api: Refusal
+        Api-->>Spa: The rule
+        Spa-->>Member: Column and its cards untouched, rule shown
+    else It is the board's only column
+        Domain-->>App: Refused - a board must keep at least one column
+        App-->>Api: Refusal
+        Api-->>Spa: The rule
+        Spa-->>Member: Rule shown
+    else Empty, and another column remains
+        Domain-->>App: Removed - remaining columns renumbered 0 to n-1, layout version moved on
+        App->>Infra: Delete the column and save the board only if the board is still at its token
+        Note over Infra,Db: removes the column row, persists the remaining positions, the column count and the layout version
+        Infra->>Db: Write
+        Db-->>Infra: Written, or a conflict - a card added to this column, or another column deleted, at the same moment - then reload and re-decide as in flow 3
+        App-->>Api: The remaining columns and the new layout version
+        Api-->>Spa: The new column set
+        Spa-->>Member: Column gone, the others in their relative order
+    end
+    Note over Member,Db: Postcondition - no non-empty column was deleted and the board keeps at least one column, whatever raced it
+```
+
+### Flow 9: add a card (AC-12, AC-14, AC-15, AC-16, AC-18b)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - a member viewing the board, past the change limit and the member-scoped load. An add is never stale
+    Member->>Spa: Adds a card to a column with a title and, optionally, a description
+    Spa->>Api: Submits the new card with the column
+    Api->>App: Add a card to this column of this board
+    App->>Domain: Find the column on this board and admit a card to it
+    alt Column not on this board - another board's, or deleted since
+        Domain-->>App: Not found on this board
+        App-->>Api: Board not available
+        Api-->>Spa: The same refusal as a nonexistent board
+        Spa-->>Member: Re-reads the board and refreshes it, typed text kept (AC-18b)
+    else Title empty after trimming or over 150 characters, or description over 10,000
+        Domain-->>App: Refused, naming which limit
+        App-->>Api: Refusal
+        Api-->>Spa: Which limit was exceeded
+        Spa-->>Member: Shows the limit, the whole card refused, typed text kept
+    else The board already holds 1,000 cards
+        Domain-->>App: Refused - a board can hold at most 1,000 cards
+        App-->>Api: Refusal
+        Api-->>Spa: The ceiling
+        Spa-->>Member: Shows the ceiling, typed text kept
+    else Accepted
+        Domain-->>App: A card at the column's next card position, title trimmed, description exactly as typed, content version 1
+        App->>Infra: Insert the card and save the board only if the board is still at its token
+        Note over Infra,Db: persists the card, and on the board the card count, the column's card count and its next card position
+        Infra->>Db: Write
+        Db-->>Infra: Written, or a conflict - then reload and re-decide, so two adds at 999 cards cannot both land
+        App-->>Api: The card summary
+        Api-->>Spa: The card summary
+        Spa-->>Member: Title at the end of its column, as literal text (AC-16)
+    end
+    Note over Member,Db: Postcondition - the board holds at most 1,000 cards and the new card is last in its column
+```
+
+### Flow 10: delete a card (AC-18, AC-18b, AC-23)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Member,Db: Precondition - a member who opened the card at content version N, chose delete and confirmed (SCR-06), past the change limit and the member-scoped load
+    Member->>Spa: Confirms the deletion
+    Spa->>Api: Submits the deletion with the card and N
+    Api->>App: Delete this card on this board at N
+    App->>Infra: Read the card through this board
+    Infra-->>App: The card at its current content version, or nothing
+    App->>Domain: Delete the card at N
+    alt Card not on this board - another board's, deleted since, or never existed
+        Domain-->>App: Not found on this board
+        App-->>Api: Board not available
+        Api-->>Spa: The same refusal as a nonexistent board
+        Spa-->>Member: That card no longer exists, the board refreshed (SCR-04)
+    else Title or description changed since N
+        Domain-->>App: Stale, with the card as it is now
+        App-->>Api: Stale refusal carrying the current card
+        Api-->>Spa: The card changed since you opened it, and its current text
+        Spa-->>Member: Current card shown so they can decide again (SCR-05)
+    else Unchanged since N
+        Domain-->>App: Deleted
+        App->>Infra: Delete the card only if it is still at N, and save the board only if the board is still at its token
+        Note over Infra,Db: removes the card row, persists the board's card count and the column's card count - the other cards keep their positions
+        Infra->>Db: Write
+        Db-->>Infra: Written, or no card row at N - another edit landed first, then the stale branch answers - or a board conflict, then reload and re-decide
+        App-->>Api: Deleted
+        Api-->>Spa: Deleted
+        Spa-->>Member: Card gone, the others in its column keep their order
+    end
+    Note over Member,Db: Postcondition - a later change naming that card is refused exactly as for a card that never existed
+```
+
+### Flow 11: the board owner renames or deletes the board (AC-02, AC-19, AC-20, AC-20b, AC-22)
+
+```mermaid
+sequenceDiagram
+    actor Owner as Board owner
+    actor Other as Board member not the owner
+    participant Spa as Web client
+    participant Api as HTTP API
+    participant App as Application layer
+    participant Domain as Domain layer
+    participant Infra as Infrastructure layer
+    participant Db as Relational store
+
+    Note over Owner,Db: Precondition - past the change limit and the member-scoped load. The client offers rename and delete only to the owner
+    Other->>Api: A rename or delete sent anyway, outside the interface
+    Api->>App: Rename or delete this board, for this account
+    App->>Domain: Is this account the board owner
+    Domain-->>App: No - only the board owner may rename or delete a board
+    App-->>Api: Refusal
+    Api-->>Other: Only the board owner may rename or delete a board, board unchanged (AC-22)
+    alt Owner renames the board
+        Owner->>Spa: Renames the board
+        Spa->>Api: Submits the new name
+        Api->>App: Rename this board, for this account
+        App->>Domain: Check the owner, then trim and check the name
+        alt Name empty after trimming or over 100 characters
+            Domain-->>App: Refused - a name must be 1 to 100 characters
+            App-->>Api: Refusal
+            Api-->>Spa: The rule
+            Spa-->>Owner: Shows the rule, typed name kept
+        else Accepted
+            Domain-->>App: Renamed
+            App->>Infra: Save the board only if it is still at its token
+            Note over Infra,Db: persists the board name
+            Infra->>Db: Write
+            Db-->>Infra: Written
+            App-->>Api: The new name
+            Api-->>Spa: The new name
+            Spa-->>Owner: New name on the board, and in every member's board list
+        end
+    else Owner deletes the board
+        Owner->>Spa: Types the board's name in the confirmation (SCR-07) and confirms
+        Spa->>Api: Submits the deletion with the typed name
+        Api->>App: Delete this board, for this account, confirmed with this name
+        App->>Domain: Check the owner, then compare the trimmed typed name with the current name, same letters and same case
+        alt Does not match - including a board renamed since the dialog opened
+            Domain-->>App: Refused, with the current name
+            App-->>Api: Refusal carrying the current name
+            Api-->>Spa: Name does not match, and the board's current name
+            Spa-->>Owner: Nothing deleted, current name shown (AC-20b)
+        else Matches
+            Domain-->>App: Deleted
+            App->>Infra: Delete the board with its columns, cards and memberships, and free one owned-board slot
+            Note over Infra,Db: removes the board, its columns, cards and memberships in one transaction, persists the owner's owned-board counter
+            Infra->>Db: Write
+            Db-->>Infra: Written
+            App-->>Api: Deleted
+            Api-->>Spa: Deleted
+            Spa-->>Owner: Back on the board list, board gone
+        end
+    end
+    Note over Owner,Db: Postcondition - after a deletion every request about that board or anything on it is answered as for a board that never existed (flow 5)
+```
+
+### Flow 12: a visitor follows a board link and signs in (AC-27)
+
+```mermaid
+sequenceDiagram
+    actor Visitor
+    participant Spa as Web client
+    participant Api as HTTP API
+
+    Note over Visitor,Api: Precondition - a person with no active session opens a board address, real or not
+    Visitor->>Api: Opens the board address in the browser
+    Api-->>Spa: Serves the same built client for every address inside the application
+    Spa->>Api: Who am I
+    Api-->>Spa: Not recognised - identical for any cookie state
+    Note over Spa,Api: The board itself is never requested without a session - and if it were, the answer would be the same not-recognised refusal for every board
+    Spa-->>Visitor: The sign-in form (SCR-01), remembering the address as the return address, showing nothing about the board
+    Visitor->>Spa: Signs in
+    Spa->>Api: Submits the sign-in
+    Api-->>Spa: Signed in, session cookie set
+    Spa->>Spa: Check the return address - a path starting with a single slash, not two, and no scheme
+    alt Not an address inside the application
+        Spa-->>Visitor: The board list (SCR-02)
+    else Inside the application
+        Spa-->>Visitor: Back at the board address, answered by flow 5 - the board for a member, board not available for anyone else
+    end
+    Note over Visitor,Api: Postcondition - the sign-in form looked the same for a real board and a board that never existed, and the return reveals nothing that opening the link while signed in would not
+```
+
+### Flow 13: a change submitted after the session ended (AC-28)
+
+```mermaid
+sequenceDiagram
+    actor Member as Board member
+    participant Spa as Web client
+    participant Api as HTTP API
+
+    Note over Member,Api: Precondition - the board is open, and the session has since ended - signed out in another tab of this browser, or expired
+    Member->>Spa: Submits a change with typed text
+    Spa->>Api: Submits the change
+    Api->>Api: Recognise the session
+    Api-->>Spa: Not recognised - nothing changed, not treated as this member, not counted against the change limit
+    Spa->>Spa: Keep the typed text in this tab's session storage under the id of the account that typed it, with the board and the item it named
+    Spa-->>Member: The sign-in form (SCR-01), return address set to the board
+    Member->>Spa: Signs in
+    Spa->>Api: Submits the sign-in
+    Api-->>Spa: Signed in as some account
+    alt The same account that typed the text
+        Spa-->>Member: Back on the board, the kept text offered to apply again
+        Note over Spa,Api: Applying it is an ordinary change - flow 2 and its siblings decide it, so it may be refused as stale if the item changed meanwhile
+    else A different account
+        Spa->>Spa: Discard the kept text without showing it
+        Spa-->>Member: Back at the board address, answered by flow 5 for this account
+    end
+    Note over Spa,Api: The kept text is also removed once applied, and on sign-out - it never outlives the tab
+    Note over Member,Api: Postcondition - nothing on the board changed while signed out, and one account's typed text is never shown to another
+```
+
+**Coverage of the spec by the flows above.** Every §4 user story has at least one flow, and every §5 acceptance criterion is shown by a flow, by a branch inside one, or is recorded here with the reason it is not a runtime path of its own.
+
+| Spec | Shown by |
+|---|---|
+| US-01 start a board | flow 1 |
+| US-02 find my boards | flow 4 |
+| US-03 shape the columns | flows 6, 7, 8, and flow 3 for the race |
+| US-04 capture work as cards | flows 1, 2, 9; flow 5 for how a card is shown |
+| US-05 remove a card | flow 10 |
+| US-06 rename and delete my board | flow 11 |
+| US-07 work on a board I do not own | flow 6 (no role check on column and card changes), flow 11 (owner-only refusal) |
+| US-08 not overwrite a newer change | flows 2, 6, 7, 8, 10 — each stale branch |
+| US-09 keep my board invisible to others | flows 2 and 5 — the board-not-available branches |
+| US-10 be asked to sign in first | flows 12, 13 |
+| AC-01 | flow 1, accepted branch; flow 5 opens the new board |
+| AC-02 | flow 1, first branch (create); flow 11, rename branch |
+| AC-03 | flow 1, first branch — the 50-board ceiling, held under races by the owned-board counter's token |
+| AC-04 | flow 4 |
+| AC-05 | flow 6, add, accepted |
+| AC-06 | flow 6, rename, accepted; flow 7, accepted |
+| AC-06b | flow 6, rename, stale branch; flow 8, stale branch |
+| AC-07 | flow 8, last branch |
+| AC-08 | flow 6, name branches of add and rename |
+| AC-09 | flow 8, holds-cards branch |
+| AC-10 | flow 8, only-column branch |
+| AC-10b | flow 3 |
+| AC-11 | flow 6, add, ceiling branch |
+| AC-12 | flow 1 (thin path); flow 9, accepted |
+| AC-13 | flow 2, accepted |
+| AC-14 | flow 2 (edit); flow 9 (add) |
+| AC-15 | flow 9, ceiling branch — held under races by the board token |
+| AC-16 | flows 5 and 9 show text as literal. It is also a **rendering rule** rather than a runtime path — enforced by §8's text-rendering row and proved by a component test, not by a sequence |
+| AC-17 | flow 2, first branch. Counting semantics — refused attempts count, the limit's own refusals, reads, no-session and antiforgery refusals do not (§8) — are shown in flow 2's postcondition and flow 13 |
+| AC-18 | flow 10, accepted |
+| AC-18b | the not-on-this-board branches of flows 2, 6, 8, 9 and 10 |
+| AC-19 | flow 11, rename, accepted |
+| AC-20 | flow 11, delete, matches; flow 5, first branch, for every request afterwards |
+| AC-20b | flow 11, delete, does-not-match |
+| AC-21 | flow 6 precondition — column and card flows check no role, so a non-owner member follows flows 2 and 6–10 unchanged. Proved by running them with a `Member` record from test setup (ADR 0013) |
+| AC-22 | flow 11, the non-owner request before the alternatives |
+| AC-23 | flow 2, stale branch (edit); flow 10, stale branch (delete) |
+| AC-24 | flow 7, stale branch |
+| AC-24b | flow 7, accepted branch — renames and card changes never move the layout version |
+| AC-25 | flow 2 (a change), flow 5 (a read) — the board-not-available branches |
+| AC-26 | flow 2, card-not-on-this-board branch, and the same branch in flows 6–10 |
+| AC-27 | flow 12 |
+| AC-28 | flow 13 |
+
+**What the persist notes hand to `data-model`.** Reads by account over memberships (index on account, board); columns by board in position order and card summaries by board, column and position (flow 5); the board row carries the card count, the column layout version and the concurrency token, and each column its card count, next card position and name version (flows 6–9); each card its content version (flows 2, 10); a per-account owned-board counter with its own token (flows 1, 11); a board deletion removes its columns, cards and memberships in one transaction (flow 11).
+
+**Flagged for the stages that follow — flags only, nothing was decided here.**
+
+- **Participant naming diverges from the `sequences` default.** Flows 4–13 name the real §5 containers, as flows 1–3 and the accounts-and-sessions SAD do, rather than the generic `<ui>` / `<service>` / `<data-store>` placeholders — a choice confirmed at this stage, recorded so it reads as deliberate.
+- **Check precedence is now fixed by these flows**, closing `ux-flows.md`'s third design input: not on this board → owner check (board rename and delete only) → text limits → stale → ceilings and column rules. For a column deletion, stale comes before holds-cards and last-column.
+- **No new participant** was needed; every flow uses §5 containers only. No flow is asynchronous — there is no queue, callback or scheduled job in this feature.
+- **The client-side return-address guard and the kept-text store (flows 12, 13)** are logic the tests must reach through a component or unit test; no server test can see them.
 
 ## 7. Deployment view
 
