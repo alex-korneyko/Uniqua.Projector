@@ -473,13 +473,29 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 
 ## 12. Glossary
 
-<!-- 🎯 Why: ⭐ the DOMAIN GLOSSARY that ends arguments a year later («checkpoint — weekly or
-     biweekly? quarter — calendar or fiscal?»).
-     📋 Write: a term / meaning table. Business + technical terms mixed.
-     📌 e.g. «Lesson | a unit inside a course made of blocks (text, video)». -->
+Terms marked **[CONTEXT]** are canonical in the repository-root `CONTEXT.md` and are repeated here only for a reader of this document; the definitions there win on any conflict.
 
 | Term | Meaning |
 |---|---|
-| <e.g. domain object A> | <its meaning in this domain> |
-| <e.g. domain object B> | <its meaning> |
-| <e.g. domain invariant name> | <the rule, in plain language> |
+| account **[CONTEXT]** | A registered identity with an email, a password and a display name, which a person signs in as |
+| board **[CONTEXT]** | A named workspace holding an ordered set of columns, created by one account who becomes its board owner, and visible only to its board members |
+| board member **[CONTEXT]** | An account that has been granted access to one board and may read and change it — recorded as a membership record (ADR 0013) |
+| board owner **[CONTEXT]** | The board member who created the board, and the only one who may rename it, delete it and invite others to it — the membership record with role `Owner` |
+| card **[CONTEXT]** | A unit of work with a title and an optional plain-text description, at one position in exactly one column of one board |
+| column **[CONTEXT]** | A named lane at one position on one board, holding that board's cards in order; a board always keeps at least one |
+| visitor **[CONTEXT]** | A person using the application with no active session |
+| session **[CONTEXT]** | The period during which a browser is recognised as a specific account, carried by a cookie that page scripts cannot read |
+| member-scoped load | Loading a board only if the requesting account is a member of it, so that "absent" and "not a member" are one answer; every board use case begins with it (ADR 0014) |
+| board not available | The single refusal for a board that is absent, not the caller's, deleted, or for a column or card not on the board named — identical field for field in every case |
+| stale change | A change made from a view in which the very thing it changes has since changed, as spec §5's stale-change rule defines; refused with the current state |
+| version counter | One of `ContentVersion` (a card's title or description), `NameVersion` (a column's name) and `ColumnLayoutVersion` (a board's set and order of columns) — the member-visible versions a stale change is detected by (ADR 0016). NOT the board row's concurrency token |
+| concurrency token | The board row's `rowversion`, used internally to make simultaneous structural changes collide and be re-decided (ADR 0015); never shown to the client |
+| per-account change limit | At most 120 change attempts per account per rolling minute, counted before the membership check and whatever board is named (spec AC-17) |
+| card summary | A card as the board read returns it — identity, column, position, title, content version — without its description (ADR 0018) |
+| Text rule | Spec §5's rule for names, titles and descriptions: surrounding Unicode whitespace trimmed from names and titles only, length counted in code points |
+| reference machine | The machine the §10 latency and throughput figures are measured on — a 2-vCPU virtual machine on the self-hosted host; CI is not the reference machine |
+
+<!-- Candidates for /sdd:glossary if they recur outside this feature: `member-scoped load`,
+     `stale change`, `board not available`. Step 5 (card move) and step 8 (the hub) will reuse all
+     three, which argues for promoting them to CONTEXT.md then. -->
+
