@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: "2026-09-21"
+updated_at: "2026-09-24"
 ---
 
 # Roadmap — Uniqua.Projector
@@ -22,9 +22,9 @@ control and tests hold up under a fifteen-minute read.
 
 | # | Step | Source | Size | Status |
 |---|---|---|:---:|---|
-| 1 | Project skeleton — the four server projects with the reference direction enforced, composition root, EF Core, test harness, React client, CI | `architecture-map.md §Module inventory` | M | idea |
+| 1 | Project skeleton — the four server projects with the reference direction enforced, composition root, EF Core, test harness, React client, CI | `architecture-map.md §Module inventory` | M | shipped |
 | 2 | Accounts and sessions — register, sign in, sign out, carried by an httpOnly cookie → [`docs/features/accounts-and-sessions/`](features/accounts-and-sessions/spec.md) | `idea-brief.md §3. Users` | M | shipped |
-| 3 | A board with columns and cards — create a board, add and reorder columns, add and edit cards, with board membership enforced on every read and write | `idea-brief.md §7. Recommendation` | M | idea |
+| 3 | A board with columns and cards — create a board, add and reorder columns, add and edit cards, with board membership enforced on every read and write → [`docs/features/boards-columns-cards/`](features/boards-columns-cards/spec.md) | `idea-brief.md §7. Recommendation` | M | spec'd |
 | 4 | The first public deployment — the thin path reachable on the owner's registered domain, over TLS, from a host that does not sleep | `idea-brief.md §4. Why now` | M | idea |
 | 5 | Card move with a stated concurrency rule — drag a card within and between columns, with a defined answer for two members moving one card at once | `idea-brief.md §6. Risks` | M | idea |
 | 6 | Checklist subtasks on a card — a line of text with a done flag and a counter on the card face | `idea-brief.md §5. Out of scope` | S | idea |
@@ -55,7 +55,7 @@ control and tests hold up under a fifteen-minute read.
 | D2 | What happens when two members move the same card at the same moment — the later write silently wins, a version check refuses the stale move, or positions are reconciled. | grilling | human | 5 |
 | D3 | The minimum testing that survives a schedule slip — the floor the slip-absorber may not go below. | grilling | human | 9 |
 | D4 | Record the self-hosted deployment target as an ADR, and retire the "hosting is undecided" constraint the architecture map still carries. | task | agent | 4 |
-| D5 | Record one-level board membership as an ADR before the board is specified. | task | agent | 3 |
+| D5 | Record one-level board membership as an ADR during `/sdd:design boards-columns-cards` — amended 2026-09-24: the rule is already fixed in `CONTEXT.md` (`board`) and the step-3 spec §3, so only the MADR record remains. | task | agent | 3 |
 
 ## Decisions so far
 
