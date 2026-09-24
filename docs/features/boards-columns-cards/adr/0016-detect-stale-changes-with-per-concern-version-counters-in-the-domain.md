@@ -43,6 +43,7 @@ Spec §5 fixes a deliberately narrow stale-change rule: editing or deleting a ca
 
 **Negative**
 - Three counters to keep correct, and the client must carry each one it last saw and send it back.
+- `ContentVersion` and `NameVersion` are also EF Core concurrency tokens on their rows: a save or delete is conditional on the counter still being the value the member saw, so two simultaneous edits cannot both land even after both passed the in-memory comparison (critic finding, 2026-09-24).
 - Two kinds of version live side by side — ADR 0015's internal `rowversion` (race control, never shown to the client) and these counters (user-visible staleness); naming must keep them apart.
 
 **Neutral**

@@ -52,8 +52,8 @@ When these conflict, they win in that order: the boundary first, because this fe
 - **Antiforgery on every state-changing request** — `src/Uniqua.Projector.Api/Antiforgery/AntiforgerySetup.cs`; the client sends `X-XSRF-TOKEN`.
 - **Use cases are plain classes returning `Result<T, TError>`** (`src/Uniqua.Projector.Domain/Result.cs`) — no mediator library; ports include `IUnitOfWork` and `IClock` (`src/Uniqua.Projector.Application/Accounts/Ports/`).
 - **Rate limiting is the repository's own in-memory `SlidingWindowLimiter`** driven by `IClock` (`src/Uniqua.Projector.Api/Accounts/SlidingWindowLimiter.cs`); the framework's built-in rate limiter is not used.
-- **Client:** TypeScript 5, **React 19**, Vite, Tailwind, vendored shadcn/ui (`button`, `card`, `input`, `label` so far), **TanStack Query v5**, a `request<T>()` fetch wrapper with a problem-document `ApiError` (`src/Uniqua.Projector.Web/src/api/accounts.ts`). `@dnd-kit/core` and `@dnd-kit/sortable` are already installed. **There is no client-side router yet** — the app is one shell that swaps between the visitor and the signed-in view.
-- **Test fixture:** `tests/Uniqua.Projector.Api.IntegrationTests/ApiFactory.cs` boots the app against a SQL Server container and already provides `TestClock`, `ContentionForcer` (a command interceptor that forces concurrency collisions deterministically), `CommandRecorder` and `LogRecorder`.
+- **Client:** TypeScript 6 (`~6.0.2`), **React 19**, Vite, Tailwind, vendored shadcn/ui (`button`, `card`, `input`, `label` so far), **TanStack Query v5**, a `request<T>()` fetch wrapper with a problem-document `ApiError` (`src/Uniqua.Projector.Web/src/api/accounts.ts`). `@dnd-kit/core` and `@dnd-kit/sortable` are already installed. **There is no client-side router yet** — the app is one shell that swaps between the visitor and the signed-in view.
+- **Test fixture:** `tests/Uniqua.Projector.Api.IntegrationTests/ApiFactory.cs` boots the app against a SQL Server container and already provides `TestClock`, `ContentionForcer` (a command interceptor that forces a concurrency collision deterministically — today it matches only the `AspNetUsers` failed-attempt update, so it must be generalised to board, column and card updates for this feature's race tests), `CommandRecorder` and `LogRecorder`.
 - **Four-project layering:** `Api → Application → Domain` and `Infrastructure → Application → Domain`; Domain references nothing; Api references Infrastructure only to register implementations.
 - **One origin for client and API** (ADR 0003).
 
@@ -139,7 +139,7 @@ The style is the **clean / layered split the foundation fixes**, unchanged: `Api
 
 Three placements are not simply inherited:
 
-- **The Board is the aggregate, the Card is not inside it.** The `Board` holds its columns (at most 20), its card count and each column's card count, and its version counters — everything a structural rule needs — so ADR 0015's token on one row guards every rule. Cards are a separate entity read and written one at a time, so a card change never loads 1,000 cards; the board decides whether a card may be added or a column deleted from its counts, and the `Card` decides whether its own edit is stale (ADR 0016).
+- **The Board is the aggregate, the Card is not inside it.** The `Board` holds its columns (at most 20), its card count, each column's card count and next card position, and its version counters — everything a structural rule needs — so ADR 0015's token on one row guards every rule. Cards are a separate entity read and written one at a time, so a card change never loads 1,000 cards; the board decides whether a card may be added or a column deleted from its counts, and the `Card` decides whether its own edit is stale (ADR 0016).
 - **The member-scoped load is a port method, the owner rule a domain method.** `IBoardStore.LoadForMemberAsync(boardId, accountId)` returns the board only for a member (ADR 0014); anything a request names on that board is looked up through it. `Board.EnsureOwner(accountId)` decides AC-22.
 - **The per-account change limit is an Api endpoint filter.** It must run after the session is recognised and before the membership check (spec §6.1), and it depends only on the account, so it sits on the `/api/v1/boards` route group as `BoardChangeRateLimit`, reusing the existing in-memory `SlidingWindowLimiter` keyed by account id: 120 attempts per rolling minute, a slot reserved per attempt and kept whatever the outcome, an attempt it refuses not counted (AC-17). Reads are not counted.
 
@@ -150,7 +150,8 @@ src/Uniqua.Projector.Domain/Boards/
 ├── Board.cs                 # aggregate: name, columns, card counters, ColumnLayoutVersion;
 │                            # rename/delete (owner only), add/rename/move/delete column,
 │                            # admit a card to a column; every structural rule of spec §5
-├── Column.cs                # name, dense position (ADR 0017), NameVersion (ADR 0016)
+├── Column.cs                # name, dense position (ADR 0017), card count, next card position,
+│                            # NameVersion (ADR 0016)
 ├── Card.cs                  # title, description, gapped position, ContentVersion; edit/delete
 │                            # with the stale check
 ├── BoardMembership.cs       # (board, account, role Owner | Member) — ADR 0013
@@ -167,7 +168,8 @@ src/Uniqua.Projector.Application/Boards/
 
 src/Uniqua.Projector.Infrastructure/Boards/
 ├── BoardStore.cs            # EF Core implementation; member-scoped queries
-├── Configurations/          # Board (rowversion), Column, Card, BoardMembership, owned-board counter
+├── Configurations/          # Board (rowversion), Column (NameVersion as concurrency token), Card
+│                            # (ContentVersion as concurrency token), BoardMembership, owned-board counter
 └── (Migrations/)            # one migration for the boards schema
 
 src/Uniqua.Projector.Api/Boards/
@@ -295,6 +297,8 @@ sequenceDiagram
                 Domain-->>App: Not found on this board
                 App-->>Api: Board not available
                 Api-->>Spa: The same refusal as a nonexistent board, nothing changed on either board
+                Spa->>Api: Re-read the board to tell a gone card from a gone board
+                Note over Spa,Api: Board still available - stay on it, refresh it, keep the typed text (AC-18b). Board not available - show the board-not-available screen
                 Spa-->>Member: Refused as for a card that never existed, typed text kept
             else Title empty after trimming or over 150 characters, or description over 10,000
                 Domain-->>App: Refused, naming the limit
@@ -308,9 +312,9 @@ sequenceDiagram
                 Spa-->>Member: Shows the current card and keeps the typed text to apply again
             else Accepted
                 Domain-->>App: Edited at version N plus 1
-                App->>Infra: Save the card
-                Infra->>Db: Write the card
-                Db-->>Infra: Written
+                App->>Infra: Save the card only if it is still at version N
+                Infra->>Db: Write the card where its content version is still N
+                Db-->>Infra: Written - or no row when another save landed first, and then the member gets the stale refusal with the card as it is now
                 App-->>Api: The updated card
                 Api-->>Spa: The updated card
                 Spa-->>Member: Shows the saved text, cache patched for the board and the card
@@ -395,16 +399,16 @@ Five rows are inherited unchanged from `architecture-map.md` §Conventions and t
 
 | Concept | Convention | Where defined |
 |---|---|---|
-| Authentication | Inherited: the `projector_session` cookie, recognised on every request against a server-side session record. A change arriving with no recognised session is refused before anything else and does not count against the change limit (AC-17, AC-28) | ADR 0003, ADR 0008 |
+| Authentication | Inherited: the `projector_session` cookie, recognised on every request against a server-side session record. A change arriving with no recognised session is refused before the change limit and does not count against it (AC-17, AC-28). The antiforgery check runs earlier still (`Program.cs`: `UseAntiforgeryGuard` before `UseAuthentication`) | ADR 0003, ADR 0008 |
 | Cross-site request forgery | Inherited: an antiforgery token (`X-XSRF-TOKEN`) on every state-changing request, boards included (spec §6.1, last abuse case) | ADR 0007, `AntiforgerySetup.cs` |
-| Authorization | Session → per-account change limit → member-scoped board load → validation, stale check, invariants. Columns and cards are found only through the loaded board. Renaming and deleting the board is `Board.EnsureOwner` | ADR 0013, ADR 0014, spec §6.1 |
+| Authorization | Antiforgery → session → per-account change limit → member-scoped board load → validation, stale check, invariants. Two refusals are answered before the membership check and are identical for every board: a missing or wrong antiforgery token, and a body that is not JSON at all (ADR 0014). Columns and cards are found only through the loaded board. Renaming and deleting the board is `Board.EnsureOwner` | ADR 0013, ADR 0014, spec §6.1 |
 | Error handling | RFC 9457 problem documents from `ProblemDetailsSetup`, wording in `BoardProblems.cs`. **One** `boards.not_available` refusal — same status, body and headers — for a board that is absent, not the caller's, deleted, or for a column or card not on the board named. A stale refusal carries the current state of just the thing that changed, and is produced only after the membership check | ADR 0014, ADR 0016, `CLAUDE.md` |
 | ID strategy | Inherited: `Ids.New()` (GUID v7) for boards, columns, cards and memberships; the database generates none | `CLAUDE.md` |
 | Time | Inherited: the `IClock` port, replaced by `TestClock` in integration tests — the rolling minute of the change limit is measured on it | `src/Uniqua.Projector.Application/Accounts/Ports/IClock.cs` |
 | Text rule | `BoardText` in Domain trims every Unicode whitespace character from names and titles (never from descriptions) and counts length in code points; the client counts the same way — by code point, not by UTF-16 length — so the form and the server agree on every limit | spec §5 Text rule |
 | Text rendering | Board, column and card text is rendered only as React text nodes — `dangerouslySetInnerHTML` is never used for it, nothing is turned into a link, and Tailwind `whitespace-pre-wrap` keeps line breaks and repeated spaces exactly as typed | spec AC-16, §6.1 |
-| Rate limiting | At most 120 change attempts per account per rolling minute, counted by `BoardChangeRateLimit` before membership, whatever board is named; an attempt it refuses does not count; reads do not count. In memory, per instance (§7) | spec AC-17, §6 |
-| Concurrency | Two kinds of version, never confused: the board row's `rowversion` (race control, internal, ADR 0015) and the per-concern counters `ContentVersion`, `NameVersion`, `ColumnLayoutVersion` (the member's view, on the wire, ADR 0016) | ADR 0015, ADR 0016 |
+| Rate limiting | At most 120 change attempts per account per rolling minute, counted by `BoardChangeRateLimit` before membership, whatever board is named; an attempt it refuses does not count; reads do not count. **Two refusals are not counted either**, although AC-17 literally counts every refusal other than the limit's own: a refused antiforgery token (answered before the session, so there is no account to count against — the reason AC-17 already exempts a missing session) and a body that is not JSON (answered by the framework before the route handler, identical for every board, so it reveals nothing). In memory, per instance (§7) | spec AC-17, §6 |
+| Concurrency | Two kinds of version, never confused: the board row's `rowversion` (race control for structural changes, internal, ADR 0015) and the per-concern counters `ContentVersion`, `NameVersion`, `ColumnLayoutVersion` (the member's view, on the wire, ADR 0016). `ContentVersion` and `NameVersion` are **also** the write condition on their own rows — a card is saved or deleted, and a column renamed, only where the counter is still the value the member saw — so two simultaneous edits of one card, or two renames of one column, cannot both land: the loser gets the ordinary stale refusal | ADR 0015, ADR 0016 |
 | Logging | Structured, `module=boards`. Board, column, card and account identifiers may be logged; **board names, column names, card titles and descriptions never are** — not on success and not on a refusal | spec §6.1 |
 | Client state | TanStack Query owns the board summary and each card's detail; accepted changes and stale refusals patch both from the server's answer. React Router's loaders and actions are not used | ADR 0012, ADR 0018 |
 | Typed text across sign-in | When a change is refused because the session ended, what the member typed is kept in `sessionStorage` under the id of the account that typed it; it is offered back only if that same account signs in again in this tab, and is removed when re-applied, when a different account signs in (never shown), or on sign-out. It never outlives the tab | spec AC-28, `ux-flows.md` §Platform decisions |
@@ -438,7 +442,7 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 **QG-2. No silent loss under simultaneous changes**
 - **When:** members change one board at the same moment — column deletes, column adds, card adds and board creations, including pairs made one short of each ceiling — or reorder, add and delete columns in any sequence; or a member saves from an outdated view.
 - **Then:** "0 boards left with no column, 0 non-empty columns deleted, 0 boards above 20 columns or 1,000 cards, and 0 accounts owning more than 50 boards, across 1,000 randomised pairs of simultaneous changes"; "0 duplicated and 0 missing positions across 1,000 randomised sequences of accepted reorders, adds and deletes — every column of a board holds exactly one distinct position"; content ceilings of "50 owned boards per account; 20 columns and 1,000 cards per board; board name ≤ 100, column name ≤ 50, card title ≤ 150, description ≤ 10,000 characters"; a stale change is refused exactly as spec §5's stale-change rule defines, and a change to something else is accepted (AC-24b).
-- **How verify:** an integration test issuing the 1,000 pairs concurrently against the SQL Server container, with `ContentionForcer` guaranteeing that the one-short-of-the-ceiling pairs actually collide on the board row rather than happening to serialise; an integration test over 1,000 randomised column sequences that checks positions after every step; domain unit tests at each ceiling boundary and for the Text rule; domain unit tests for each of the three version counters (ADR 0016) plus the AC-24b integration test.
+- **How verify:** an integration test issuing the 1,000 pairs concurrently against the SQL Server container, with `ContentionForcer` — generalised from its current `AspNetUsers`-only match to board, column and card updates — guaranteeing that the one-short-of-the-ceiling pairs actually collide on the board row rather than happening to serialise; an integration test over 1,000 randomised column sequences that checks positions after every step; domain unit tests at each ceiling boundary and for the Text rule; domain unit tests for each of the three version counters (ADR 0016) plus the AC-24b integration test.
 
 **QG-3. The thin path within the latency budget**
 - **When:** a member opens a board holding 20 columns and 1,000 cards, or makes a single change (add, rename, reorder, edit, delete), under load.
@@ -464,6 +468,7 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 | Contention on the board row — every structural change updates it, and a change fails after 3 conflicts (ADR 0015) | Low | The §7 alert on exhausted retries; re-measure once boards can have several simultaneous members (roadmap step 7) | Alex Korneiko |
 | AC-28's "kept in this browser" is implemented as "kept in this tab" (`sessionStorage`, §8) — a member who closes the tab before signing in loses the typed text | Low | Stated in §8 so `review` checks it against the spec deliberately; chosen because board text is confidential | Alex Korneiko |
 | React Router's loaders or actions creep in and become a second server-state cache beside TanStack Query | Low | The §8 client-state row; `review` checks it | Alex Korneiko |
+| AC-17's wording counts every refusal except the limit's own, while the design does not count a refused antiforgery token or a non-JSON body (§8 Rate limiting) | Low | Align AC-17's wording with the two exemptions in a spec edit; neither exemption reveals anything about any board | Alex Korneiko |
 | Open architectural decision: does roadmap step 5's card move inherit the stale-change rule of AC-23 and AC-24 (roadmap D2)? | Open question | Resolve before `/sdd:specify` of roadmap step 5; default now is yes — a move from an outdated view is refused and the current state shown. ADR 0016's counters extend to card position without reinterpreting the existing ones; spec §8, first open question | Alex Korneiko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**

@@ -22,7 +22,7 @@ Several board rules are counts or cross-row facts: at most 20 columns and 1,000 
 - Spec §6 NFR "Board invariants under simultaneous changes" — 0 violations across 1,000 randomised simultaneous pairs, including pairs one short of each ceiling, against the real store.
 - Spec §6 NFR latency — p95 ≤ 200 ms for a single change; throughput ≥ 50 changes/s across boards.
 - `CLAUDE.md` — domain rules live in Domain; persistence is EF Core behind ports.
-- The existing `ContentionForcer` test fixture can force collisions deterministically.
+- The existing `ContentionForcer` test fixture forces a collision deterministically; it matches only the `AspNetUsers` failed-attempt update today and is generalised to board-row updates for this feature.
 
 ## Considered options
 
@@ -46,7 +46,7 @@ Several board rules are counts or cross-row facts: at most 20 columns and 1,000 
 - Board creation needs an owned-board counter per account that the domain owns; the account's Identity row is not the place (its `ConcurrencyStamp` belongs to Identity). The `data-model` stage places it.
 
 **Neutral**
-- Card title and description edits do not touch the board row; they race only with each other and with the card's deletion, which the card's own version (ADR 0016) settles.
+- Card title and description edits and column renames do not touch the board row; they race only with each other and with the item's deletion, and are settled by the item's own counter used as the write condition on its row (`ContentVersion`, `NameVersion` — ADR 0016).
 
 ## Links
 

@@ -17,6 +17,8 @@ ticket: "roadmap step 3 — boards-columns-cards"
 
 This feature introduces the product's first authorisation boundary. Spec §6.1 fixes the order of checks — session, per-account change limit, membership, then everything else — and requires that every column and card a request names belongs to the board whose membership was checked. A non-member must receive exactly the refusal a nonexistent board gets, including for a change that is itself invalid or stale (AC-25), and a member naming another board's column or card must be refused as if it did not exist (AC-26). The adversarial pass named cross-board substitution the sharpest failure, and showed that the stale-change refusal — which returns current state — would leak a whole board if it were ever answered before membership.
 
+*Not considered:* ASP.NET Core resource-based authorization handlers — they would move the membership and owner rules into framework classes in Api, which `CLAUDE.md` rules out (domain rules live in Domain).
+
 ## Decision drivers
 
 - Quality goal 1 (SAD §1) — an indistinguishable membership boundary; spec §6 NFR "Indistinguishable refusal": 100% of read and change kinds, 0 differences.
@@ -28,11 +30,10 @@ This feature introduces the product's first authorisation boundary. Spec §6.1 f
 
 1. **A member-scoped load in the use case** — every use case begins with a port call that returns the board only if the caller is a member; absent and not-a-member collapse into one application error; columns and cards are found through the loaded board; the owner rule is a Board method.
 2. **An endpoint filter on the boards route group** — an ASP.NET Core endpoint filter checks membership before each handler runs.
-3. **A resource-based authorization policy** — ASP.NET Core authorization handlers evaluate `BoardMember` / `BoardOwner` requirements against the loaded board.
 
 ## Decision outcome
 
-**Chosen:** Option 1. The check runs where the board is loaded, so there is no way to reach a board — or anything on it — without passing it, and the item-belongs-to-board rule falls out of looking items up through the board rather than being a second check someone can forget. The owner rule stays a domain method, and the same use-case entry point serves the hub at step 8. Option 2 splits the rule across Api and Domain and cannot be reused by the hub; option 3 moves the rules into framework handler classes in Api, against the layering rule, and loads the board twice.
+**Chosen:** Option 1. The check runs where the board is loaded, so there is no way to reach a board — or anything on it — without passing it, and the item-belongs-to-board rule falls out of looking items up through the board rather than being a second check someone can forget. The owner rule stays a domain method, and the same use-case entry point serves the hub at step 8. Option 2 splits the rule across Api and Domain and cannot be reused by the hub.
 
 ## Consequences
 

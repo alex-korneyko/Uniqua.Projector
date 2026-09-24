@@ -26,7 +26,7 @@ Columns are added at the end, placed at a new position and deleted (AC-05, AC-06
 
 ## Considered options
 
-1. **Dense column positions, gapped card positions** — columns hold 0..n-1 and the Board renumbers them on every add, move or delete; cards hold ascending integers, a new card takes its column's maximum + 1, and a deletion leaves a gap.
+1. **Dense column positions, gapped card positions** — columns hold 0..n-1 and the Board renumbers them on every add, move or delete; cards hold ascending integers, a new card takes its column's next card position (kept on the column by the Board, one past the highest ever used), and a deletion leaves a gap.
 2. **Fractional keys for both** — sortable string keys, so a move writes only the moved row.
 3. **Dense integers for both** — columns and cards both hold 0..n-1, renumbered on every change.
 
@@ -45,7 +45,7 @@ Columns are added at the end, placed at a new position and deleted (AC-05, AC-06
 - A unique index on (board, column position) cannot hold row by row during a renumber; uniqueness is the domain's invariant plus the NFR test rather than a database constraint (the `data-model` stage confirms).
 
 **Neutral**
-- Card positions are unique within a column by construction (maximum + 1 under the board guard).
+- Card positions are unique within a column by construction: the column's next card position is read and advanced under the board guard, so adding a card never loads the column's cards.
 
 ## Links
 

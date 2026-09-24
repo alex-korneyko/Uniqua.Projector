@@ -17,6 +17,8 @@ ticket: "roadmap step 3 — boards-columns-cards; roadmap D5"
 
 Roadmap decision D5 fixed that membership is one level — an account belongs to a board directly, and a project, if one ever exists, grants no access of its own — and asked that this be recorded as an ADR during this design (spec §8, second open question). The glossary already states the rule (`board`, `board member`, `board owner` in `CONTEXT.md`). What remained open is how access is recorded while every board still has exactly one member: invitations, the only way to add a second member, arrive at roadmap step 7, yet AC-21 and AC-22 must be proved now against a member who is not the owner.
 
+*Not considered:* an owner column alone, with a members table deferred to step 7 — spec §3 and the §6.1 abuse case *owner-only check posing as a membership check* rule it out, since no test could then create a non-owner member.
+
 ## Decision drivers
 
 - Spec §6.1 abuse case *owner-only check posing as a membership check* — while every board has one member, a check comparing the requester to the owner passes every test.
@@ -27,12 +29,11 @@ Roadmap decision D5 fixed that membership is one level — an account belongs to
 ## Considered options
 
 1. **Membership records with a role** — one record per (board, account) carrying `Owner` or `Member`; creating a board writes the creator's `Owner` record.
-2. **An owner column now, a members table at step 7** — `OwnerId` on the board; "member" means "owner" until invitations exist.
-3. **An owner column plus a members table** — `OwnerId` for the owner rights, and a members table listing everyone with access, owner included.
+2. **An owner column plus a members table** — `OwnerId` for the owner rights, and a members table listing everyone with access, owner included.
 
 ## Decision outcome
 
-**Chosen:** Option 1. The membership check is one query whoever is asking, so an integration test that inserts a `Member` record exercises exactly the path production uses, and invitations only add records. Option 2 is the spec §6.1 abuse case itself: without a members table no test can create a non-owner member, so AC-21/22 cannot be proved as the spec requires. Option 3 creates two sources of truth that must agree — an owner missing from the members table would lose access to their own board.
+**Chosen:** Option 1. The membership check is one query whoever is asking, so an integration test that inserts a `Member` record exercises exactly the path production uses, and invitations only add records. Option 2 creates two sources of truth that must agree — an owner missing from the members table would lose access to their own board.
 
 ## Consequences
 
