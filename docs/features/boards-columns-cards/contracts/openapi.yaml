@@ -1,0 +1,1576 @@
+# DERIVED — do not hand-edit. Sources:
+#   fields + constraints  ← data-model.md (Boards, Columns, Cards, BoardMemberships, OwnedBoardCounters)
+#   error responses       ← sad.md §6 flows 1-13 alt-branches, §8 Authorization / Error handling / Rate limiting
+#   endpoint list + shape ← spec.md §4 user stories US-01..US-10 / §5 acceptance criteria AC-01..AC-28
+#   wire decisions        ← ADR 0014 (lenient binding), ADR 0016 (version counters), ADR 0018 (summaries)
+# Recorded deviations from the api-skill defaults (see contracts/api-sync-report.md §C):
+#   - RFC 9457 ProblemDetails replaces the {code,message,details?} envelope; the neutral
+#     `module.error_name` code is a ProblemDetails extension member (precedent: accounts-and-sessions).
+#   - Session cookie replaces BearerAuth (ADR 0003, ADR 0008).
+#   - The board-list cursor is an opaque string, not a uuid (the list is ordered by CreatedAt).
+#   - Text-length bounds on request names/titles are NOT expressed as minLength/maxLength: the spec
+#     counts length after trimming, which JSON Schema cannot state (spec §5 Text rule).
+openapi: 3.1.0
+
+info:
+  title: Boards, Columns and Cards API
+  version: 0.1.0
+  contact:
+    name: "Alex Korneiko — Backend Lead"
+  description: |
+    A signed-in account creates a board, shapes its columns and captures work as cards. This gets a
+    first-time visitor from a fresh account to a board holding a card, unaided, which is the thin path
+    the first public deployment ships. This API is also the product's first authorisation boundary, and
+    it states four board rules where a reader can check them from outside:
+
+    1. **One identical refusal for anyone who is not a member.** `boards.not_available` (404) answers a
+       board that never existed, one that was deleted, one the caller is not a member of, and a column or
+       card that is not on the board named. It answers them identically whatever else is wrong with the
+       request, and it never carries board content (AC-25, AC-26, ADR 0014).
+    2. **Everything a request names belongs to the board that was checked.** Columns and cards are
+       looked up through the member-scoped board, so another board's id is answered as rule 1.
+    3. **A column that still holds cards cannot be deleted, and a board always keeps at least one
+       column** (AC-09, AC-10, AC-10b).
+    4. **A change made from an outdated view is refused, not applied over a newer one.** Every change
+       that can be stale carries the version counter the member last saw (ADR 0016). A stale change is
+       refused with the current state of just the thing that changed (AC-06b, AC-23, AC-24).
+
+    **Order of checks on every request** (spec §6.1, sad.md §8 Authorization): antiforgery token (on
+    changes) → session → a body that is not JSON at all → per-account change limit (changes only) →
+    member-scoped board load → request shape → item on this board → owner check (board rename and
+    delete only) → text limits → stale check → ceilings and column rules. Everything after the board
+    load is answered only to a member. Everything before it is identical for every board.
+
+    **Binding is lenient** (ADR 0014). The server accepts any JSON body as it arrives and judges its
+    shape only after the membership check. So the request schemas below describe what a correct client
+    sends, and the server does not reject them on the way in. A body that is not JSON at all is the one
+    exception: it is refused earlier, identically for every board. Path identifiers are accepted as
+    any string, and a value that is not a UUID is simply a board, column or card that does not exist.
+
+    All board, column and card text is plain text. It is returned exactly as stored, and a client
+    renders it only as text, never as markup or links (AC-16).
+
+servers:
+  - url: https://projector.example.com
+    description: Self-hosted instance
+  - url: http://localhost:5000
+    description: Local
+
+# Global default — every operation requires a recognised session cookie; nothing here is public.
+security:
+  - SessionCookie: []
+
+tags:
+  - name: boards
+    description: Creating, listing, opening, renaming and deleting boards.
+  - name: columns
+    description: Adding, renaming, moving and deleting the columns of a board.
+  - name: cards
+    description: Adding, opening, editing and deleting the cards of a board.
+
+paths:
+  /api/v1/boards:
+    get:
+      tags: [boards]
+      summary: List the boards I am a member of
+      description: |
+        US-02 / AC-04 (sad.md §6 flow 4). Every board the caller is a member of, and no other,
+        most recently created first, with the ones they own marked. A read: it is not counted against
+        the per-account change limit and names no board, so no membership refusal applies.
+
+        Today one page always holds the whole list, because an account owns at most 50 boards (AC-03)
+        and nobody can join another's board until invitations (roadmap step 7). The cursor wrapper is
+        there so step 7 does not change the shape of this response.
+      operationId: listMyBoards
+      parameters:
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The caller's boards, newest first (AC-04). An empty `items` is an account with no board yet.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardListPage" }
+              example:
+                items:
+                  - id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                    name: "Test board"
+                    created_at: "2026-09-24T10:15:00+00:00"
+                    is_owner: true
+                has_next: false
+                has_prev: false
+                next_cursor: null
+                prev_cursor: null
+        "400":
+          description: |
+            `after`, `before` or `limit` is not a value this operation issued or accepts
+            (`boards.request_invalid`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    post:
+      tags: [boards]
+      summary: Create a board
+      description: |
+        US-01 / AC-01, AC-02, AC-03 (sad.md §6 flow 1). Creates the board with the trimmed name and
+        writes the caller's `Owner` membership. The board starts with three columns, To do, In progress
+        and Done, at positions 0, 1 and 2. The response is the board as `openBoard` returns it, so the
+        client opens it directly. A board name need not be unique, even among one account's boards.
+
+        Counted against the per-account change limit (AC-17). The 50-owned-boards ceiling holds under
+        simultaneous creations through the owned-board counter's concurrency token (ADR 0015).
+      operationId: createBoard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBoardRequest" }
+            example:
+              name: "Test board"
+      responses:
+        "201":
+          description: The board was created and the caller is its board owner and only member (AC-01).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+              example:
+                id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                name: "Test board"
+                is_owner: true
+                column_layout_version: 1
+                columns:
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01", name: "To do", position: 0, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a02", name: "In progress", position: 1, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a03", name: "Done", position: 2, name_version: 1 }
+                cards: []
+        "400":
+          description: |
+            `boards.request_malformed`: the body is not JSON at all. `boards.request_invalid`: `name`
+            is absent or not a string. `boards.board_name_invalid`: the name is empty after trimming or
+            longer than 100 characters (AC-02, flow 1 first branch). Nothing is written.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                board_name_invalid: { $ref: "#/components/examples/BoardNameInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "409":
+          description: |
+            AC-03 (flow 1 first branch): the caller already owns 50 boards. The limit holds even when
+            several boards are created at the same moment.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/boards/owned-board-limit-reached"
+                title: "No more boards can be created"
+                status: 409
+                detail: "An account can own at most 50 boards."
+                code: "boards.owned_board_limit_reached"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+    get:
+      tags: [boards]
+      summary: Open a board
+      description: |
+        US-09 / AC-01, AC-20, AC-25, AC-27 (sad.md §6 flow 5; ADR 0018). The board, its columns in
+        position order, and a summary of every card without its description, together with the version
+        counters the member's next changes are checked against. A board at its ceilings (20 columns,
+        1,000 cards) comes to about 150 KB. A read: it is not counted against the change limit.
+
+        A board that never existed, one that was deleted, and one the caller is not a member of are
+        answered with the one identical `boards.not_available`. A visitor with no session gets
+        `accounts.session_not_recognised` for every board id, real or not (AC-27, flow 12).
+      operationId: openBoard
+      responses:
+        "200":
+          description: The board as this member sees it (flow 5, member branch).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Board" }
+              example:
+                id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                name: "Test board"
+                is_owner: false
+                column_layout_version: 4
+                columns:
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01", name: "To do", position: 0, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a03", name: "Done", position: 1, name_version: 2 }
+                cards:
+                  - id: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+                    column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+                    position: 0
+                    title: "Test card"
+                    content_version: 1
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    patch:
+      tags: [boards]
+      summary: Rename the board (board owner only)
+      description: |
+        US-06 / AC-19, AC-02, AC-22 (sad.md §6 flow 11). Only the board owner may rename a board. A
+        board member who is not the owner gets `boards.owner_only`, and the board is unchanged. A board
+        rename is not checked for staleness, because spec §5's stale-change rule names no rule for it.
+        The new name appears in every member's board list.
+      operationId: renameBoard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameBoardRequest" }
+            example:
+              name: "Test board, renamed"
+      responses:
+        "200":
+          description: Renamed (AC-19).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BoardName" }
+              example:
+                id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+                name: "Test board, renamed"
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership and the owner
+            check: `boards.request_invalid` (`name` absent or not a string) or
+            `boards.board_name_invalid` (empty after trimming or over 100 characters; flow 11, rename,
+            first branch).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                board_name_invalid: { $ref: "#/components/examples/BoardNameInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          description: |
+            Either `accounts.antiforgery_failed` (the request is not proven to come from this
+            application), or `boards.owner_only`: the caller is a board member but not the board
+            owner (AC-22, flow 11, the non-owner request). `boards.owner_only` is answered only to a
+            member. A non-member gets `boards.not_available`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                antiforgery_failed: { $ref: "#/components/examples/AntiforgeryFailed" }
+                owner_only: { $ref: "#/components/examples/OwnerOnly" }
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    delete:
+      tags: [boards]
+      summary: Delete the board with everything on it (board owner only)
+      description: |
+        US-06 / AC-20, AC-20b, AC-22 (sad.md §6 flow 11). The owner confirms by sending the board's
+        current name. The server itself compares it, after trimming, same letters and same case, and on
+        a match deletes the board, its columns, cards and memberships in one transaction, and frees one
+        of the owner's 50 owned-board slots. From then on every request about the board or anything on
+        it is answered `boards.not_available`, exactly as for a board that never existed.
+
+        The confirmation travels in the request body, never in the URL, because board names are never
+        logged (sad.md §8 Logging) and URLs reach proxy access logs. Any reverse proxy in front of this
+        API must pass a DELETE request's body through unchanged.
+      operationId: deleteBoard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteBoardRequest" }
+            example:
+              confirm_name: "Test board"
+      responses:
+        "204":
+          description: Deleted with everything on it (AC-20). The client returns to the board list.
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership), or `boards.request_invalid`
+            (`confirm_name` absent or not a string; after membership and the owner check).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          description: |
+            `accounts.antiforgery_failed`, or `boards.owner_only` for a board member who is not the
+            owner (AC-22). Nothing is deleted.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                antiforgery_failed: { $ref: "#/components/examples/AntiforgeryFailed" }
+                owner_only: { $ref: "#/components/examples/OwnerOnly" }
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            AC-20b (flow 11, delete, does-not-match). The typed name does not match the board's
+            current name, including because the board was renamed since the dialog opened. Nothing is
+            deleted, and `current_name` carries the board's current name. That name is shown only to the
+            owner, who has already passed the membership and owner checks.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/boards/confirmation-mismatch"
+                title: "The name does not match"
+                status: 409
+                detail: "Type the board's current name exactly to delete it."
+                code: "boards.confirmation_mismatch"
+                current_name: "Test board, renamed"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}/columns:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+    post:
+      tags: [columns]
+      summary: Add a column at the end of the board
+      description: |
+        US-03 / AC-05, AC-08, AC-11, AC-21 (sad.md §6 flow 6, add). Any board member may add a column,
+        owner or not. The column goes at the end, and the board's column layout version moves on. An add
+        is never stale. A column name need not be unique on its board. The 20-column ceiling holds under
+        simultaneous adds through the board's concurrency token (ADR 0015).
+      operationId: addColumn
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddColumnRequest" }
+            example:
+              name: "Review"
+      responses:
+        "201":
+          description: Added at the end (AC-05).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddedColumn" }
+              example:
+                column: { id: "0192f3a2-0000-7e91-a0b2-3c4d5e6f7a04", name: "Review", position: 3, name_version: 1 }
+                column_layout_version: 2
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership:
+            `boards.request_invalid` (`name` absent or not a string) or `boards.column_name_invalid`
+            (empty after trimming or over 50 characters; AC-08, flow 6 add first branch).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                column_name_invalid: { $ref: "#/components/examples/ColumnNameInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: AC-11 (flow 6, add, 20-columns branch). The limit holds even under simultaneous adds.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/boards/column-limit-reached"
+                title: "No more columns can be added"
+                status: 409
+                detail: "A board can hold at most 20 columns."
+                code: "boards.column_limit_reached"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}/columns/{columnId}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ColumnId"
+    patch:
+      tags: [columns]
+      summary: Rename a column
+      description: |
+        US-03, US-08 / AC-06, AC-06b, AC-08, AC-18b, AC-26 (sad.md §6 flow 6, rename). The rename is
+        checked against the `name_version` the member saw. The column is saved only if that counter is
+        still current, so two simultaneous renames cannot both land (sad.md §8 Concurrency). A rename
+        does not move the board's column layout version (AC-24b).
+
+        A column that is not on this board, whether it belongs to another board, was deleted since, or
+        never existed, is answered `boards.not_available`. That is the same refusal a nonexistent
+        board gets (AC-18b, AC-26), and the client re-reads the board to tell the two apart (flow 2).
+      operationId: renameColumn
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RenameColumnRequest" }
+            example:
+              name: "Doing"
+              name_version: 1
+      responses:
+        "200":
+          description: Renamed (AC-06). `name_version` has moved on by one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Column" }
+              example: { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a02", name: "Doing", position: 1, name_version: 2 }
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership:
+            `boards.request_invalid` (`name` or `name_version` absent or of the wrong type) or
+            `boards.column_name_invalid` (AC-08, flow 6 rename).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                column_name_invalid: { $ref: "#/components/examples/ColumnNameInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            AC-06b (flow 6, renamed-since branch). The column was renamed since the member saw it, by
+            another member or by the same account elsewhere. `current_column` carries the column as it
+            is now, so the client shows its current name and keeps the typed one to apply again.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                column_renamed: { $ref: "#/components/examples/ColumnRenamed" }
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    delete:
+      tags: [columns]
+      summary: Delete an empty column
+      description: |
+        US-03, US-08 / AC-06b, AC-07, AC-09, AC-10, AC-10b, AC-18b (sad.md §6 flows 8 and 3). The
+        deletion carries the `name_version` the member saw. The checks run in this order: on this board
+        → renamed since (stale) → still holds cards → the board's only column. It is accepted only for an
+        empty column when another column remains. The remaining columns are renumbered 0..n-1 and keep
+        their relative order, and the board's column layout version moves on. The board's concurrency
+        token settles a race (ADR 0015). When two members delete the last two columns at once, exactly
+        one succeeds (AC-10b).
+
+        The version travels in the request body, like every other change (sad.md §8 Error handling;
+        ADR 0014 lenient binding). No confirmation is asked, since only an empty column can go.
+      operationId: deleteColumn
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteColumnRequest" }
+            example:
+              name_version: 1
+      responses:
+        "200":
+          description: Removed (AC-07). The body is the board's column set as it now is.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ColumnLayout" }
+              example:
+                column_layout_version: 3
+                columns:
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01", name: "To do", position: 0, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a03", name: "Done", position: 1, name_version: 1 }
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership), or `boards.request_invalid`
+            (`name_version` absent or not an integer; after membership).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            One of three refusals, in this order (flow 8). `boards.column_renamed` (AC-06b): renamed
+            since the member saw it, and `current_column` carries it as it is now. Nothing is deleted.
+            `boards.column_not_empty` (AC-09): the column still holds at least one card, and the column
+            and its cards are untouched. `boards.last_column` (AC-10, AC-10b): it is the board's only
+            column, including when a simultaneous deletion took the other one.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                column_renamed: { $ref: "#/components/examples/ColumnRenamed" }
+                column_not_empty:
+                  value:
+                    type: "https://projector.example.com/problems/boards/column-not-empty"
+                    title: "The column still holds cards"
+                    status: 409
+                    detail: "A column that still holds cards cannot be deleted."
+                    code: "boards.column_not_empty"
+                last_column:
+                  value:
+                    type: "https://projector.example.com/problems/boards/last-column"
+                    title: "The last column cannot be deleted"
+                    status: 409
+                    detail: "A board must keep at least one column."
+                    code: "boards.last_column"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}/columns/{columnId}/position:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/ColumnId"
+    put:
+      tags: [columns]
+      summary: Place a column at a new position
+      description: |
+        US-03, US-08 / AC-06, AC-24, AC-24b (sad.md §6 flow 7). The move carries the board's
+        `column_layout_version` the member saw. It is stale only if a column was added, moved or
+        deleted since. Renames and card changes do not move that counter, so they never make a move
+        stale (AC-24b). On success every column is renumbered 0..n-1, and the layout version moves on
+        by one.
+
+        `position` is the column's new zero-based place among the board's columns as they are once
+        the move is done, so it must lie in 0..n-1. It is checked after the stale check, because n
+        is only known for a current view (api-sync-report.md OQ-API-2).
+      operationId: moveColumn
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MoveColumnRequest" }
+            example:
+              position: 0
+              column_layout_version: 1
+      responses:
+        "200":
+          description: Moved (AC-06). The body is the board's column set in its new order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ColumnLayout" }
+              example:
+                column_layout_version: 2
+                columns:
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a03", name: "Done", position: 0, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01", name: "To do", position: 1, name_version: 1 }
+                  - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a02", name: "In progress", position: 2, name_version: 1 }
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership:
+            `boards.request_invalid` (`position` or `column_layout_version` absent or not an integer),
+            or, after the stale check, `boards.column_position_invalid` (`position` outside 0..n-1).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                column_position_invalid:
+                  value:
+                    type: "https://projector.example.com/problems/boards/column-position-invalid"
+                    title: "That position is not on this board"
+                    status: 400
+                    detail: "A column can be placed only at a position between the first and the last."
+                    code: "boards.column_position_invalid"
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            AC-24 (flow 7, stale branch). The board's columns changed since the member saw them.
+            `current_layout` carries the current columns and order, and nothing moved.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/boards/columns-changed"
+                title: "The columns changed"
+                status: 409
+                detail: "The columns changed since you last saw them."
+                code: "boards.columns_changed"
+                current_layout:
+                  column_layout_version: 2
+                  columns:
+                    - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01", name: "To do", position: 0, name_version: 1 }
+                    - { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a03", name: "Done", position: 1, name_version: 1 }
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}/cards:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+    post:
+      tags: [cards]
+      summary: Add a card at the end of a column
+      description: |
+        US-04 / AC-12, AC-14, AC-15, AC-16, AC-18b, AC-21, AC-26 (sad.md §6 flows 9 and 1). The card
+        goes at the end of the named column. Its title is trimmed, its description is stored exactly as
+        typed, and it starts at `content_version` 1. An add is never stale. The 1,000-card ceiling holds
+        under simultaneous adds through the board's concurrency token (ADR 0015).
+
+        A `column_id` that is not on this board, whether another board's column, one deleted since, or
+        one that never existed, is answered `boards.not_available` (AC-18b, AC-26).
+      operationId: addCard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddCardRequest" }
+            example:
+              column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+              title: "Test card"
+              description: "First line\nSecond line"
+      responses:
+        "201":
+          description: Added at the end of its column (AC-12). The body is the card's summary, as the board read carries it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CardSummary" }
+              example:
+                id: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+                column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+                position: 0
+                title: "Test card"
+                content_version: 1
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership:
+            `boards.request_invalid` (`column_id` or `title` absent or not a string, or `description`
+            present but not a string). After the column is found on this board:
+            `boards.card_title_invalid` (empty after trimming or over 150 characters) or
+            `boards.card_description_invalid` (over 10,000 characters). The whole card is refused
+            (AC-14, flow 9), and the title is checked first.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                card_title_invalid: { $ref: "#/components/examples/CardTitleInvalid" }
+                card_description_invalid: { $ref: "#/components/examples/CardDescriptionInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: AC-15 (flow 9, ceiling branch). The limit holds even under simultaneous adds.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              example:
+                type: "https://projector.example.com/problems/boards/card-limit-reached"
+                title: "No more cards can be added"
+                status: 409
+                detail: "A board can hold at most 1,000 cards."
+                code: "boards.card_limit_reached"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+  /api/v1/boards/{boardId}/cards/{cardId}:
+    parameters:
+      - $ref: "#/components/parameters/BoardId"
+      - $ref: "#/components/parameters/CardId"
+    get:
+      tags: [cards]
+      summary: Open a card
+      description: |
+        US-04 / AC-13, AC-16, AC-23 (sad.md §6 flow 5, card; ADR 0018). The card's full text and its
+        `content_version`. That counter is the one the member's edit or delete is checked against. A
+        card that is not on this board is answered `boards.not_available`. A read: not counted against
+        the change limit.
+      operationId: openCard
+      responses:
+        "200":
+          description: The card, text exactly as stored (AC-16).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Card" }
+              example:
+                id: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+                column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+                position: 0
+                title: "Test card"
+                description: "First line\nSecond line  <b>shown as typed</b>"
+                content_version: 1
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    patch:
+      tags: [cards]
+      summary: Edit a card's title, description, or both
+      description: |
+        US-04, US-08 / AC-13, AC-14, AC-16, AC-18b, AC-23, AC-24b, AC-26 (sad.md §6 flow 2). Send
+        `title`, `description`, or both, plus the `content_version` of the card as it was opened. The
+        edit is stale if either the title or the description changed since, whichever one this edit
+        touches. The card is saved only if its counter is still that value, so two simultaneous edits
+        cannot both land (sad.md §8 Concurrency). A change to another card or to a column never makes
+        this edit stale (AC-24b). An edit with neither field is `boards.request_invalid`.
+      operationId: editCard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EditCardRequest" }
+            example:
+              title: "Test card, edited"
+              content_version: 1
+      responses:
+        "200":
+          description: Saved (AC-13). `content_version` has moved on by one.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Card" }
+              example:
+                id: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+                column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+                position: 0
+                title: "Test card, edited"
+                description: "First line\nSecond line"
+                content_version: 2
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership). After membership:
+            `boards.request_invalid` (`content_version` absent or not an integer, a field of the wrong
+            type, or neither `title` nor `description` sent). After the card is found on this board:
+            `boards.card_title_invalid` or `boards.card_description_invalid`. The whole change is
+            refused (AC-14, flow 2), and the title is checked first.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+                card_title_invalid: { $ref: "#/components/examples/CardTitleInvalid" }
+                card_description_invalid: { $ref: "#/components/examples/CardDescriptionInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            AC-23 (flow 2, stale branch; also when another save landed first at the store).
+            `current_card` carries the card as it is now, with its description, so the client shows it
+            and keeps the typed text to apply again.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                card_changed: { $ref: "#/components/examples/CardChanged" }
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+    delete:
+      tags: [cards]
+      summary: Delete a card
+      description: |
+        US-05, US-08 / AC-18, AC-18b, AC-23 (sad.md §6 flow 10). The deletion carries the
+        `content_version` of the card as it was opened, and it is stale if the title or the description
+        changed since. On success the other cards of the column keep their positions, so a gap remains
+        (ADR 0017). From then on a change naming this card is answered `boards.not_available`, exactly
+        as for a card that never existed. The version travels in the request body, like every other
+        change.
+      operationId: deleteCard
+      parameters:
+        - $ref: "#/components/parameters/AntiforgeryToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeleteCardRequest" }
+            example:
+              content_version: 2
+      responses:
+        "204":
+          description: Deleted (AC-18).
+        "400":
+          description: |
+            `boards.request_malformed` (not JSON, before membership), or `boards.request_invalid`
+            (`content_version` absent or not an integer; after membership).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                request_malformed: { $ref: "#/components/examples/RequestMalformed" }
+                request_invalid: { $ref: "#/components/examples/RequestInvalid" }
+        "401":
+          $ref: "#/components/responses/SessionNotRecognised"
+        "403":
+          $ref: "#/components/responses/AntiforgeryFailed"
+        "404":
+          $ref: "#/components/responses/BoardNotAvailable"
+        "409":
+          description: |
+            AC-23 (flow 10, stale branch). The card changed since it was opened. Nothing is deleted,
+            and `current_card` carries it as it is now, so the member can decide again.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                card_changed: { $ref: "#/components/examples/CardChanged" }
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "429":
+          $ref: "#/components/responses/ChangeRateLimited"
+        "503":
+          $ref: "#/components/responses/Contended"
+        "4XX":
+          $ref: "#/components/responses/RequestRejected"
+        "500":
+          $ref: "#/components/responses/Unexpected"
+
+components:
+  securitySchemes:
+    # NOT BearerAuth — deviation by ADR 0003 + ADR 0008, the same scheme accounts-and-sessions declares.
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: projector_session
+      description: |
+        Opaque reference to a server-side session record, httpOnly, secure and same-site
+        (accounts-and-sessions). Because the browser attaches it automatically, every state-changing
+        request additionally requires the antiforgery token (sad.md §8).
+
+  parameters:
+    BoardId:
+      in: path
+      name: boardId
+      required: true
+      description: |
+        The board's id, a GUID v7 from `Boards.Id`. Accepted as any string (ADR 0014 lenient binding).
+        A value that is not a UUID is simply a board that does not exist, answered with the one
+        `boards.not_available`.
+      schema: { type: string }
+      example: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+    ColumnId:
+      in: path
+      name: columnId
+      required: true
+      description: |
+        A column's id from `Columns.Id`, looked up only through the board named. A column of another
+        board, a deleted one, or a value that is not a UUID is answered `boards.not_available` (AC-26).
+      schema: { type: string }
+      example: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+    CardId:
+      in: path
+      name: cardId
+      required: true
+      description: |
+        A card's id from `Cards.Id`, looked up only through the board named (`Id = @card AND
+        BoardId = @board`). Anything else is answered `boards.not_available` (AC-18b, AC-26).
+      schema: { type: string }
+      example: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+    After:
+      in: query
+      name: after
+      required: false
+      description: An opaque cursor, the `next_cursor` of a previous page. The page starts after it.
+      schema: { type: string, maxLength: 200 }
+    Before:
+      in: query
+      name: before
+      required: false
+      description: An opaque cursor, the `prev_cursor` of a previous page. The page ends before it.
+      schema: { type: string, maxLength: 200 }
+    Limit:
+      in: query
+      name: limit
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    AntiforgeryToken:
+      in: header
+      name: X-XSRF-TOKEN
+      required: true
+      description: |
+        Antiforgery token, required on every state-changing request (sad.md §8), checked before the
+        session and so before any board is looked at. The client echoes the readable `XSRF-TOKEN`
+        cookie that every safe response sets, as declared in accounts-and-sessions' `getCurrentAccount`.
+      schema: { type: string, maxLength: 512 }
+
+  responses:
+    BoardNotAvailable:
+      description: |
+        **The one refusal of the boundary** (ADR 0014, sad.md §8 Error handling). It answers a board
+        that never existed, a deleted board, a board the caller is not a member of, and a column or
+        card that is not on the board named. Status, headers and body are identical in every case, and
+        also whatever else is wrong with the request: an invalid body, a stale version, a non-UUID
+        id. The body carries no board content.
+
+        Two members echo the request itself and so differ between any two requests, whichever board
+        they name: `instance` (the request path, which the caller already knows) and `traceId`. The
+        spec §6 "indistinguishable refusal" comparison excludes exactly those two
+        (api-sync-report.md F-2).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/boards/not-available"
+            title: "Board not available"
+            status: 404
+            detail: "This board does not exist, or you are not a member of it."
+            instance: "/api/v1/boards/0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a8b"
+            code: "boards.not_available"
+            traceId: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+
+    ChangeRateLimited:
+      description: |
+        AC-17 (sad.md §6 flow 2, first branch; §8 Rate limiting). The account has attempted 120
+        changes within the past rolling minute, counted whichever board they named and whether
+        accepted or refused. Nothing changed on any board. Answered before the membership check and
+        identically whichever board the change named, so it reveals nothing about any board. An
+        attempt this limit refuses is not itself counted, and neither are reads, requests with no
+        session, a failed antiforgery check or a body that is not JSON.
+      headers:
+        Retry-After:
+          description: seconds until the oldest counted attempt leaves the minute
+          schema: { type: integer, minimum: 1 }
+          example: 12
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/boards/change-rate-limited"
+            title: "Changes are temporarily limited"
+            status: 429
+            detail: "You have made many changes in the past minute. You can continue shortly."
+            code: "boards.change_rate_limited"
+            retry_after_seconds: 12
+
+    Contended:
+      description: |
+        The change lost the race on the board's concurrency token (or the owned-board counter's) on
+        every one of its bounded retries (ADR 0015), so it was not applied. Nothing changed, and the
+        attempt counts against the change limit. Answered only after the membership check, because a
+        race exists only on a board the caller belongs to. The client keeps the typed text and may
+        simply try again. sad.md §7 alerts on every occurrence. The §6 flows do not show this
+        branch yet (api-sync-report.md OQ-API-1).
+      headers:
+        Retry-After:
+          description: seconds after which a retry is reasonable
+          schema: { type: integer, minimum: 1 }
+          example: 1
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/boards/contended"
+            title: "The board is busy"
+            status: 503
+            detail: "Others are changing this board right now. Try again."
+            code: "boards.contended"
+            retry_after_seconds: 1
+
+    SessionNotRecognised:
+      description: |
+        No session is recognised: the cookie is absent, revoked or expired (accounts-and-sessions).
+        Answered before anything about the board is looked at, identically for every board id, real
+        or not (AC-27, AC-28; flows 12, 13). A change refused here changed nothing, is not treated as
+        coming from any account, and is not counted against the change limit.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/accounts/session-not-recognised"
+            title: "Not signed in"
+            status: 401
+            detail: "Sign in to continue."
+            code: "accounts.session_not_recognised"
+
+    AntiforgeryFailed:
+      description: |
+        The antiforgery token was missing or did not match (sad.md §8). It is checked before the
+        session, so it is identical for every board and is not counted against the change limit.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/accounts/antiforgery-failed"
+            title: "The request could not be verified"
+            status: 403
+            detail: "The request could not be verified as coming from this application."
+            code: "accounts.antiforgery_failed"
+
+    Unexpected:
+      description: An unhandled failure. A stable `code` and nothing else about what failed, and the log carries the same `traceId`.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/api/unexpected"
+            title: "An unexpected error occurred"
+            status: 500
+            detail: "An unexpected error occurred."
+            code: "api.unexpected"
+
+    RequestTooLarge:
+      description: The body is larger than Kestrel's `MaxRequestBodySize`. Refused before routing, identically for every board.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/api/request-too-large"
+            title: "The request body is too large"
+            status: 413
+            detail: "The request body is larger than this server accepts."
+            code: "api.request_too_large"
+
+    RequestRejected:
+      description: |
+        Rejected before any endpoint read it, with a 4xx no more specific response on this operation
+        declares (for example 405, or 408 for a body arriving too slowly). The feature-neutral family
+        of accounts-and-sessions. `status` is the rejection's own, and the rest is fixed.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          example:
+            type: "https://projector.example.com/problems/api/request-rejected"
+            title: "The request was rejected"
+            status: 405
+            detail: "The request could not be accepted as it was sent."
+            code: "api.request_rejected"
+
+  examples:
+    RequestMalformed:
+      summary: The body is not JSON at all (or not sent as JSON), refused before membership
+      value:
+        type: "https://projector.example.com/problems/boards/request-malformed"
+        title: "The request body could not be read"
+        status: 400
+        detail: "The request body must be a JSON object matching the documented shape."
+        code: "boards.request_malformed"
+    RequestInvalid:
+      summary: JSON, but not the documented shape, refused only after membership
+      value:
+        type: "https://projector.example.com/problems/boards/request-invalid"
+        title: "The request is not complete"
+        status: 400
+        detail: "The request is missing a value it needs, or a value has the wrong type."
+        code: "boards.request_invalid"
+    BoardNameInvalid:
+      summary: AC-02
+      value:
+        type: "https://projector.example.com/problems/boards/board-name-invalid"
+        title: "The board name is not usable"
+        status: 400
+        detail: "A board name must be between 1 and 100 characters."
+        code: "boards.board_name_invalid"
+    ColumnNameInvalid:
+      summary: AC-08
+      value:
+        type: "https://projector.example.com/problems/boards/column-name-invalid"
+        title: "The column name is not usable"
+        status: 400
+        detail: "A column name must be between 1 and 50 characters."
+        code: "boards.column_name_invalid"
+    CardTitleInvalid:
+      summary: AC-14, title
+      value:
+        type: "https://projector.example.com/problems/boards/card-title-invalid"
+        title: "The card title is not usable"
+        status: 400
+        detail: "A card title must be between 1 and 150 characters."
+        code: "boards.card_title_invalid"
+    CardDescriptionInvalid:
+      summary: AC-14, description
+      value:
+        type: "https://projector.example.com/problems/boards/card-description-invalid"
+        title: "The card description is too long"
+        status: 400
+        detail: "A card description can be at most 10,000 characters."
+        code: "boards.card_description_invalid"
+    AntiforgeryFailed:
+      summary: The antiforgery token was missing or did not match
+      value:
+        type: "https://projector.example.com/problems/accounts/antiforgery-failed"
+        title: "The request could not be verified"
+        status: 403
+        detail: "The request could not be verified as coming from this application."
+        code: "accounts.antiforgery_failed"
+    OwnerOnly:
+      summary: AC-22
+      value:
+        type: "https://projector.example.com/problems/boards/owner-only"
+        title: "Only the board owner can do this"
+        status: 403
+        detail: "Only the board owner may rename or delete a board."
+        code: "boards.owner_only"
+    ColumnRenamed:
+      summary: AC-06b, carrying the column as it is now
+      value:
+        type: "https://projector.example.com/problems/boards/column-renamed"
+        title: "The column was renamed"
+        status: 409
+        detail: "This column was renamed since you last saw it."
+        code: "boards.column_renamed"
+        current_column: { id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a02", name: "Doing", position: 1, name_version: 2 }
+    CardChanged:
+      summary: AC-23, carrying the card as it is now
+      value:
+        type: "https://projector.example.com/problems/boards/card-changed"
+        title: "The card was changed"
+        status: 409
+        detail: "This card was changed since you opened it."
+        code: "boards.card_changed"
+        current_card:
+          id: "0192f3a1-0000-7e91-a0b2-3c4d5e6f7c01"
+          column_id: "0192f3a0-7c4d-7e91-a0b2-3c4d5e6f7a01"
+          position: 0
+          title: "Test card, edited elsewhere"
+          description: ""
+          content_version: 3
+
+  schemas:
+    # RFC 9457 ProblemDetails — the repo's one error shape (CLAUDE.md, sad.md §8), from ProblemDetailsSetup.
+    # `code` carries the neutral `module.error_name` convention; the `current_*` members carry the
+    # current state a stale refusal returns (ADR 0016) and appear only after the membership check.
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail:
+          type: string
+          description: A fixed sentence per code. Never an echo of what was submitted and never board content.
+        instance: { type: string, format: uri-reference }
+        traceId: { type: string }
+        code:
+          type: string
+          pattern: "^[a-z_]+\\.[a-z_]+$"
+          example: "boards.not_available"
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+          description: present only on `boards.change_rate_limited` and `boards.contended` (and the accounts rate limits)
+        current_card:
+          $ref: "#/components/schemas/Card"
+          description: present only on `boards.card_changed` (AC-23)
+        current_column:
+          $ref: "#/components/schemas/Column"
+          description: present only on `boards.column_renamed` (AC-06b)
+        current_layout:
+          $ref: "#/components/schemas/ColumnLayout"
+          description: present only on `boards.columns_changed` (AC-24)
+        current_name:
+          $ref: "#/components/schemas/BoardNameText"
+          description: present only on `boards.confirmation_mismatch` (AC-20b)
+
+    # ---- stored text, as returned (already trimmed, so the bounds hold exactly) ----
+    BoardNameText:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: A board name, trimmed, 1–100 code points (`Boards.Name`; spec §5 Text rule). Plain text.
+    ColumnNameText:
+      type: string
+      minLength: 1
+      maxLength: 50
+      description: A column name, trimmed, 1–50 code points (`Columns.Name`). Plain text.
+    CardTitleText:
+      type: string
+      minLength: 1
+      maxLength: 150
+      description: A card title, trimmed, 1–150 code points (`Cards.Title`). Plain text.
+    CardDescriptionText:
+      type: string
+      maxLength: 10000
+      description: |
+        A card description exactly as typed, never trimmed, at most 10,000 code points
+        (`Cards.Description`). An empty string means no description. Plain text: line breaks and
+        repeated spaces are significant, and nothing in it is markup or a link (AC-16).
+
+    BoardListEntry:
+      type: object
+      required: [id, name, created_at, is_owner]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`Boards.Id`, GUID v7" }
+        name: { $ref: "#/components/schemas/BoardNameText" }
+        created_at: { type: string, format: date-time, description: "`Boards.CreatedAt`; the list is ordered by it, newest first" }
+        is_owner: { type: boolean, description: "the caller's `BoardMemberships.Role` is `Owner`" }
+
+    BoardListPage:
+      type: object
+      required: [items, has_next, has_prev, next_cursor, prev_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/BoardListEntry" }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+        next_cursor:
+          type: [string, "null"]
+          description: opaque; pass as `after`. Encodes the last item's (created_at, id). Null when there is no next page
+        prev_cursor:
+          type: [string, "null"]
+          description: opaque; pass as `before`. Null when there is no previous page
+
+    Column:
+      type: object
+      required: [id, name, position, name_version]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`Columns.Id`, GUID v7" }
+        name: { $ref: "#/components/schemas/ColumnNameText" }
+        position:
+          type: integer
+          minimum: 0
+          maximum: 19
+          description: "`Columns.Position`, dense 0..n-1 across the board's columns (ADR 0017)"
+        name_version:
+          type: integer
+          minimum: 1
+          description: "`Columns.NameVersion`; moves only on a rename (ADR 0016). Send it back to rename or delete this column"
+
+    ColumnLayout:
+      type: object
+      required: [column_layout_version, columns]
+      additionalProperties: false
+      properties:
+        column_layout_version:
+          type: integer
+          minimum: 1
+          description: "`Boards.ColumnLayoutVersion`; moves when a column is added, moved or deleted, never on a rename (ADR 0016)"
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: every column of the board, in position order
+          items: { $ref: "#/components/schemas/Column" }
+
+    AddedColumn:
+      type: object
+      required: [column, column_layout_version]
+      additionalProperties: false
+      properties:
+        column: { $ref: "#/components/schemas/Column" }
+        column_layout_version: { type: integer, minimum: 1, description: "`Boards.ColumnLayoutVersion` after the add" }
+
+    CardSummary:
+      type: object
+      required: [id, column_id, position, title, content_version]
+      additionalProperties: false
+      description: A card as the board read returns it, without its description (ADR 0018).
+      properties:
+        id: { type: string, format: uuid, description: "`Cards.Id`, GUID v7" }
+        column_id: { type: string, format: uuid, description: "`Cards.ColumnId`" }
+        position:
+          type: integer
+          minimum: 0
+          description: "`Cards.Position`, gapped and ascending within the column (ADR 0017). Order by it, and do not read it as an index"
+        title: { $ref: "#/components/schemas/CardTitleText" }
+        content_version:
+          type: integer
+          minimum: 1
+          description: "`Cards.ContentVersion`; moves when the title or description changes (ADR 0016)"
+
+    Card:
+      type: object
+      required: [id, column_id, position, title, description, content_version]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`Cards.Id`" }
+        column_id: { type: string, format: uuid, description: "`Cards.ColumnId`" }
+        position: { type: integer, minimum: 0, description: "`Cards.Position`" }
+        title: { $ref: "#/components/schemas/CardTitleText" }
+        description: { $ref: "#/components/schemas/CardDescriptionText" }
+        content_version:
+          type: integer
+          minimum: 1
+          description: "`Cards.ContentVersion`. Send it back to edit or delete this card"
+
+    Board:
+      type: object
+      required: [id, name, is_owner, column_layout_version, columns, cards]
+      additionalProperties: false
+      description: A board as one member sees it (flow 5; ADR 0018). About 150 KB at the ceilings.
+      properties:
+        id: { type: string, format: uuid, description: "`Boards.Id`" }
+        name: { $ref: "#/components/schemas/BoardNameText" }
+        is_owner:
+          type: boolean
+          description: "the caller's `BoardMemberships.Role` is `Owner`; the client offers rename and delete only then"
+        column_layout_version:
+          type: integer
+          minimum: 1
+          description: "`Boards.ColumnLayoutVersion`. Send it back to move a column"
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: in position order
+          items: { $ref: "#/components/schemas/Column" }
+        cards:
+          type: array
+          maxItems: 1000
+          description: every card of the board, ordered by column position, then card position
+          items: { $ref: "#/components/schemas/CardSummary" }
+
+    BoardName:
+      type: object
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`Boards.Id`" }
+        name: { $ref: "#/components/schemas/BoardNameText" }
+
+    # ---- requests: what a correct client sends. Bound leniently (ADR 0014); judged after membership. ----
+    # Names and titles carry no minLength/maxLength: the spec bounds them AFTER trimming Unicode
+    # whitespace, counted in code points, and a raw string may legally be longer (api-sync-report §B.3).
+    CreateBoardRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 1–100 code points once leading and trailing Unicode whitespace is trimmed (AC-01, AC-02)
+
+    RenameBoardRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 1–100 code points after trimming (AC-19, AC-02)
+
+    DeleteBoardRequest:
+      type: object
+      required: [confirm_name]
+      additionalProperties: false
+      properties:
+        confirm_name:
+          type: string
+          description: The board's current name as the owner typed it. Compared after trimming, same letters and same case (AC-20)
+
+    AddColumnRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 1–50 code points after trimming (AC-05, AC-08)
+
+    RenameColumnRequest:
+      type: object
+      required: [name, name_version]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: 1–50 code points after trimming (AC-06, AC-08)
+        name_version:
+          type: integer
+          minimum: 1
+          description: the column's `name_version` as the member last saw it (AC-06b)
+
+    MoveColumnRequest:
+      type: object
+      required: [position, column_layout_version]
+      additionalProperties: false
+      properties:
+        position:
+          type: integer
+          minimum: 0
+          maximum: 19
+          description: the column's new zero-based position, 0..n-1 on the current board (checked after the stale check)
+        column_layout_version:
+          type: integer
+          minimum: 1
+          description: the board's `column_layout_version` as the member last saw it (AC-24)
+
+    DeleteColumnRequest:
+      type: object
+      required: [name_version]
+      additionalProperties: false
+      properties:
+        name_version:
+          type: integer
+          minimum: 1
+          description: the column's `name_version` as the member last saw it (AC-06b)
+
+    AddCardRequest:
+      type: object
+      required: [column_id, title]
+      additionalProperties: false
+      properties:
+        column_id:
+          type: string
+          description: a column of this board. Anything else is answered `boards.not_available` (AC-18b, AC-26)
+        title:
+          type: string
+          description: 1–150 code points after trimming (AC-12, AC-14)
+        description:
+          type: string
+          maxLength: 10000
+          description: optional, stored exactly as typed, at most 10,000 code points. Absent means no description (stored as "")
+
+    EditCardRequest:
+      type: object
+      required: [content_version]
+      minProperties: 2
+      additionalProperties: false
+      description: at least one of `title` and `description`, plus `content_version`
+      properties:
+        title:
+          type: string
+          description: 1–150 code points after trimming (AC-13, AC-14)
+        description:
+          type: string
+          maxLength: 10000
+          description: exactly as typed, at most 10,000 code points. "" clears it
+        content_version:
+          type: integer
+          minimum: 1
+          description: the card's `content_version` as it was opened (AC-23)
+
+    DeleteCardRequest:
+      type: object
+      required: [content_version]
+      additionalProperties: false
+      properties:
+        content_version:
+          type: integer
+          minimum: 1
+          description: the card's `content_version` as it was opened (AC-23)
