@@ -135,50 +135,82 @@ Each tactical decision in later sections should trace to one of these seeds. Tac
 
 ## 5. Building block view
 
-<!-- 🎯 Why: INTERNAL DECOMPOSITION — modules, containers, datastores. The static topology: who
-     may talk to whom. Without §5, §6 (the flows) has no vocabulary of participants.
-     📋 Write: 1 ¶ on the style (layered / hexagonal / clean / event-driven) + a folder tree + a
-     C4Container block.
-     📌 Draw ONE Container per declared `target_surface` (frontmatter): a fullstack
-     [backend-service, web-frontend] = a backend-API container + a web/SPA container; a
-     [backend-service, mobile-app] = the API + the mobile app. The Container(web, …) line below is
-     just one surface's container — swap/add per what was declared in §4. → _shared/surfaces.md
-     📌 e.g. «web app, content API, media worker, datastore, object store, CDN». -->
+The style is the **clean / layered split the foundation fixes**, unchanged: `Api → Application → Domain` and `Infrastructure → Application → Domain`. This feature adds a `Boards/` slice to every layer, shaped exactly like the `Accounts/` slice accounts-and-sessions established — entities and their errors in Domain, one use-case class per action plus the ports it needs in Application, EF Core stores in Infrastructure, minimal-API endpoints in Api, and a feature folder in the client. Two of the containers below are the declared target surfaces (the HTTP API and the web client); the rest are the layers behind them and the store.
 
-<One paragraph: layered / hexagonal / clean / event-driven, and why.>
+Three placements are not simply inherited:
+
+- **The Board is the aggregate, the Card is not inside it.** The `Board` holds its columns (at most 20), its card count and each column's card count, and its version counters — everything a structural rule needs — so ADR 0015's token on one row guards every rule. Cards are a separate entity read and written one at a time, so a card change never loads 1,000 cards; the board decides whether a card may be added or a column deleted from its counts, and the `Card` decides whether its own edit is stale (ADR 0016).
+- **The member-scoped load is a port method, the owner rule a domain method.** `IBoardStore.LoadForMemberAsync(boardId, accountId)` returns the board only for a member (ADR 0014); anything a request names on that board is looked up through it. `Board.EnsureOwner(accountId)` decides AC-22.
+- **The per-account change limit is an Api endpoint filter.** It must run after the session is recognised and before the membership check (spec §6.1), and it depends only on the account, so it sits on the `/api/v1/boards` route group as `BoardChangeRateLimit`, reusing the existing in-memory `SlidingWindowLimiter` keyed by account id: 120 attempts per rolling minute, a slot reserved per attempt and kept whatever the outcome, an attempt it refuses not counted (AC-17). Reads are not counted.
 
 **Internal decomposition:**
 
 ```
-<e.g. modules/<feature>/>
-├── domain/       <entities + sentinel errors>
-├── app/          <use cases / services>
-├── infra/        <repository + integration impl>
-├── ports/        <handlers, DTOs, error mapping>
-└── wiring        <self-wiring entry point>
+src/Uniqua.Projector.Domain/Boards/
+├── Board.cs                 # aggregate: name, columns, card counters, ColumnLayoutVersion;
+│                            # rename/delete (owner only), add/rename/move/delete column,
+│                            # admit a card to a column; every structural rule of spec §5
+├── Column.cs                # name, dense position (ADR 0017), NameVersion (ADR 0016)
+├── Card.cs                  # title, description, gapped position, ContentVersion; edit/delete
+│                            # with the stale check
+├── BoardMembership.cs       # (board, account, role Owner | Member) — ADR 0013
+├── BoardText.cs             # the spec §5 Text rule: Unicode-whitespace trim, code-point length
+└── BoardError.cs            # not available, owner only, stale (with current state), limits
+
+src/Uniqua.Projector.Application/Boards/
+├── CreateBoard.cs  ListMyBoards.cs  OpenBoard.cs  OpenCard.cs
+├── RenameBoard.cs  DeleteBoard.cs
+├── AddColumn.cs  RenameColumn.cs  MoveColumn.cs  DeleteColumn.cs
+├── AddCard.cs  EditCard.cs  DeleteCard.cs
+└── Ports/                   # IBoardStore (LoadForMemberAsync, ListForAccountAsync, card reads),
+                             # IOwnedBoardCounter; reuses IUnitOfWork and IClock
+
+src/Uniqua.Projector.Infrastructure/Boards/
+├── BoardStore.cs            # EF Core implementation; member-scoped queries
+├── Configurations/          # Board (rowversion), Column, Card, BoardMembership, owned-board counter
+└── (Migrations/)            # one migration for the boards schema
+
+src/Uniqua.Projector.Api/Boards/
+├── BoardEndpoints.cs        # /api/v1/boards route group; lenient binding (ADR 0014)
+├── BoardChangeRateLimit.cs  # endpoint filter: AC-17, before membership
+└── BoardProblems.cs         # wording of every board refusal; mapped by ProblemDetailsSetup
+
+src/Uniqua.Projector.Web/src/
+├── app/routes.tsx           # React Router routes, returnTo guard (ADR 0012)
+├── api/boards.ts            # request<T>() calls; query keys for the board and the card
+└── features/boards/         # BoardListScreen, CreateBoardDialog, BoardScreen, BoardColumn,
+                             # CardDetailDialog, DeleteBoardDialog, BoardNotAvailable, draft keeping
 ```
 
-**C4 Container (L2):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. ONE Container per declared target_surface (frontmatter); the web container below is one example surface. -->
+**C4 Container (L2):**
 
 ```mermaid
 C4Container
-    title <feature> — Containers
+    title boards-columns-cards - Containers
 
-    Person(actor, "<Actor>")
+    Person(member, "Board member", "Reads a board and changes its columns and cards; the board owner may also rename or delete it")
+    Person(visitor, "Visitor", "Opens a board link with no session")
 
-    Container_Boundary(app, "<Our system>") {
-        Container(web, "<Web/UI>", "<technology>", "<purpose>")
-        Container(api, "<API/handler>", "<technology>", "<purpose>")
-        ContainerDb(db, "<Datastore>", "<technology>", "<purpose>")
+    Container_Boundary(projector, "Uniqua.Projector") {
+        Container(spa, "Web client", "React 19, TypeScript, Vite, React Router, TanStack Query", "Board list, board screen, card dialog; shows every text literally; keeps typed text across a sign-in")
+        Container(api, "HTTP API", "ASP.NET Core 10 minimal APIs", "Owns the boards contract; per-account change limit before membership; one refusal for any board you cannot see; serves the built client")
+        Container(app, "Application layer", "C# class library", "One use case per action; each starts with the member-scoped board load")
+        Container(domain, "Domain layer", "C# class library", "Board aggregate, Column, Card, BoardMembership; every board rule and version counter")
+        Container(infra, "Infrastructure layer", "C# class library, EF Core 10", "Board store with member-scoped queries; optimistic concurrency retry")
     }
 
-    System_Ext(ext, "<External>", "<purpose>")
+    ContainerDb(db, "Relational store", "SQL Server", "Boards, columns, cards, memberships, owned-board counters; plus the existing accounts and sessions")
 
-    Rel(actor, web, "<interaction>", "<protocol>")
-    Rel(web, api, "<calls>")
-    Rel(api, db, "<reads/writes>", "<driver>")
-    Rel(api, ext, "<emits>", "<protocol>")
+    Rel(member, spa, "Uses in a browser", "HTTPS")
+    Rel(visitor, spa, "Follows a board link and is sent to sign in", "HTTPS")
+    Rel(spa, api, "Calls JSON endpoints with the session cookie and the antiforgery header", "JSON/HTTPS")
+    Rel(api, app, "Invokes use cases")
+    Rel(app, domain, "Asks entities to decide")
+    Rel(infra, app, "Implements the board ports declared here")
+    Rel(infra, db, "Reads and writes", "EF Core")
 ```
+
+The realtime hub of ADR 0004 is not drawn: it arrives at roadmap step 8 and plays no part in this feature.
 
 ## 6. Runtime view
 
