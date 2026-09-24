@@ -414,17 +414,17 @@ Five rows are inherited unchanged from `architecture-map.md` §Conventions and t
 
 ## 9. Architecture decisions
 
-<!-- 🎯 Why: the REVERSE INDEX onto the adr/ folder. `ls adr/` gives the files; §9 gives the
-     semantics — why they exist, which SAD section they attach to, what status.
-     📋 Write: a 4-column table, one row per ADR. Mixed status is fine.
-     📌 e.g. «0001 | Store content as a table of typed blocks | Accepted | §4». -->
-
 | # | Title | Status | Section |
 |---|---|---|---|
-| <NNNN> | <imperative — e.g. "Use a sliding-window counter for rate limiting"> | Accepted | §<N> |
-| <NNNN> | <imperative — e.g. "Co-locate the worker in the API process"> | Accepted | §<N> |
+| 0012 | Route the web client with React Router in library mode | Accepted | §4 |
+| 0013 | Grant board access through one-level membership records with an owner role | Accepted | §4 |
+| 0014 | Enforce membership by loading the board scoped to the caller | Accepted | §4 |
+| 0015 | Guard board invariants with an optimistic concurrency token and bounded retry | Accepted | §4 |
+| 0016 | Detect stale changes with per-concern version counters in the domain | Accepted | §4 |
+| 0017 | Keep column positions dense and card positions gapped | Accepted | §4 |
+| 0018 | Open a board with card summaries and load a card's text on demand | Accepted | §5 |
 
-ADR files live under `docs/features/<slug>/adr/NNNN-<title>.md`.
+ADR files live under `docs/features/boards-columns-cards/adr/NNNN-<title>.md`. Numbering continues the repository-wide sequence (§2). The surface choice cites ADR 0006 and the SPA ADR 0007 (both in `docs/features/accounts-and-sessions/adr/`) rather than repeating them; ADR 0013 is the record roadmap decision D5 asked for.
 
 ## 10. Quality requirements
 
