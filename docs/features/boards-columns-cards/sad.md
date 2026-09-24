@@ -391,21 +391,26 @@ sequenceDiagram
 
 ## 8. Crosscutting concepts
 
-<!-- 🎯 Why: CROSS-CUTTING PATTERNS spanning several modules: logging, errors, authorization, ID
-     strategy, events, caching. ⭐ The second-densest section. A pattern inside one module is NOT
-     here; a project-wide convention belongs in the convention file.
-     📋 Write: a table — concept / convention / where defined. One row per concept.
-     📌 e.g. «sortable time-based IDs generated in the app layer» as a default from the convention file. -->
+Five rows are inherited unchanged from `architecture-map.md` §Conventions and the accounts-and-sessions SAD §8 — authentication, cross-site request forgery, the ID strategy, time, and the single error handler. The rest are this feature's own, most of them obligations spec §5 and §6.1 impose on every board, column and card path.
 
 | Concept | Convention | Where defined |
 |---|---|---|
-| Logging | <e.g. structured, fields `module=<name>`> | <convention file §X or here> |
-| Authentication | <e.g. token-based via middleware> | <convention file §X> |
-| Error handling | <e.g. domain sentinel → ports error mapping → JSON> | <convention file §X> |
-| ID strategy | <e.g. sortable time-based ID in the app layer> | <convention file §X> |
-| Internationalisation | <e.g. N/A, single language> | — |
-| Observability | <e.g. tracing on the request boundary> | — |
-| Events | <module-specific patterns, if any> | <here> |
+| Authentication | Inherited: the `projector_session` cookie, recognised on every request against a server-side session record. A change arriving with no recognised session is refused before anything else and does not count against the change limit (AC-17, AC-28) | ADR 0003, ADR 0008 |
+| Cross-site request forgery | Inherited: an antiforgery token (`X-XSRF-TOKEN`) on every state-changing request, boards included (spec §6.1, last abuse case) | ADR 0007, `AntiforgerySetup.cs` |
+| Authorization | Session → per-account change limit → member-scoped board load → validation, stale check, invariants. Columns and cards are found only through the loaded board. Renaming and deleting the board is `Board.EnsureOwner` | ADR 0013, ADR 0014, spec §6.1 |
+| Error handling | RFC 9457 problem documents from `ProblemDetailsSetup`, wording in `BoardProblems.cs`. **One** `boards.not_available` refusal — same status, body and headers — for a board that is absent, not the caller's, deleted, or for a column or card not on the board named. A stale refusal carries the current state of just the thing that changed, and is produced only after the membership check | ADR 0014, ADR 0016, `CLAUDE.md` |
+| ID strategy | Inherited: `Ids.New()` (GUID v7) for boards, columns, cards and memberships; the database generates none | `CLAUDE.md` |
+| Time | Inherited: the `IClock` port, replaced by `TestClock` in integration tests — the rolling minute of the change limit is measured on it | `src/Uniqua.Projector.Application/Accounts/Ports/IClock.cs` |
+| Text rule | `BoardText` in Domain trims every Unicode whitespace character from names and titles (never from descriptions) and counts length in code points; the client counts the same way — by code point, not by UTF-16 length — so the form and the server agree on every limit | spec §5 Text rule |
+| Text rendering | Board, column and card text is rendered only as React text nodes — `dangerouslySetInnerHTML` is never used for it, nothing is turned into a link, and Tailwind `whitespace-pre-wrap` keeps line breaks and repeated spaces exactly as typed | spec AC-16, §6.1 |
+| Rate limiting | At most 120 change attempts per account per rolling minute, counted by `BoardChangeRateLimit` before membership, whatever board is named; an attempt it refuses does not count; reads do not count. In memory, per instance (§7) | spec AC-17, §6 |
+| Concurrency | Two kinds of version, never confused: the board row's `rowversion` (race control, internal, ADR 0015) and the per-concern counters `ContentVersion`, `NameVersion`, `ColumnLayoutVersion` (the member's view, on the wire, ADR 0016) | ADR 0015, ADR 0016 |
+| Logging | Structured, `module=boards`. Board, column, card and account identifiers may be logged; **board names, column names, card titles and descriptions never are** — not on success and not on a refusal | spec §6.1 |
+| Client state | TanStack Query owns the board summary and each card's detail; accepted changes and stale refusals patch both from the server's answer. React Router's loaders and actions are not used | ADR 0012, ADR 0018 |
+| Typed text across sign-in | When a change is refused because the session ended, what the member typed is kept in `sessionStorage` under the id of the account that typed it; it is offered back only if that same account signs in again in this tab, and is removed when re-applied, when a different account signs in (never shown), or on sign-out. It never outlives the tab | spec AC-28, `ux-flows.md` §Platform decisions |
+| Sign-in return address | `returnTo` is honoured only when it is a path inside the application — starts with a single `/`, not `//`, no scheme; anything else lands on the board list | spec AC-27, ADR 0012 |
+| Internationalisation | N/A — single language | — |
+| Observability | The §7 metrics; server-side timing on opening a board and on every change | §7 |
 
 ## 9. Architecture decisions
 
