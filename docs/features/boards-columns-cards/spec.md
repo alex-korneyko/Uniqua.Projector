@@ -300,7 +300,7 @@ Adding, editing or deleting a card is not a change to its column. The rule is th
 
 **Given** a visitor with no active session
 **When** they open a link to a board
-**Then** the system presents the sign-in form and reveals nothing about the board — not its name and not whether it exists — answering a link to a real board exactly as it answers one to a board that never existed
+**Then** the system presents the sign-in form and reveals nothing about the board — not its name and not whether it exists — answering a link to a real board exactly as it answers one to a board that never existed; once they sign in, they are returned to that link's address and answered there as any signed-in account is — the board if they are a member, otherwise the refusal of AC-25
 
 ### AC-28 (US-10) — cross-context
 
@@ -347,5 +347,5 @@ Adding, editing or deleting a card is not a change to its column. The rule is th
 
 - [ ] Does roadmap decision D2 (two members moving one card at once) inherit the stale-change rule fixed here in AC-23 and AC-24? Default now: yes — a move made against an outdated view is refused and the current state shown. — owner: Alex Korneiko, due: before `/sdd:specify` of roadmap step 5
 - [ ] Roadmap D5 asks for one-level membership to be recorded as an ADR before the board is specified, and none exists yet. Default now: the glossary's `board` entry and §3 state the rule, and the roadmap's D5 is amended to have `design` record the ADR. — owner: Alex Korneiko, due: during `/sdd:design boards-columns-cards`
-- [ ] Where does a visitor land after signing in from a board link (AC-27) — on that board if they are a member, or on their list of boards? Default now: their list of boards, which reveals nothing whichever way the link pointed. — owner: Alex Korneiko, due: before `/sdd:ux-flows boards-columns-cards`
+- [x] Where does a visitor land after signing in from a board link (AC-27) — on that board if they are a member, or on their list of boards? **Resolved 2026-09-24 in `ux-flows.md` (flow US-10):** back at the address they came from, answered by the membership rule — a member sees the board, anyone else the same refusal as for a board that does not exist, which is exactly what opening the link while signed in would show, so the return reveals nothing new. The same return applies after AC-28's sign-in. The return address is limited to addresses inside the application (design input). — owner: Alex Korneiko, due: before `/sdd:ux-flows boards-columns-cards`
 - [ ] What workload do the §6 latency and throughput smoke runs use — accounts, boards, mix of changes, duration, number of samples — and what slowdown fails the CI regression check? Default now: at least 25 accounts, each on its own board (the per-account limit caps one account at 2 changes/s), an even mix of the change kinds in §6, 60 s per run, and CI fails on a p95 more than 25% slower than the last recorded run. — owner: Alex Korneiko, due: during `/sdd:design boards-columns-cards`
