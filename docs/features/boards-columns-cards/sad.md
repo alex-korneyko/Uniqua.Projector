@@ -428,29 +428,22 @@ ADR files live under `docs/features/boards-columns-cards/adr/NNNN-<title>.md`. N
 
 ## 10. Quality requirements
 
-<!-- 🎯 Why: the QUALITY TREE — take a goal from §1 and break it into concrete leaves: tests,
-     metrics, configs, drills. ⭐ Without §10, §1 is a manifesto. With §10 each declaration maps
-     to something PROVABLE.
-     📋 Write: per §1 goal — When / Then / How-verify. Numbers from spec §6 NFR VERBATIM (don't
-     round ≤250ms to ≤300ms — that's a critic F6 hit).
-     📌 e.g. «p95 ≤ 500 ms on a block update, verified by a 100 req/s load test». -->
+Each of the three §1 goals expanded into a scenario. **Every number is copied verbatim from spec §6** — none is invented and none is rounded.
 
-Each top-3 goal from §1 expanded into a full scenario:
+**QG-1. An indistinguishable membership boundary**
+- **When:** an account that is not a member of a board opens it or submits any change to it or to anything on it — including a change that is itself invalid or based on an outdated view — or a member names another board's column or card; or any account keeps changing boards past its limit.
+- **Then:** "Indistinguishable refusal — 100% of read and change kinds, 0 differences: for each, the refusal for a board the caller is not a member of is identical, field for field, to the refusal for a board that does not exist". Per-account change rate: "at most 120 change attempts per account per rolling minute, counted as AC-17 defines (attempts refused by this limit do not count); the 121st is refused and nothing changes on any board".
+- **How verify:** an integration test that, for every read and change kind, sends the same request to a board the caller is not a member of and to an identifier that never existed, and compares status, headers and body field for field — with invalid and stale bodies among the inputs, and cross-board column and card identifiers (AC-26); the non-owner cases run against a `Member` record inserted by test setup (ADR 0013). An integration test against `TestClock` for the rolling minute: 120 attempts accepted or refused for other reasons, the 121st refused, nothing written, admission again once earlier attempts leave the minute.
 
-**QG-1. <quality attribute>**
-- **When:** <trigger condition>
-- **Then:** <expected behaviour with numbers from spec §6 NFR>
-- **How verify:** <test / chaos drill / load test / metric>
+**QG-2. No silent loss under simultaneous changes**
+- **When:** members change one board at the same moment — column deletes, column adds, card adds and board creations, including pairs made one short of each ceiling — or reorder, add and delete columns in any sequence; or a member saves from an outdated view.
+- **Then:** "0 boards left with no column, 0 non-empty columns deleted, 0 boards above 20 columns or 1,000 cards, and 0 accounts owning more than 50 boards, across 1,000 randomised pairs of simultaneous changes"; "0 duplicated and 0 missing positions across 1,000 randomised sequences of accepted reorders, adds and deletes — every column of a board holds exactly one distinct position"; content ceilings of "50 owned boards per account; 20 columns and 1,000 cards per board; board name ≤ 100, column name ≤ 50, card title ≤ 150, description ≤ 10,000 characters"; a stale change is refused exactly as spec §5's stale-change rule defines, and a change to something else is accepted (AC-24b).
+- **How verify:** an integration test issuing the 1,000 pairs concurrently against the SQL Server container, with `ContentionForcer` guaranteeing that the one-short-of-the-ceiling pairs actually collide on the board row rather than happening to serialise; an integration test over 1,000 randomised column sequences that checks positions after every step; domain unit tests at each ceiling boundary and for the Text rule; domain unit tests for each of the three version counters (ADR 0016) plus the AC-24b integration test.
 
-**QG-2. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
-
-**QG-3. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+**QG-3. The thin path within the latency budget**
+- **When:** a member opens a board holding 20 columns and 1,000 cards, or makes a single change (add, rename, reorder, edit, delete), under load.
+- **Then:** latency p95 "≤ 300 ms" opening that board; latency p95 "≤ 200 ms" for a single change; throughput "≥ 50 changes/s across boards".
+- **How verify:** server-side timing sampled in the smoke run on the reference machine — the 2-vCPU virtual machine on the self-hosted host. **Workload (closes spec §8's fourth open question, during design, with its default):** at least 25 accounts, each on its own board — the per-account limit caps one account at 2 changes/s — an even mix of the change kinds in spec §6, 60 s per run. In CI the same smoke run is a regression check only, failing on a p95 more than 25% slower than the last recorded run; the first runs set the baseline.
 
 ## 11. Risks and technical debt
 
