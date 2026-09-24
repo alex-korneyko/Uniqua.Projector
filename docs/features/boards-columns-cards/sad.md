@@ -447,22 +447,29 @@ Each of the three §1 goals expanded into a scenario. **Every number is copied v
 
 ## 11. Risks and technical debt
 
-<!-- 🎯 Why: ⭐ collects EVERYTHING that can break — not only the technical. Without §11 risks get
-     discussed at standups and lost; debt lives only in the head of whoever accepted it.
-     📋 Write: a risk/debt table — severity — mitigation — owner. Accepted debt in its own block.
-     📌 The first risk is often a product risk, not a technical one. That's normal. -->
-
-<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows created by
-     a Save-as-OQ resolution during the Socratic walk (see references/socratic.md). -->
+<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows carried from an
+     unresolved architectural decision. spec §8 carries four open questions: the second (the membership
+     ADR) is closed by ADR 0013, the fourth (the smoke workload) is closed in §10, the third was
+     resolved in ux-flows, and the first is the Open-question row below. No decision in this pass was
+     saved as an open question. -->
 
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
-| <e.g. Worker lag may reach hours during a downstream outage> | Medium | <alert >10 min, on-call playbook, retry backoff> | <DevOps> |
-| <e.g. No event-schema versioning in v1> | Medium | <ADR-NNNN planned for v2, tolerate unknown fields> | <Backend> |
-| Open architectural decision: <decision-headline> | Open question | Resolve before <stage trigger or YYYY-MM-DD>; <inline rationale from the Save-as-OQ> | <owner> |
+| A board use case that skips the member-scoped load (ADR 0014) opens a hole in the boundary — the check lives at the start of each use case, not in one choke point | High | The QG-1 comparison test runs over *every* read and change kind, so a use case that answers a non-member differently fails it; the `review` stage checks that every board use case begins with `LoadForMemberAsync` | Alex Korneiko |
+| Framework request binding rejects an invalid value before the membership check, so the answer to a non-member depends on the board | Medium | Lenient binding (ADR 0014) — values taken as they arrive and validated by the domain after membership; the `api` stage fixes the exact binding; invalid bodies are among the QG-1 test inputs | Alex Korneiko |
+| `docs/architecture-map.md` is stale — still the pre-scaffold target (`reflects_commit` 16bba53), hosting "undecided", target paths that differ from the code | Medium | Run `/sdd:survey` after this feature ships; this SAD's §2 follows the code instead | Alex Korneiko |
+| Scripted accounts fill the production store — the residual spam-creation risk spec §6.1 accepted | Medium | The §7 size alert at 80% of the edition's ceiling; its threshold depends on roadmap D1, due before step 4 | Alex Korneiko |
+| The declared size **M** is tight — two surfaces, the product's first router, 13 use cases, seven ADRs and a randomised race suite | Medium | If `/sdd:tasks` emits more than roughly 15 tasks or about 4 days of work, re-run `/sdd:classify-size boards-columns-cards`, which re-syncs `.size`, `.route` and both `feature_size` mirrors | Alex Korneiko |
+| The per-account change limiter is in memory: a restart gives every account a fresh minute, and a second replica would multiply the limit | Low | Accepted at one instance (§7); the counter moves into the store before any second replica | Alex Korneiko |
+| Contention on the board row — every structural change updates it, and a change fails after 3 conflicts (ADR 0015) | Low | The §7 alert on exhausted retries; re-measure once boards can have several simultaneous members (roadmap step 7) | Alex Korneiko |
+| AC-28's "kept in this browser" is implemented as "kept in this tab" (`sessionStorage`, §8) — a member who closes the tab before signing in loses the typed text | Low | Stated in §8 so `review` checks it against the spec deliberately; chosen because board text is confidential | Alex Korneiko |
+| React Router's loaders or actions creep in and become a second server-state cache beside TanStack Query | Low | The §8 client-state row; `review` checks it | Alex Korneiko |
+| Open architectural decision: does roadmap step 5's card move inherit the stale-change rule of AC-23 and AC-24 (roadmap D2)? | Open question | Resolve before `/sdd:specify` of roadmap step 5; default now is yes — a move from an outdated view is refused and the current state shown. ADR 0016's counters extend to card position without reinterpreting the existing ones; spec §8, first open question | Alex Korneiko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
-- <e.g. the entity is immutable / unversioned — OK for v1, may need audit versioning in v2>
+- **Deletions are final** — no archive, trash or undo for a board, column or card (spec §3). A mistaken board deletion, even after typing the name, cannot be recovered without a database backup.
+- **The card-reorder technique is deferred** to roadmap step 5 (ADR 0017): renumbering a column's cards or migrating to fractional keys is decided there, and the latter would mean a data migration.
+- **The change-rate counter is not durable** (§7) — acceptable at invited-reviewer scale on one instance.
 
 ## 12. Glossary
 
