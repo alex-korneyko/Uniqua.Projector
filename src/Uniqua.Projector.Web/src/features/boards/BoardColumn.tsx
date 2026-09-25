@@ -1,8 +1,12 @@
+import { useSortable } from '@dnd-kit/sortable'
+
 import type { CardSummary, Column } from '@/api/boards'
 import { Button } from '@/components/ui/button'
 import { AddCardForm } from '@/features/boards/AddCardForm'
+import { ColumnHeader } from '@/features/boards/ColumnHeader'
 import { PlainText } from '@/features/boards/PlainText'
 import type { KeptDraft } from '@/features/boards/draftStore'
+import { cn } from '@/lib/utils'
 
 export interface BoardColumnProps {
   boardId: string
@@ -12,19 +16,44 @@ export interface BoardColumnProps {
   onRefused: (error: unknown, kept: KeptDraft) => void
   /** A card tile pressed → SCR-05, wired by T22. */
   onOpenCard?: (cardId: string) => void
+  /** Set while a column move is pending: further drags wait for its answer. */
+  dragDisabled?: boolean
 }
 
 /**
- * One column: its name, its card tiles and the add-card form. T21 adds the header's drag handle,
- * rename and delete. A tile shows the title only — descriptions are never shown on the board
- * (ADR 0018) — and wraps it rather than cutting it off.
+ * One column, a dnd-kit sortable item: its header (drag handle, name, rename, delete), its card
+ * tiles and the add-card form. A tile shows the title only — descriptions are never shown on the
+ * board (ADR 0018) — and wraps it rather than cutting it off. While dragged the column is lifted and
+ * the column it would land on is outlined, both with utility classes.
  */
-export function BoardColumn({ boardId, column, cards, onRefused, onOpenCard }: BoardColumnProps) {
+export function BoardColumn({
+  boardId,
+  column,
+  cards,
+  onRefused,
+  onOpenCard,
+  dragDisabled = false,
+}: BoardColumnProps) {
+  const { setNodeRef, setActivatorNodeRef, attributes, listeners, isDragging, isOver } = useSortable({
+    id: column.id,
+    disabled: dragDisabled,
+  })
+
   return (
-    <section className="bg-muted/40 flex w-72 shrink-0 flex-col gap-3 rounded-lg border p-3">
-      <h2 className="min-w-0 text-sm font-semibold">
-        <PlainText text={column.name} />
-      </h2>
+    <section
+      ref={setNodeRef}
+      className={cn(
+        'bg-muted/40 flex w-72 shrink-0 flex-col gap-3 rounded-lg border p-3',
+        isDragging && 'opacity-60 shadow-lg',
+        isOver && !isDragging && 'ring-primary ring-2',
+      )}
+    >
+      <ColumnHeader
+        boardId={boardId}
+        column={column}
+        onRefused={onRefused}
+        handle={{ setActivatorNodeRef, attributes, listeners }}
+      />
 
       {cards.length > 0 && (
         <ul className="flex flex-col gap-2">
