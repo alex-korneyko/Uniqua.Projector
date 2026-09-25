@@ -5,8 +5,10 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Uniqua.Projector.Application.Accounts.Ports;
+using Uniqua.Projector.Application.Boards.Ports;
 using Uniqua.Projector.Domain.Accounts;
 using Uniqua.Projector.Infrastructure.Accounts;
+using Uniqua.Projector.Infrastructure.Boards;
 
 namespace Uniqua.Projector.Infrastructure;
 
@@ -46,6 +48,7 @@ public static class DependencyInjection
             .PersistKeysToDbContext<AppDbContext>();
 
         AddAccounts(services);
+        AddBoards(services);
 
         return services;
     }
@@ -104,5 +107,12 @@ public static class DependencyInjection
         services.AddScoped<SessionStore>();
         services.AddScoped<ISessionReader>(services => services.GetRequiredService<SessionStore>());
         services.AddScoped<ISessionStore>(services => services.GetRequiredService<SessionStore>());
+    }
+
+    /// <summary>ADR 0014 / ADR 0015: the board store and its owned-board counter, one lane.</summary>
+    private static void AddBoards(IServiceCollection services)
+    {
+        services.AddScoped<IBoardStore, BoardStore>();
+        services.AddScoped<IOwnedBoardCounterStore, OwnedBoardCounterStore>();
     }
 }

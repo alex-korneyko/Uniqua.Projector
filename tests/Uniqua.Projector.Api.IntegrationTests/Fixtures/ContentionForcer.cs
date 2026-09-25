@@ -30,6 +30,17 @@ public sealed class ContentionForcer : DbCommandInterceptor
         @"UPDATE.*\[AspNetUsers\].*WHERE.*\[Id\].*AND.*\[AccessFailedCount\].*AND.*\[LastFailedAttemptAt\]",
         RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>
+    /// The four board-feature tables data-model.md § Notes for implement names: each carries its own
+    /// concurrency token (<c>RowVersion</c> on Boards and OwnedBoardCounters, <c>NameVersion</c> on
+    /// Columns, <c>ContentVersion</c> on Cards), and EF Core's own conditional UPDATE against any of
+    /// them is what this bumps out from under the caller. The model sets no default schema, so EF
+    /// Core writes the bare table name; the schema prefix is accepted but not required.
+    /// </summary>
+    private static readonly Regex BoardRowUpdate = new(
+        @"UPDATE\s+(?:\[dbo\]\.)?\[(?<table>Boards|Columns|Cards|OwnedBoardCounters)\]",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     public string? ConnectionString { get; set; }
 
     public bool Enabled { get; set; }
@@ -37,9 +48,17 @@ public sealed class ContentionForcer : DbCommandInterceptor
     public Guid TargetAccountId { get; set; }
 
     /// <summary>
-    /// How many times the conditional UPDATE was seen and bumped out from under itself. The
-    /// contention test compares this against the retry budget the store is known to use, so the
-    /// test fails loudly if the interceptor ever stops matching the SQL shape it depends on.
+    /// The row a board, column, card or owned-board-counter UPDATE targets, for
+    /// <see cref="BoardRowUpdate"/>. A board, column or card id for the first three tables; an
+    /// account id for <c>OwnedBoardCounters</c>, which is keyed by <c>AccountId</c> rather than
+    /// <c>Id</c>.
+    /// </summary>
+    public Guid TargetId { get; set; }
+
+    /// <summary>
+    /// How many times a matched UPDATE was seen and bumped out from under itself. The contention
+    /// test compares this against the retry budget the store or the retry helper is known to use, so
+    /// the test fails loudly if the interceptor ever stops matching the SQL shape it depends on.
     /// </summary>
     public int InterceptedAttempts { get; private set; }
 
@@ -47,6 +66,7 @@ public sealed class ContentionForcer : DbCommandInterceptor
     {
         Enabled = false;
         TargetAccountId = Guid.Empty;
+        TargetId = Guid.Empty;
         InterceptedAttempts = 0;
     }
 
@@ -71,7 +91,61 @@ public sealed class ContentionForcer : DbCommandInterceptor
                 """;
             await bump.ExecuteNonQueryAsync(cancellationToken);
         }
+        else
+        {
+            await BumpBoardRowIfMatchedAsync(command, cancellationToken);
+        }
 
         return await base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
     }
+
+    /// <summary>
+    /// A board or owned-board-counter UPDATE reads its new <c>rowversion</c> back
+    /// (<c>OUTPUT INSERTED.[RowVersion]</c>), so EF Core sends it as a reader, not a non-query.
+    /// </summary>
+    public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+        DbCommand command,
+        CommandEventData eventData,
+        InterceptionResult<DbDataReader> result,
+        CancellationToken cancellationToken = default)
+    {
+        await BumpBoardRowIfMatchedAsync(command, cancellationToken);
+        return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    private async Task BumpBoardRowIfMatchedAsync(DbCommand command, CancellationToken cancellationToken)
+    {
+        if (!Enabled || BoardRowUpdate.Match(command.CommandText) is not { Success: true } match)
+        {
+            return;
+        }
+
+        InterceptedAttempts++;
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var bump = connection.CreateCommand();
+        bump.CommandText = BumpSql(match.Groups["table"].Value, TargetId);
+        await bump.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// A harmless self-referencing UPDATE against the targeted row: SQL Server bumps a
+    /// <c>rowversion</c> on any UPDATE that touches the row regardless of whether a value actually
+    /// changed, and the two application-managed int tokens are bumped explicitly for the same
+    /// reason — so whichever value EF Core's own UPDATE still expects can no longer match.
+    /// </summary>
+    private static string BumpSql(string table, Guid targetId) => table switch
+    {
+        "Boards" =>
+            $"UPDATE [dbo].[Boards] SET [CardCount] = [CardCount] WHERE [Id] = '{targetId}';",
+        "OwnedBoardCounters" =>
+            $"UPDATE [dbo].[OwnedBoardCounters] SET [OwnedBoardCount] = [OwnedBoardCount] "
+            + $"WHERE [AccountId] = '{targetId}';",
+        "Columns" =>
+            $"UPDATE [dbo].[Columns] SET [NameVersion] = [NameVersion] + 1 WHERE [Id] = '{targetId}';",
+        "Cards" =>
+            $"UPDATE [dbo].[Cards] SET [ContentVersion] = [ContentVersion] + 1 WHERE [Id] = '{targetId}';",
+        _ => throw new InvalidOperationException($"No contention bump is defined for '{table}'."),
+    };
 }
