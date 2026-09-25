@@ -12,7 +12,7 @@
 | T5 | Declare the board ports and implement the member-scoped store with the bounded concurrency retry | infra | Alex Korneiko | L | T1, T4 | done |
 | T6 | Write the board use cases: create, list, open, rename and delete | app | Alex Korneiko | M | T5 | done |
 | T7 | Write the column use cases: add, rename, move and delete, with races re-decided | app | Alex Korneiko | M | T2, T5 | done |
-| T8 | Write the card use cases: add, open, edit and delete through the board | app | Alex Korneiko | M | T3, T5 | todo |
+| T8 | Write the card use cases: add, open, edit and delete through the board | app | Alex Korneiko | M | T3, T5 | done |
 | T9 | Expose the board endpoints with lenient binding and map every board refusal to one problem document | ports | Alex Korneiko | L | T6 | todo |
 | T10 | Expose the column endpoints: add, rename, move and delete | ports | Alex Korneiko | M | T7, T9 | todo |
 | T11 | Expose the card endpoints: add, open, edit and delete | ports | Alex Korneiko | M | T8, T9 | todo |

@@ -49,6 +49,20 @@ public interface IBoardStore
     void Remove(Board board);
 
     /// <summary>
+    /// Registers a card the Board just admitted (<see cref="Board.AdmitCard"/>) for insertion on the
+    /// next <see cref="SaveAsync"/>, alongside the board's and column's changed counters (sad.md §6,
+    /// flow 9).
+    /// </summary>
+    void AddCard(Card card);
+
+    /// <summary>
+    /// Registers a card found through <see cref="FindCardAsync"/> for deletion on the next
+    /// <see cref="SaveAsync"/>, conditional on the <c>ContentVersion</c> it was read at (sad.md §6,
+    /// flow 10).
+    /// </summary>
+    void RemoveCard(Card card);
+
+    /// <summary>
     /// Persists every change queued since the last call. A lost race on a board's, a column's, a
     /// card's or the owned-board counter's version surfaces as a
     /// <see cref="Uniqua.Projector.Application.Boards.BoardConcurrencyConflict"/> rather than an EF

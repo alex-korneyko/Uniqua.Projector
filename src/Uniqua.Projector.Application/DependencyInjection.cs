@@ -29,6 +29,11 @@ public static class DependencyInjection
         services.AddScoped<MoveColumn>();
         services.AddScoped<DeleteColumn>();
 
+        services.AddScoped<AddCard>();
+        services.AddScoped<OpenCard>();
+        services.AddScoped<EditCard>();
+        services.AddScoped<DeleteCard>();
+
         // The announcement has no listener until the live-update channel arrives (roadmap step 8).
         // Registered with TryAdd so the Api-side implementation beside the hub replaces it simply
         // by being registered first, rather than by editing this line.

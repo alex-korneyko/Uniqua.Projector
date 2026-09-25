@@ -75,6 +75,11 @@ internal sealed class BoardStore(AppDbContext context) : IBoardStore
 
     public void Remove(Board board) => _removed.Add(board);
 
+    public void AddCard(Card card) => context.Cards.Add(card);
+
+    /// <summary>The delete carries <c>ContentVersion</c> as its concurrency token (ADR 0016).</summary>
+    public void RemoveCard(Card card) => context.Cards.Remove(card);
+
     public async Task SaveAsync(CancellationToken cancellationToken)
     {
         try
