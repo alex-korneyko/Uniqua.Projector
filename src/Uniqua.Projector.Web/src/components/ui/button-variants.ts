@@ -8,6 +8,9 @@ export const buttonVariants = cva(
     variants: {
       variant: {
         default: 'bg-primary text-primary-foreground hover:opacity-90',
+        // For deletions that cannot be undone (SCR-06, SCR-07). White text, as shadcn/ui does,
+        // rather than a --color-destructive-foreground token index.css does not define.
+        destructive: 'bg-destructive text-white hover:opacity-90',
         outline: 'border border-border bg-background hover:bg-muted',
         ghost: 'hover:bg-muted',
       },
