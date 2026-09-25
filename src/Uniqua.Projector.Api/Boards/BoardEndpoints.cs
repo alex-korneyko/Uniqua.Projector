@@ -46,7 +46,12 @@ public static partial class BoardEndpoints
 
     public static IEndpointRouteBuilder MapBoardEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        // The change limit filters the whole group, so it runs after the session is recognised and
+        // before any endpoint's membership check; it lets every read through uncounted (AC-17).
         var boards = endpoints.MapGroup("/api/v1/boards").RequireAuthorization();
+        boards.AddEndpointFilter((context, next) => context.HttpContext.RequestServices
+            .GetRequiredService<BoardChangeRateLimit>()
+            .InvokeAsync(context, next));
 
         boards.MapGet("", ListMyBoardsAsync).WithName("listMyBoards");
         boards.MapPost("", CreateBoardAsync).WithName("createBoard");

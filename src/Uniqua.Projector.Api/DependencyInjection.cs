@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Uniqua.Projector.Api.Accounts;
+using Uniqua.Projector.Api.Boards;
 using Uniqua.Projector.Application.Accounts.Ports;
 
 namespace Uniqua.Projector.Api;
@@ -17,9 +18,10 @@ public static class DependencyInjection
     public const string TrustedProxiesSection = "TrustedProxies";
 
     /// <summary>
-    /// Session recognition, the registration limit, the expired-session sweep and the revocation
-    /// notifier. Call it <em>before</em> <c>AddApplication</c>: the notifier registered here must
-    /// win over Application's own <c>TryAdd</c> default without that file knowing this one exists.
+    /// Session recognition, the registration, sign-in and per-account board change limits, the
+    /// expired-session sweep and the revocation notifier. Call it <em>before</em>
+    /// <c>AddApplication</c>: the notifier registered here must win over Application's own
+    /// <c>TryAdd</c> default without that file knowing this one exists.
     /// </summary>
     public static IServiceCollection AddAccountsApi(this IServiceCollection services)
     {
@@ -34,6 +36,10 @@ public static class DependencyInjection
 
         services.AddSingleton<RegistrationRateLimit>();
         services.AddSingleton<SignInRateLimit>();
+
+        // Keyed on the recognised session's account (AC-17): one instance for the whole application,
+        // so every board change endpoint counts against the same rolling minute.
+        services.AddSingleton<BoardChangeRateLimit>();
 
         // A failing sweep must never take the application down with it, which is why the service
         // swallows its own failures rather than relying on the host to be forgiving.

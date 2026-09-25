@@ -23,6 +23,9 @@ public static class BoardProblems
     /// <summary>A body that is not JSON at all — answered before membership, identically for every board.</summary>
     public const string RequestMalformed = "boards.request_malformed";
 
+    /// <summary>AC-17. Published with <c>retry_after_seconds</c> and <c>Retry-After</c>.</summary>
+    public const string ChangeRateLimited = "boards.change_rate_limited";
+
     /// <summary>AC-20b. Published with <c>current_name</c>.</summary>
     public const string ConfirmationMismatch = "boards.confirmation_mismatch";
 
@@ -43,7 +46,7 @@ public static class BoardProblems
             "The request body must be a JSON object matching the documented shape."),
         Row(RequestInvalid, 400, "The request is not complete",
             "The request is missing a value it needs, or a value has the wrong type."),
-        Row("boards.change_rate_limited", 429, "Changes are temporarily limited",
+        Row(ChangeRateLimited, 429, "Changes are temporarily limited",
             "You have made many changes in the past minute. You can continue shortly.",
             carriesRetryAfter: true),
         Row(BoardErrors.Contended.Code, 503, "The board is busy",
