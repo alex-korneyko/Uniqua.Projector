@@ -92,7 +92,8 @@ export function AccountShell({ children, signedIn }: AccountShellProps) {
   }
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-md flex-col gap-6 p-8">
+    // Widened past the auth screens' max-w-md: the board list and the board need the room.
+    <div className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
       <header className="flex items-center justify-between gap-4 border-b pb-4">
         {/* AC-11: the display name, and never the address — not even as a fallback. */}
         <span className="font-medium">{state.account.display_name}</span>
