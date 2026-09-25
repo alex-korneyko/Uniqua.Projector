@@ -1,0 +1,562 @@
+{
+  "slug": "boards-columns-cards",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Build the Board aggregate with the Text rule, board creation and the owner-only rules",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-19",
+        "AC-20",
+        "AC-20b",
+        "AC-22"
+      ],
+      "dod": "Domain unit tests pass for the Text rule at every length boundary (code points, Unicode whitespace), for a new board's three columns and Owner membership, for the 50-owned-boards ceiling, and for owner-only rename and delete with the exact-name confirmation.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Boards/Board.cs",
+        "src/Uniqua.Projector.Domain/Boards/Column.cs",
+        "src/Uniqua.Projector.Domain/Boards/Card.cs",
+        "src/Uniqua.Projector.Domain/Boards/BoardMembership.cs",
+        "src/Uniqua.Projector.Domain/Boards/OwnedBoardCounter.cs",
+        "src/Uniqua.Projector.Domain/Boards/BoardText.cs",
+        "src/Uniqua.Projector.Domain/Boards/BoardError.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/BoardTextTests.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/BoardTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/01-board-aggregate-and-text-rule.md"
+    },
+    {
+      "id": "T2",
+      "title": "Give the Board its column rules: add, rename, move and delete with dense positions and version checks",
+      "layer": "domain",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-06b",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-24",
+        "AC-24b"
+      ],
+      "dod": "Domain unit tests pass for every column rule — 20-column ceiling, 1–50 name, not-empty and last-column refusals, positions exactly 0..n-1 after every add/move/delete, NameVersion moving only on rename and ColumnLayoutVersion only on add/move/delete — with each stale refusal carrying the current state.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Boards/Board.cs",
+        "src/Uniqua.Projector.Domain/Boards/Column.cs",
+        "src/Uniqua.Projector.Domain/Boards/BoardError.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/BoardColumnTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/02-column-rules-on-the-board.md"
+    },
+    {
+      "id": "T3",
+      "title": "Admit, edit and delete cards through the Board's counters with the content-version check",
+      "layer": "domain",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-13",
+        "AC-14",
+        "AC-15",
+        "AC-18",
+        "AC-23"
+      ],
+      "dod": "Domain unit tests pass for the 1,000-card ceiling, the 150-character title and 10,000-character description (title checked first, description never trimmed), gapped positions from NextCardPosition, and ContentVersion refusing a stale edit or delete with the current card.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Boards/Board.cs",
+        "src/Uniqua.Projector.Domain/Boards/Column.cs",
+        "src/Uniqua.Projector.Domain/Boards/Card.cs",
+        "src/Uniqua.Projector.Domain/Boards/BoardError.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/CardTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/03-card-rules-and-board-card-counters.md"
+    },
+    {
+      "id": "T4",
+      "title": "Map the boards entities in EF Core and generate the CreateBoards migration",
+      "layer": "migration",
+      "deps": [
+        "T1"
+      ],
+      "acs": [],
+      "dod": "The generated CreateBoards migration's script matches the staged 01_create_boards.up.sql in substance (tables, types, nullability, keys, delete behaviours, indexes), applies and reverts cleanly on the SQL Server container, and a schema test asserts the unique and filtered indexes.",
+      "files_hint": [
+        "docs/features/boards-columns-cards/migrations/01_create_boards.up.sql",
+        "docs/features/boards-columns-cards/migrations/01_create_boards.down.sql",
+        "src/Uniqua.Projector.Infrastructure/Boards/Configurations/",
+        "src/Uniqua.Projector.Infrastructure/AppDbContext.cs",
+        "src/Uniqua.Projector.Infrastructure/Migrations/",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardsSchemaTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/04-boards-schema-migration.md"
+    },
+    {
+      "id": "T5",
+      "title": "Declare the board ports and implement the member-scoped store with the bounded concurrency retry",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T4"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-25",
+        "AC-26"
+      ],
+      "dod": "Store integration tests pass against the SQL Server container: LoadForMemberAsync returns the board only for a member and one identical 'nothing' otherwise, cards are found only through their board, the list query returns only the caller's boards newest first, a forced rowversion collision surfaces as a conflict the retry helper re-decides at most 3 times, and a board holding cards deletes in one statement.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Boards/Ports/IBoardStore.cs",
+        "src/Uniqua.Projector.Application/Boards/Ports/IOwnedBoardCounterStore.cs",
+        "src/Uniqua.Projector.Application/Boards/BoardChangeRetry.cs",
+        "src/Uniqua.Projector.Infrastructure/Boards/BoardStore.cs",
+        "src/Uniqua.Projector.Infrastructure/Boards/OwnedBoardCounterStore.cs",
+        "src/Uniqua.Projector.Infrastructure/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/ContentionForcer.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardStoreTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/05-board-store-and-concurrency-retry.md"
+    },
+    {
+      "id": "T6",
+      "title": "Write the board use cases: create, list, open, rename and delete",
+      "layer": "app",
+      "deps": [
+        "T5"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-03",
+        "AC-04",
+        "AC-19",
+        "AC-20",
+        "AC-20b",
+        "AC-22",
+        "AC-25"
+      ],
+      "dod": "Use-case integration tests pass against the SQL Server container: create writes the board, three columns, the Owner membership and the counter (and refuses the 51st even when two creations race under a forced collision), list returns only the caller's boards newest first, open returns BoardNotAvailable identically for absent and non-member boards, rename and delete refuse a Member with OwnerOnly, and delete removes a board holding cards and frees one owned-board slot.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Boards/CreateBoard.cs",
+        "src/Uniqua.Projector.Application/Boards/ListMyBoards.cs",
+        "src/Uniqua.Projector.Application/Boards/OpenBoard.cs",
+        "src/Uniqua.Projector.Application/Boards/RenameBoard.cs",
+        "src/Uniqua.Projector.Application/Boards/DeleteBoard.cs",
+        "src/Uniqua.Projector.Application/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardUseCaseTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/06-board-use-cases.md"
+    },
+    {
+      "id": "T7",
+      "title": "Write the column use cases: add, rename, move and delete, with races re-decided",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T5"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-06b",
+        "AC-07",
+        "AC-09",
+        "AC-10b",
+        "AC-11",
+        "AC-18b",
+        "AC-21"
+      ],
+      "dod": "Use-case integration tests pass: each column action begins with the member-scoped load, a column not on the board is BoardNotAvailable, a Member succeeds exactly as the Owner, two forced-colliding deletes of the last two columns leave exactly one column, a forced-colliding 20th/21st add leaves 20, and two simultaneous renames of one column land only once.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Boards/AddColumn.cs",
+        "src/Uniqua.Projector.Application/Boards/RenameColumn.cs",
+        "src/Uniqua.Projector.Application/Boards/MoveColumn.cs",
+        "src/Uniqua.Projector.Application/Boards/DeleteColumn.cs",
+        "src/Uniqua.Projector.Application/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnUseCaseTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/07-column-use-cases.md"
+    },
+    {
+      "id": "T8",
+      "title": "Write the card use cases: add, open, edit and delete through the board",
+      "layer": "app",
+      "deps": [
+        "T3",
+        "T5"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-13",
+        "AC-15",
+        "AC-18",
+        "AC-18b",
+        "AC-23",
+        "AC-26"
+      ],
+      "dod": "Use-case integration tests pass: a card is found only through its board (another board's card is BoardNotAvailable), add places it last in its column and a forced-colliding pair at 999 cards lands only one, two simultaneous edits of one card land only once with the loser getting CardChanged and the current card, and a delete leaves the other cards' positions untouched.",
+      "files_hint": [
+        "src/Uniqua.Projector.Application/Boards/AddCard.cs",
+        "src/Uniqua.Projector.Application/Boards/OpenCard.cs",
+        "src/Uniqua.Projector.Application/Boards/EditCard.cs",
+        "src/Uniqua.Projector.Application/Boards/DeleteCard.cs",
+        "src/Uniqua.Projector.Application/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/CardUseCaseTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/08-card-use-cases.md"
+    },
+    {
+      "id": "T9",
+      "title": "Expose the board endpoints with lenient binding and map every board refusal to one problem document",
+      "layer": "ports",
+      "deps": [
+        "T6"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-04",
+        "AC-19",
+        "AC-20",
+        "AC-20b",
+        "AC-22",
+        "AC-25",
+        "AC-27"
+      ],
+      "dod": "Endpoint integration tests pass for listMyBoards, createBoard, openBoard, renameBoard and deleteBoard with the contract's statuses, bodies and codes — including one byte-identical boards.not_available (excluding instance and traceId) for an absent and a non-member board, boards.request_malformed before membership, boards.request_invalid only after it, and boards.owner_only for a fixture-inserted Member.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardRequestBody.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardProblems.cs",
+        "src/Uniqua.Projector.Api/ProblemDetailsSetup.cs",
+        "src/Uniqua.Projector.Api/DependencyInjection.cs",
+        "src/Uniqua.Projector.Api/Program.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/BoardFixtures.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardEndpointTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/09-board-endpoints-and-refusal-mapping.md"
+    },
+    {
+      "id": "T10",
+      "title": "Expose the column endpoints: add, rename, move and delete",
+      "layer": "ports",
+      "deps": [
+        "T7",
+        "T9"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06b",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-21",
+        "AC-24"
+      ],
+      "dod": "Endpoint integration tests pass for addColumn, renameColumn, moveColumn and deleteColumn with the contract's statuses and codes — column_name_invalid, column_limit_reached at 20 (seeded by ABoardWithColumnsAsync), column_renamed with current_column, columns_changed with current_layout, column_not_empty, last_column — and each succeeds for a fixture-inserted Member.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.Columns.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardProblems.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/BoardFixtures.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnEndpointTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/10-column-endpoints.md"
+    },
+    {
+      "id": "T11",
+      "title": "Expose the card endpoints: add, open, edit and delete",
+      "layer": "ports",
+      "deps": [
+        "T8",
+        "T9"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-13",
+        "AC-14",
+        "AC-15",
+        "AC-16",
+        "AC-18",
+        "AC-23"
+      ],
+      "dod": "Endpoint integration tests pass for addCard, openCard, editCard and deleteCard with the contract's statuses and codes — card_title_invalid checked before card_description_invalid, card_limit_reached at 1,000 (seeded by ABoardWithCardsAsync), card_changed with current_card, 204 on delete — and a title and description holding markup round-trip byte for byte.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.Cards.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardProblems.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/BoardFixtures.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/CardEndpointTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/11-card-endpoints.md"
+    },
+    {
+      "id": "T12",
+      "title": "Limit each account to 120 board change attempts per rolling minute, before the membership check",
+      "layer": "ports",
+      "deps": [
+        "T9"
+      ],
+      "acs": [
+        "AC-17",
+        "AC-28"
+      ],
+      "dod": "Integration tests against TestClock pass: 120 change attempts (accepted, or refused for any other reason, on any board including ones the caller is not a member of) are admitted, the 121st gets 429 boards.change_rate_limited with Retry-After and changes nothing, reads and no-session requests are not counted, and the account is admitted again once earlier attempts leave the minute.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Boards/BoardChangeRateLimit.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardProblems.cs",
+        "src/Uniqua.Projector.Api/DependencyInjection.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardChangeRateLimitTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/12-per-account-change-limit.md"
+    },
+    {
+      "id": "T13",
+      "title": "Prove the membership boundary across every read and change kind, and map the four board rules to their tests",
+      "layer": "tests",
+      "deps": [
+        "T10",
+        "T11",
+        "T12",
+        "T14"
+      ],
+      "acs": [
+        "AC-21",
+        "AC-22",
+        "AC-25",
+        "AC-26",
+        "AC-27"
+      ],
+      "dod": "The QG-1 suite passes — for each of the 13 operations, the non-member response equals the never-existed response in status, headers and body (excluding instance and traceId) with valid, invalid, stale and cross-board inputs, and a fixture-inserted Member succeeds at every column and card change and is refused owner_only on rename and delete — and docs/board-rules.md names each of the four rules with the test that proves it, checked by a document test.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardBoundaryTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardRulesDocumentTests.cs",
+        "docs/board-rules.md"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/13-membership-boundary-suite-and-rules-map.md"
+    },
+    {
+      "id": "T14",
+      "title": "Prove the board invariants under 1,000 simultaneous pairs and the column order under 1,000 random sequences",
+      "layer": "tests",
+      "deps": [
+        "T10",
+        "T11"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-10b",
+        "AC-11",
+        "AC-15",
+        "AC-24b"
+      ],
+      "dod": "Against the SQL Server container, 1,000 randomised simultaneous pairs (column deletes, column adds, card adds, board creations, including one-short-of-each-ceiling pairs forced to collide by ContentionForcer) leave 0 boards with no column, 0 non-empty columns deleted, 0 boards above 20 columns or 1,000 cards and 0 accounts above 50 boards; 1,000 randomised column sequences leave every board's positions exactly 0..n-1 after each step; and a change to a different card or column is accepted without reopening the board.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardInvariantRaceTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/ColumnOrderConsistencyTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/StaleChangeScopeTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/14-invariant-race-and-column-order-suites.md"
+    },
+    {
+      "id": "T15",
+      "title": "Measure opening a full board, a single change and change throughput against the §6 budgets",
+      "layer": "tests",
+      "deps": [
+        "T10",
+        "T11",
+        "T12"
+      ],
+      "acs": [],
+      "dod": "A smoke run with at least 25 accounts each on its own board, an even mix of change kinds for 60 s, records server-side p95 for opening a 20-column 1,000-card board and for a single change plus the changes/s rate; on the reference machine the targets are 300 ms, 200 ms and 50/s, and in CI the check fails only on a p95 more than 25% slower than the last recorded run.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardLatencyBudgetTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/15-board-latency-and-throughput-smoke.md"
+    },
+    {
+      "id": "T16",
+      "title": "Vendor Dialog and Textarea, add the destructive Button variant, and build PlainText and KeptTextNotice",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-16"
+      ],
+      "dod": "Component tests pass: PlainText renders markup, a script tag, a URL, line breaks and repeated spaces as literal text nodes with no anchor and no innerHTML; KeptTextNotice shows kept text as selectable plain text with Apply again / Discard or Dismiss; the vendored Dialog traps focus, closes on Esc and sets aria-modal; `npm run build` and `npm run lint` are clean.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/components/ui/dialog.tsx",
+        "src/Uniqua.Projector.Web/src/components/ui/textarea.tsx",
+        "src/Uniqua.Projector.Web/src/components/ui/button-variants.ts",
+        "src/Uniqua.Projector.Web/src/features/boards/PlainText.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/KeptTextNotice.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/PlainText.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/KeptTextNotice.test.tsx",
+        "src/Uniqua.Projector.Web/package.json"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/16-client-primitives-plain-text-and-kept-text-notice.md"
+    },
+    {
+      "id": "T17",
+      "title": "Write the typed boards API client, its query keys and cache patches, and the board refusal wording",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-18b"
+      ],
+      "dod": "Unit tests with a mocked fetch pass: each of the 13 operations sends the contract's method, path, body and X-XSRF-TOKEN and parses its success schema; a problem document becomes an ApiError with its code and current_* member; accepted changes and stale refusals patch the board and card caches; a 404 on a change triggers one board re-read that resolves to 'item gone' or 'board gone'.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/api/boards.ts",
+        "src/Uniqua.Projector.Web/src/api/__tests__/boards.test.ts",
+        "src/Uniqua.Projector.Web/src/features/boards/boardRefusals.ts",
+        "src/Uniqua.Projector.Web/src/features/boards/useBoardChange.ts",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/useBoardChange.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/17-boards-api-client.md"
+    },
+    {
+      "id": "T18",
+      "title": "Give the client board addresses with React Router, a guarded return address, and typed text kept across a sign-in",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-27",
+        "AC-28"
+      ],
+      "dod": "Component and unit tests pass: a visitor at /boards/:id sees the unchanged sign-in form and no board request is made; after sign-in an in-app returnTo is followed and //evil or https:// is not; typed text is kept in sessionStorage under the account id, offered back only to that account, discarded unseen for a different one, and removed on apply or sign-out.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/package.json",
+        "src/Uniqua.Projector.Web/src/app/routes.tsx",
+        "src/Uniqua.Projector.Web/src/App.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/AccountShell.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/SignInScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/draftStore.ts",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardListScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardScreen.tsx",
+        "src/Uniqua.Projector.Web/src/app/__tests__/routes.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/draftStore.test.ts"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/18-board-addresses-return-and-kept-text.md"
+    },
+    {
+      "id": "T19",
+      "title": "Build the board list (SCR-02) and the create-board dialog (SCR-03)",
+      "layer": "ui",
+      "deps": [
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-04"
+      ],
+      "dod": "Component tests with a mocked API pass for every SCR-02 state (loading, empty, default with Owner markers newest first, error, kept-text offer, after-delete) and every SCR-03 state (default, pending, validation, limit with Create disabled, rate-limited, busy, session-ended, error, success navigating to /boards/:id with the board cache seeded).",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/BoardListScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/CreateBoardDialog.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/BoardListScreen.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/CreateBoardDialog.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/19-board-list-and-create-board.md"
+    },
+    {
+      "id": "T20",
+      "title": "Build the board screen (SCR-04) with its owner header, card tiles and add-card form, and the not-available screen (SCR-08)",
+      "layer": "ui",
+      "deps": [
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-15",
+        "AC-18b",
+        "AC-19",
+        "AC-22",
+        "AC-25",
+        "AC-28"
+      ],
+      "dod": "Component tests with a mocked API pass for SCR-04 screen states (loading, error, not-available rendering SCR-08, member default with no owner controls, owner default, kept-text offer, kept-text gone), the owner's board rename states, and every add-card state, with titles shown only through PlainText and SCR-08 identical for all three causes.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/BoardScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardHeader.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/ColumnRow.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardColumn.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/AddCardForm.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/InlineNameEditor.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardNotAvailable.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/BoardScreen.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/20-board-screen-and-add-card.md"
+    },
+    {
+      "id": "T21",
+      "title": "Let members add, rename, drag and delete columns on the board, with every refusal shown in place",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-06b",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-24"
+      ],
+      "dod": "Component tests with a mocked API pass for every add-column state and every column-header state — rename editing/pending/validation/stale (typed name kept, current name shown)/gone/success, drag with pointer and keyboard, move stale (layout patched, notice shown)/gone/success, delete pending/stale/not-empty/last-column/gone/success — with no confirmation on delete and the trash button never pre-disabled.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/ColumnRow.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardColumn.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/ColumnHeader.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/AddColumnForm.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/ColumnManagement.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/21-column-management-on-the-board.md"
+    },
+    {
+      "id": "T22",
+      "title": "Build the card detail dialog with edit and delete (SCR-05, SCR-06) and the board deletion dialog (SCR-07)",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-14",
+        "AC-16",
+        "AC-18",
+        "AC-20",
+        "AC-20b",
+        "AC-23"
+      ],
+      "dod": "Component tests with a mocked API pass for every SCR-05 state (loading, reading with the description as plain text and «No description» when empty, error, gone, editing, validation, stale with the current version shown and typed text kept, success), every SCR-06 state (confirm, stale back to reading, gone, success), and every SCR-07 state (always-enabled delete, mismatch showing current_name with typed text kept, owner-only, not-available, success to the board list with the list cache patched).",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/BoardScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/CardDetailDialog.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/DeleteBoardDialog.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/CardDetailDialog.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/DeleteBoardDialog.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/22-card-detail-and-deletion-dialogs.md"
+    }
+  ]
+}
