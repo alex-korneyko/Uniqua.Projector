@@ -24,6 +24,11 @@ public static class DependencyInjection
         services.AddScoped<RenameBoard>();
         services.AddScoped<DeleteBoard>();
 
+        services.AddScoped<AddColumn>();
+        services.AddScoped<RenameColumn>();
+        services.AddScoped<MoveColumn>();
+        services.AddScoped<DeleteColumn>();
+
         // The announcement has no listener until the live-update channel arrives (roadmap step 8).
         // Registered with TryAdd so the Api-side implementation beside the hub replaces it simply
         // by being registered first, rather than by editing this line.
