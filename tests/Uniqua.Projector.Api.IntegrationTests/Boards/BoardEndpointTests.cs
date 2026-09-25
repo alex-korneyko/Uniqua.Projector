@@ -1,0 +1,406 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.Json;
+using Uniqua.Projector.Api.IntegrationTests.Fixtures;
+
+namespace Uniqua.Projector.Api.IntegrationTests.Boards;
+
+/// <summary>
+/// T9 — <c>/api/v1/boards</c> on the wire: <c>listMyBoards</c>, <c>createBoard</c>,
+/// <c>openBoard</c>, <c>renameBoard</c> and <c>deleteBoard</c>, and the one refusal (AC-25) that has
+/// to look identical whether the board never existed or the caller simply is not a member of it.
+/// </summary>
+[Collection(DatabaseCollection.Name)]
+public sealed class BoardEndpointTests(ApiFactory factory)
+{
+    private const string Boards = "/api/v1/boards";
+
+    // ---- AC-01: create — happy path -----------------------------------------------------------
+
+    [Fact]
+    public async Task Creating_a_board_with_a_valid_name_makes_the_caller_its_sole_owner_with_three_columns()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PostAsJsonAsync(Boards, new { name = "A brand new board" });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var body = await BodyAsync(response);
+        Assert.Equal("A brand new board", body.GetProperty("name").GetString());
+        Assert.True(body.GetProperty("is_owner").GetBoolean());
+        Assert.True(Guid.TryParse(body.GetProperty("id").GetString(), out _));
+        Assert.Empty(body.GetProperty("cards").EnumerateArray());
+
+        var columnNames = body.GetProperty("columns").EnumerateArray()
+            .OrderBy(column => column.GetProperty("position").GetInt32())
+            .Select(column => column.GetProperty("name").GetString() ?? string.Empty)
+            .ToArray();
+        Assert.Equal(["To do", "In progress", "Done"], columnNames);
+    }
+
+    // ---- AC-02: create — the name is refused --------------------------------------------------
+
+    [Fact]
+    public async Task Creating_a_board_with_a_name_that_is_empty_after_trimming_is_refused()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PostAsJsonAsync(Boards, new { name = "   " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
+    }
+
+    // ---- AC-03: the 50-owned-board ceiling -----------------------------------------------------
+
+    [Fact]
+    public async Task An_account_that_already_owns_fifty_boards_is_refused_a_fifty_first()
+    {
+        var owner = await factory.AnAccountOwningBoardsAsync(50);
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PostAsJsonAsync(Boards, new { name = "One too many" });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("boards.owned_board_limit_reached", await CodeOfAsync(response));
+    }
+
+    // ---- AC-04: list only the caller's boards, marking ownership -------------------------------
+
+    [Fact]
+    public async Task Listing_lists_every_board_the_caller_is_a_member_of_and_no_other_marking_ownership()
+    {
+        var member = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+
+        var owned = await factory.ABoardAsync(member, "Owned by the caller");
+        factory.Clock.Advance(TimeSpan.FromSeconds(1));
+
+        var joined = await factory.ABoardAsync(stranger, "Joined, not owned");
+        await factory.AMemberOfAsync(joined.Id, member);
+        factory.Clock.Advance(TimeSpan.FromSeconds(1));
+
+        var notMine = await factory.ABoardAsync(stranger, "Never joined");
+
+        var client = await factory.AWritingClientAsync(member);
+        var response = await client.GetAsync(Boards);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+
+        var items = body.GetProperty("items").EnumerateArray().ToArray();
+        var ids = items.Select(item => item.GetProperty("id").GetString()).ToArray();
+
+        Assert.Contains(owned.Id.ToString(), ids);
+        Assert.Contains(joined.Id.ToString(), ids);
+        Assert.DoesNotContain(notMine.Id.ToString(), ids);
+
+        Assert.True(items.Single(item => item.GetProperty("id").GetString() == owned.Id.ToString())
+            .GetProperty("is_owner").GetBoolean());
+        Assert.False(items.Single(item => item.GetProperty("id").GetString() == joined.Id.ToString())
+            .GetProperty("is_owner").GetBoolean());
+    }
+
+    // ---- AC-19: rename — happy path -------------------------------------------------------------
+
+    [Fact]
+    public async Task Renaming_by_the_owner_records_the_new_name()
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Before the rename");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}", new { name = "After the rename" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await BodyAsync(response);
+        Assert.Equal(board.Id.ToString(), body.GetProperty("id").GetString());
+        Assert.Equal("After the rename", body.GetProperty("name").GetString());
+    }
+
+    // ---- AC-20 / AC-20b: delete — happy path and the mismatch --------------------------------------
+
+    [Fact]
+    public async Task Deleting_with_the_matching_name_removes_the_board_and_it_answers_not_available_after()
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "To be deleted");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var deletion = await client.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+
+        Assert.Equal(HttpStatusCode.NoContent, deletion.StatusCode);
+
+        var reopened = await client.GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.NotFound, reopened.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(reopened));
+    }
+
+    [Fact]
+    public async Task Deleting_with_a_name_that_does_not_match_is_refused_and_carries_the_current_name()
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Renamed since opened");
+        var client = await factory.AWritingClientAsync(owner);
+
+        // The dialog opened before this rename, and still confirms with the old name.
+        await client.PatchAsJsonAsync($"{Boards}/{board.Id}", new { name = "The actual current name" });
+
+        var deletion = await client.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, deletion.StatusCode);
+        var body = await BodyAsync(deletion);
+        Assert.Equal("boards.confirmation_mismatch", body.GetProperty("code").GetString());
+        Assert.Equal("The actual current name", body.GetProperty("current_name").GetString());
+
+        // Nothing was deleted.
+        var stillThere = await client.GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+    }
+
+    // ---- AC-22: a non-owner member cannot rename or delete --------------------------------------
+
+    [Fact]
+    public async Task A_member_who_is_not_the_owner_cannot_rename_the_board()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Owned by someone else");
+        await factory.AMemberOfAsync(board.Id, member);
+
+        var client = await factory.AWritingClientAsync(member);
+        var response = await client.PatchAsJsonAsync($"{Boards}/{board.Id}", new { name = "Hijacked" });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("boards.owner_only", await CodeOfAsync(response));
+
+        var stillNamed = await client.GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal("Owned by someone else", (await BodyAsync(stillNamed)).GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public async Task A_member_who_is_not_the_owner_cannot_delete_the_board()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Owned by someone else");
+        await factory.AMemberOfAsync(board.Id, member);
+
+        var client = await factory.AWritingClientAsync(member);
+        var response = await client.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal("boards.owner_only", await CodeOfAsync(response));
+
+        var stillThere = await client.GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+    }
+
+    // ---- Order of checks: request shape before the owner check (edge case table) -----------------
+
+    [Fact]
+    public async Task A_member_sending_a_malshaped_name_is_refused_before_the_owner_check_even_runs()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Owned by someone else");
+        await factory.AMemberOfAsync(board.Id, member);
+
+        var client = await factory.AWritingClientAsync(member);
+        var response = await client.PatchAsJsonAsync($"{Boards}/{board.Id}", new { name = 5 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(response));
+    }
+
+    // ---- AC-25 / edge cases: non-member and never-existed are answered byte-identically ------------
+
+    [Fact]
+    public async Task A_non_member_opening_a_board_gets_exactly_the_never_existed_refusal()
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Not the stranger's board");
+
+        var client = await factory.AWritingClientAsync(stranger);
+
+        var nonMember = await client.GetAsync($"{Boards}/{board.Id}");
+        var neverExisted = await client.GetAsync($"{Boards}/{Guid.CreateVersion7()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, nonMember.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, neverExisted.StatusCode);
+        await AssertIndistinguishableAsync(nonMember, neverExisted);
+    }
+
+    [Fact]
+    public async Task A_non_member_renaming_a_board_gets_not_available_even_with_an_invalid_body()
+    {
+        // Edge case table: "Non-member sends {"name": ""} to rename" -> 404 not_available, not 400,
+        // not 403. The membership check runs before the request shape is even looked at.
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Not the stranger's board");
+
+        var client = await factory.AWritingClientAsync(stranger);
+        var response = await client.PatchAsJsonAsync($"{Boards}/{board.Id}", new { name = "" });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task A_non_member_deleting_a_board_changes_nothing_and_gets_not_available()
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Not the stranger's board");
+
+        var client = await factory.AWritingClientAsync(stranger);
+        var response = await client.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(response));
+
+        var stillThere = await factory.AWritingClientAsync(owner);
+        Assert.Equal(HttpStatusCode.OK, (await stillThere.GetAsync($"{Boards}/{board.Id}")).StatusCode);
+    }
+
+    // ---- AC-27: no session reveals nothing, real board or not -------------------------------------
+
+    [Fact]
+    public async Task With_no_session_a_real_board_and_one_that_never_existed_are_answered_identically()
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Whatever it is, a visitor cannot tell");
+
+        var anonymous = factory.CreateClient();
+
+        var realBoard = await anonymous.GetAsync($"{Boards}/{board.Id}");
+        var neverExisted = await anonymous.GetAsync($"{Boards}/{Guid.CreateVersion7()}");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, realBoard.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, neverExisted.StatusCode);
+        Assert.Equal("accounts.session_not_recognised", await CodeOfAsync(realBoard));
+        Assert.Equal("accounts.session_not_recognised", await CodeOfAsync(neverExisted));
+    }
+
+    // ---- Edge cases ------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task A_path_that_is_not_a_guid_is_answered_exactly_like_an_unknown_board()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.GetAsync($"{Boards}/not-a-guid");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(response));
+    }
+
+    [Fact]
+    public async Task A_body_that_is_not_json_at_all_is_refused_identically_for_every_board()
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Whoever asks, the body wins first");
+
+        var ownerClient = await factory.AWritingClientAsync(owner);
+        var strangerClient = await factory.AWritingClientAsync(stranger);
+
+        var toOwnBoard = await PatchNotJsonAsync(ownerClient, board.Id);
+        var toSomeoneElsesBoard = await PatchNotJsonAsync(strangerClient, board.Id);
+        var toAnAbsentBoard = await PatchNotJsonAsync(strangerClient, Guid.CreateVersion7());
+
+        Assert.Equal(HttpStatusCode.BadRequest, toOwnBoard.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, toSomeoneElsesBoard.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, toAnAbsentBoard.StatusCode);
+
+        Assert.Equal("boards.request_malformed", await CodeOfAsync(toOwnBoard));
+        Assert.Equal("boards.request_malformed", await CodeOfAsync(toSomeoneElsesBoard));
+        Assert.Equal("boards.request_malformed", await CodeOfAsync(toAnAbsentBoard));
+    }
+
+    [Fact]
+    public async Task Deleting_ignores_a_confirmation_name_in_the_query_string()
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Query strings are not read");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.SendAsync(new HttpRequestMessage(
+            HttpMethod.Delete, $"{Boards}/{board.Id}?confirm_name={Uri.EscapeDataString(board.Name)}")
+        {
+            // The body names the wrong board, so the request must fail — proving the query string's
+            // correct name was never read.
+            Content = JsonContent.Create(new { confirm_name = "not the board's name" }),
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Equal("boards.confirmation_mismatch", await CodeOfAsync(response));
+
+        var stillThere = await client.GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+    }
+
+    // ---- Helpers -----------------------------------------------------------------------------------
+
+    private static Task<HttpResponseMessage> PatchNotJsonAsync(HttpClient client, Guid boardId) =>
+        client.PatchAsync(
+            $"{Boards}/{boardId}",
+            new StringContent("{ not json", Encoding.UTF8, "application/json"));
+
+    private static async Task<JsonElement> BodyAsync(HttpResponseMessage response) =>
+        JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+
+    private static async Task<string?> CodeOfAsync(HttpResponseMessage response)
+    {
+        var body = await BodyAsync(response);
+        return body.TryGetProperty("code", out var code) ? code.GetString() : null;
+    }
+
+    /// <summary>
+    /// DoD: "A test compares the non-member and never-existed not_available responses status,
+    /// headers and body, excluding instance and traceId." Those two members echo the request itself
+    /// (contracts/openapi.yaml, components.responses.BoardNotAvailable) and so are the only ones
+    /// allowed to differ.
+    /// </summary>
+    private static async Task AssertIndistinguishableAsync(
+        HttpResponseMessage first, HttpResponseMessage second)
+    {
+        Assert.Equal(first.StatusCode, second.StatusCode);
+        Assert.Equal(
+            first.Content.Headers.ContentType?.ToString(), second.Content.Headers.ContentType?.ToString());
+
+        var firstBody = await BodyAsync(first);
+        var secondBody = await BodyAsync(second);
+
+        foreach (var name in new[] { "type", "title", "status", "detail", "code" })
+        {
+            Assert.Equal(
+                firstBody.TryGetProperty(name, out var a) ? a.ToString() : null,
+                secondBody.TryGetProperty(name, out var b) ? b.ToString() : null);
+        }
+    }
+}

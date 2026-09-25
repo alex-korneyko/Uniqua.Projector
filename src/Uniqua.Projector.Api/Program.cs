@@ -1,6 +1,7 @@
 using Uniqua.Projector.Api;
 using Uniqua.Projector.Api.Accounts;
 using Uniqua.Projector.Api.Antiforgery;
+using Uniqua.Projector.Api.Boards;
 using Uniqua.Projector.Application;
 using Uniqua.Projector.Infrastructure;
 
@@ -46,6 +47,7 @@ app.UseStaticFiles();
 app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
 
 app.MapAccountEndpoints();
+app.MapBoardEndpoints();
 
 // The skeleton's proof that the ProblemDetails handler is the only error shape.
 app.MapGet("/boom", void () => throw new InvalidOperationException("Intentional skeleton failure."));

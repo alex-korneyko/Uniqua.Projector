@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Uniqua.Projector.Api.Boards;
 using Uniqua.Projector.Domain.Accounts;
+using Uniqua.Projector.Domain.Boards;
 
 namespace Uniqua.Projector.Api;
 
@@ -42,6 +44,19 @@ public static class ProblemDetailsSetup
                     Apply(context, problem, problem.Status!.Value);
                 }
 
+                // The board routes bind their body leniently as any JSON (ADR 0014), so the only
+                // body the framework itself refuses there is one that is not JSON at all (or not
+                // sent as JSON) - before any board is looked at, and so identically for every
+                // board. Reshaped the same way, into the board feature's own declared code.
+                if ((context.ProblemDetails.Status == StatusCodes.Status400BadRequest
+                        || context.ProblemDetails.Status == StatusCodes.Status415UnsupportedMediaType)
+                    && !context.ProblemDetails.Extensions.ContainsKey("code")
+                    && IsBoardsRequest(context.HttpContext.Request.Path))
+                {
+                    var problem = BoardProblems.For(BoardProblems.RequestMalformed);
+                    Apply(context, problem.Type, problem.Title, problem.Status, problem.Detail, problem.Code);
+                }
+
                 // A request the framework rejects before any endpoint reads it — a body over
                 // Kestrel's configured MaxRequestBodySize (413), one trickling in below its
                 // MinRequestBodyDataRate (408), and the like — often never reaches an
@@ -76,6 +91,14 @@ public static class ProblemDetailsSetup
 
     internal static bool IsAccountsOrSessionsRequest(PathString path) =>
         path.StartsWithSegments("/api/v1/accounts") || path.StartsWithSegments("/api/v1/sessions");
+
+    internal static bool IsBoardsRequest(PathString path) => path.StartsWithSegments("/api/v1/boards");
+
+    /// <summary>
+    /// The <c>retry_after_seconds</c> a <c>boards.contended</c> refusal carries: the bounded retry
+    /// has already spent its own attempts (ADR 0015), so a client's next try is reasonable at once.
+    /// </summary>
+    internal const int ContendedRetryAfterSeconds = 1;
 
     /// <summary>
     /// Every status a <see cref="BadHttpRequestException"/> can carry when Kestrel or minimal API's
@@ -120,13 +143,17 @@ public static class ProblemDetailsSetup
             httpContext.TraceIdentifier);
 
     /// <summary>Reshapes the framework's own problem into one row of the wording table.</summary>
-    private static void Apply(ProblemDetailsContext context, AccountProblem problem, int status)
+    private static void Apply(ProblemDetailsContext context, AccountProblem problem, int status) =>
+        Apply(context, problem.Type, problem.Title, status, problem.Detail, problem.Code);
+
+    private static void Apply(
+        ProblemDetailsContext context, string type, string title, int status, string detail, string code)
     {
-        context.ProblemDetails.Type = problem.Type;
-        context.ProblemDetails.Title = problem.Title;
+        context.ProblemDetails.Type = type;
+        context.ProblemDetails.Title = title;
         context.ProblemDetails.Status = status;
-        context.ProblemDetails.Detail = problem.Detail;
-        context.ProblemDetails.Extensions["code"] = problem.Code;
+        context.ProblemDetails.Detail = detail;
+        context.ProblemDetails.Extensions["code"] = code;
         context.HttpContext.Response.StatusCode = status;
     }
 
@@ -175,26 +202,83 @@ public static class ProblemDetailsSetup
     public static Task WriteAccountProblemAsync(this HttpContext context, AccountError error) =>
         context.WriteAccountProblemAsync(error.Code);
 
+    /// <summary>
+    /// Writes one row of the board wording table (<see cref="BoardProblems"/>) as the response -
+    /// the only path a <c>boards.*</c> refusal takes.
+    /// </summary>
+    /// <param name="currentName">
+    /// AC-20b: the board's current name, published as <c>current_name</c> on
+    /// <c>boards.confirmation_mismatch</c> only, and only ever to the owner who passed the
+    /// membership and owner checks.
+    /// </param>
+    /// <param name="retryAfterSeconds">
+    /// Written as <c>retry_after_seconds</c> and <c>Retry-After</c> on the two rows that carry it;
+    /// <c>boards.contended</c> defaults to <see cref="ContendedRetryAfterSeconds"/>.
+    /// </param>
+    public static Task WriteBoardProblemAsync(
+        this HttpContext context,
+        string code,
+        string? currentName = null,
+        int? retryAfterSeconds = null)
+    {
+        var problem = BoardProblems.For(code);
+
+        if (code == BoardErrors.Contended.Code)
+        {
+            retryAfterSeconds ??= ContendedRetryAfterSeconds;
+        }
+
+        var extensions = currentName is not null && code == BoardProblems.ConfirmationMismatch
+            ? new Dictionary<string, object?> { ["current_name"] = currentName }
+            : null;
+
+        return context.WriteProblemAsync(
+            problem.Type, problem.Title, problem.Status, problem.Detail, problem.Code,
+            problem.CarriesRetryAfter ? retryAfterSeconds : null, extensions);
+    }
+
+    /// <inheritdoc cref="WriteBoardProblemAsync(HttpContext, string, string?, int?)"/>
+    public static Task WriteBoardProblemAsync(this HttpContext context, BoardError error) =>
+        context.WriteBoardProblemAsync(error.Code);
+
     private static Task WriteProblemAsync(
         this HttpContext context,
         AccountProblem problem,
         int status,
-        int? retryAfterSeconds)
+        int? retryAfterSeconds) =>
+        context.WriteProblemAsync(
+            problem.Type, problem.Title, status, problem.Detail, problem.Code,
+            problem.CarriesRetryAfter ? retryAfterSeconds : null, extensions: null);
+
+    private static Task WriteProblemAsync(
+        this HttpContext context,
+        string type,
+        string title,
+        int status,
+        string detail,
+        string code,
+        int? retryAfterSeconds,
+        IReadOnlyDictionary<string, object?>? extensions)
     {
         var details = new ProblemDetails
         {
-            Type = problem.Type,
-            Title = problem.Title,
+            Type = type,
+            Title = title,
             Status = status,
             // A fixed string per code — never a framework message, never an exception message and
             // never an echo of what was submitted.
-            Detail = problem.Detail,
+            Detail = detail,
             Instance = context.Request.Path,
         };
-        details.Extensions["code"] = problem.Code;
+        details.Extensions["code"] = code;
         details.Extensions["traceId"] = context.TraceIdentifier;
 
-        if (problem.CarriesRetryAfter && retryAfterSeconds is > 0)
+        foreach (var (name, value) in extensions ?? new Dictionary<string, object?>())
+        {
+            details.Extensions[name] = value;
+        }
+
+        if (retryAfterSeconds is > 0)
         {
             details.Extensions["retry_after_seconds"] = retryAfterSeconds;
             context.Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString();
@@ -225,9 +309,24 @@ internal sealed class UnhandledExceptionHandler(ILogger<UnhandledExceptionHandle
         // folded in with it for the same reason the CustomizeProblemDetails hook folds it in
         // (openapi.yaml pairs a wrong Content-Type with this same 400 on both operations).
         var badRequest = exception as BadHttpRequestException;
-        var isMalformedBody = badRequest?.StatusCode
-                is StatusCodes.Status400BadRequest or StatusCodes.Status415UnsupportedMediaType
+        var isUnreadableBody = badRequest?.StatusCode
+            is StatusCodes.Status400BadRequest or StatusCodes.Status415UnsupportedMediaType;
+        var isMalformedBody = isUnreadableBody
             && ProblemDetailsSetup.IsAccountsOrSessionsRequest(httpContext.Request.Path);
+
+        // The board routes' one pre-membership body refusal (ADR 0014), answered the same way in
+        // Development as the CustomizeProblemDetails hook answers it everywhere else.
+        if (isUnreadableBody && ProblemDetailsSetup.IsBoardsRequest(httpContext.Request.Path))
+        {
+            logger.LogInformation(
+                "module=api event=malformed_request_body method={Method} path={Path} traceId={TraceId}",
+                httpContext.Request.Method,
+                httpContext.Request.Path,
+                httpContext.TraceIdentifier);
+
+            await httpContext.WriteBoardProblemAsync(BoardProblems.RequestMalformed);
+            return true;
+        }
 
         if (isMalformedBody)
         {
