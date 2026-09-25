@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { describeRefusal, type Refusal } from '@/features/auth/accountRefusals'
 import { sessionQueryKey } from '@/features/auth/useSession'
+import { discardUnlessOwnedBy } from '@/features/boards/draftStore'
 
 /**
  * AC-04: how an account that comes back gets a session.
@@ -65,6 +66,8 @@ export function SignInScreen({ alternative, autoFocusHeading = false }: SignInSc
     mutationFn: createSession,
     onSuccess: (account) => {
       setRefusal(null)
+      // AC-28: text another account kept in this tab goes before this one is shown anything.
+      discardUnlessOwnedBy(account.id)
       // The cookie is set and the 201 carries the account, so the session is known at once rather
       // than after /me answers; the re-check still runs, to confirm with the server.
       queryClient.setQueryData(sessionQueryKey, account)

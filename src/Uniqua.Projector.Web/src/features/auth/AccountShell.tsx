@@ -1,7 +1,10 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { Navigate, useInRouterContext, useLocation } from 'react-router'
 
+import { isInAppPath } from '@/app/routes'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/features/auth/useSession'
+import { clearAll, discardUnlessOwnedBy } from '@/features/boards/draftStore'
 
 interface AccountShellProps {
   /**
@@ -10,6 +13,8 @@ interface AccountShellProps {
    * tested and built without it.
    */
   children: ReactNode
+  /** What a recognised account is shown under the header — the route table, in the app. */
+  signedIn?: ReactNode
 }
 
 /**
@@ -20,8 +25,38 @@ interface AccountShellProps {
  * the server could not answer. Showing a sign-in form for an outage would hide it behind something
  * that looks entirely normal, and invite people to type a password at a server that cannot check it.
  */
-export function AccountShell({ children }: AccountShellProps) {
+export function AccountShell({ children, signedIn }: AccountShellProps) {
   const { state, retry, signOut, isSigningOut, signOutFailed } = useSession()
+  const inRouter = useInRouterContext()
+  const accountId = state.status === 'account' ? state.account.id : undefined
+
+  // AC-28: text kept by a different account is removed the moment this one is known, never shown.
+  useEffect(() => {
+    if (accountId !== undefined) {
+      discardUnlessOwnedBy(accountId)
+    }
+  }, [accountId])
+
+  // AC-28: kept text goes with a sign-out that happened — not with one that failed, which leaves
+  // the member signed in and still able to apply it.
+  const signingOut = useRef(false)
+  useEffect(() => {
+    if (!signingOut.current) {
+      return
+    }
+    if (state.status === 'visitor') {
+      signingOut.current = false
+      clearAll()
+    } else if (signOutFailed) {
+      signingOut.current = false
+    }
+  }, [state.status, signOutFailed])
+
+  const content = signedIn ?? (
+    <p className="text-muted-foreground text-sm">
+      You are signed in. The board arrives in a later step.
+    </p>
+  )
 
   if (state.status === 'loading') {
     return (
@@ -49,6 +84,9 @@ export function AccountShell({ children }: AccountShellProps) {
     )
   }
 
+  // AC-27: a visitor is shown the same sign-in form at every address, a board's included, and
+  // nothing below it renders — so no board request is made. The address itself is left alone: it
+  // is the `returnTo` the account is answered at once it signs in.
   if (state.status === 'visitor') {
     return <>{children}</>
   }
@@ -58,7 +96,15 @@ export function AccountShell({ children }: AccountShellProps) {
       <header className="flex items-center justify-between gap-4 border-b pb-4">
         {/* AC-11: the display name, and never the address — not even as a fallback. */}
         <span className="font-medium">{state.account.display_name}</span>
-        <Button variant="outline" size="sm" onClick={signOut} disabled={isSigningOut}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            signingOut.current = true
+            signOut()
+          }}
+          disabled={isSigningOut}
+        >
           {isSigningOut ? 'Signing out…' : 'Sign out'}
         </Button>
       </header>
@@ -69,9 +115,18 @@ export function AccountShell({ children }: AccountShellProps) {
         </p>
       )}
 
-      <p className="text-muted-foreground text-sm">
-        You are signed in. The board arrives in a later step.
-      </p>
+      {/* Outside a router (the shell on its own) there is no address to guard. */}
+      {inRouter ? <FollowReturnTo>{content}</FollowReturnTo> : content}
     </div>
   )
+}
+
+/**
+ * The `returnTo` guard, applied once an account is known: the address the visitor arrived at is
+ * followed only when it is a path inside the application (sad.md §8). Anything else — `//evil`,
+ * which a browser and React Router both parse as a path — lands on the board list.
+ */
+function FollowReturnTo({ children }: { children: ReactNode }) {
+  const { pathname, search, hash } = useLocation()
+  return isInAppPath(pathname + search + hash) ? <>{children}</> : <Navigate to="/" replace />
 }
