@@ -39,6 +39,14 @@ public static class BoardErrors
         $"An account can own at most {OwnedBoardCounter.MaxOwnedBoards} boards.");
 
     /// <summary>
+    /// ADR 0015 / screens.md § busy: the bounded retry (<c>BoardChangeRetry</c>) spent every
+    /// attempt on a lost race and gave up. Mapped to 503 by <c>ProblemDetailsSetup</c>.
+    /// </summary>
+    public static readonly BoardError Contended = new(
+        "boards.contended",
+        "The board is busy. Others are changing this board right now. Try again in 1 second.");
+
+    /// <summary>
     /// AC-20b. The typed confirmation did not match the board's current name — carrying that
     /// current name, because the board may have been renamed since the dialog opened.
     /// </summary>
