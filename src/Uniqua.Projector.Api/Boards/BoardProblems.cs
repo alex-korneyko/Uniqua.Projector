@@ -23,8 +23,14 @@ public static class BoardProblems
     /// <summary>A body that is not JSON at all — answered before membership, identically for every board.</summary>
     public const string RequestMalformed = "boards.request_malformed";
 
-    /// <summary>AC-20b. The one row published with <c>current_name</c>.</summary>
+    /// <summary>AC-20b. Published with <c>current_name</c>.</summary>
     public const string ConfirmationMismatch = "boards.confirmation_mismatch";
+
+    /// <summary>AC-06b. Published with <c>current_column</c>.</summary>
+    public const string ColumnRenamed = "boards.column_renamed";
+
+    /// <summary>AC-24. Published with <c>current_layout</c>.</summary>
+    public const string ColumnsChanged = "boards.columns_changed";
 
     private static readonly Dictionary<string, BoardProblem> Table = new[]
     {
@@ -48,20 +54,20 @@ public static class BoardProblems
         Row(BoardErrors.OwnerOnly.Code, 403, "Only the board owner can do this",
             "Only the board owner may rename or delete a board."),
         Row(ConfirmationMismatch, 409, "The name does not match",
-            "Type the board's current name exactly to delete it."),
+            "Type the board's current name exactly to delete it.", current: "current_name"),
 
         Row(BoardErrors.ColumnNameInvalid.Code, 400, "The column name is not usable",
             "A column name must be between 1 and 50 characters."),
         Row(BoardErrors.ColumnLimitReached.Code, 409, "No more columns can be added",
             "A board can hold at most 20 columns."),
-        Row("boards.column_renamed", 409, "The column was renamed",
-            "This column was renamed since you last saw it."),
+        Row(ColumnRenamed, 409, "The column was renamed",
+            "This column was renamed since you last saw it.", current: "current_column"),
         Row(BoardErrors.ColumnNotEmpty.Code, 409, "The column still holds cards",
             "A column that still holds cards cannot be deleted."),
         Row(BoardErrors.LastColumn.Code, 409, "The last column cannot be deleted",
             "A board must keep at least one column."),
-        Row("boards.columns_changed", 409, "The columns changed",
-            "The columns changed since you last saw them."),
+        Row(ColumnsChanged, 409, "The columns changed",
+            "The columns changed since you last saw them.", current: "current_layout"),
         Row(BoardErrors.ColumnPositionInvalid.Code, 400, "That position is not on this board",
             "A column can be placed only at a position between the first and the last."),
 
@@ -85,9 +91,14 @@ public static class BoardProblems
     public static BoardProblem For(string code) => Table[code];
 
     private static BoardProblem Row(
-        string code, int status, string title, string detail, bool carriesRetryAfter = false) =>
+        string code,
+        int status,
+        string title,
+        string detail,
+        bool carriesRetryAfter = false,
+        string? current = null) =>
         new(code, status, title, detail, TypeBase + code.Replace('.', '/').Replace('_', '-'),
-            carriesRetryAfter);
+            carriesRetryAfter, current);
 }
 
 /// <summary>One row of the board wording table — an RFC 9457 problem type this feature can return.</summary>
@@ -100,10 +111,16 @@ public static class BoardProblems
 /// Whether this problem is published with <c>retry_after_seconds</c> and a <c>Retry-After</c>
 /// header: <c>boards.change_rate_limited</c> and <c>boards.contended</c> only.
 /// </param>
+/// <param name="CurrentMember">
+/// The extension member a stale change is answered with — <c>current_name</c>,
+/// <c>current_column</c> or <c>current_layout</c> — carrying the thing as it now stands; <see
+/// langword="null"/> on every row that publishes none (contracts/openapi.yaml <c>Problem</c>).
+/// </param>
 public sealed record BoardProblem(
     string Code,
     int Status,
     string Title,
     string Detail,
     string Type,
-    bool CarriesRetryAfter);
+    bool CarriesRetryAfter,
+    string? CurrentMember);

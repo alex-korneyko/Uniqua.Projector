@@ -63,6 +63,31 @@ public static class BoardFixtures
     }
 
     /// <summary>
+    /// A board (through the API, so it starts with the three default columns) filled directly with
+    /// filler columns up to <paramref name="columnCount"/> total — one short of the 20-column ceiling
+    /// for AC-11 and the spec §6 race pairs (data-model.md § Test fixtures). Inserted directly rather
+    /// than through 17 API calls, keeping <c>Columns.Position</c> dense and each filler's
+    /// <c>NameVersion</c> at 1, same as a column the API itself would have created.
+    /// </summary>
+    public static async Task<TestBoard> ABoardWithColumnsAsync(
+        this ApiFactory factory, TestAccount owner, int columnCount, string name = "Test board")
+    {
+        var board = await factory.ABoardAsync(owner, name);
+
+        for (var position = 3; position < columnCount; position++)
+        {
+            await factory.ExecuteAsync(
+                $"""
+                INSERT INTO [dbo].[Columns]
+                    ([Id], [BoardId], [Name], [Position], [CardCount], [NextCardPosition], [NameVersion])
+                VALUES ('{Guid.CreateVersion7()}', '{board.Id}', N'Filler {position}', {position}, 0, 0, 1);
+                """);
+        }
+
+        return board;
+    }
+
+    /// <summary>
     /// A client carrying <paramref name="account"/>'s session cookie and the antiforgery pair a
     /// write needs, with its own apparent peer so per-account limits do not spill across tests.
     /// </summary>

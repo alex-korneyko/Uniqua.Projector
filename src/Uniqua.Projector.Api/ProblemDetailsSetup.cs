@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -206,10 +207,11 @@ public static class ProblemDetailsSetup
     /// Writes one row of the board wording table (<see cref="BoardProblems"/>) as the response -
     /// the only path a <c>boards.*</c> refusal takes.
     /// </summary>
-    /// <param name="currentName">
-    /// AC-20b: the board's current name, published as <c>current_name</c> on
-    /// <c>boards.confirmation_mismatch</c> only, and only ever to the owner who passed the
-    /// membership and owner checks.
+    /// <param name="current">
+    /// The thing a stale change is answered with as it now stands — the board's current name
+    /// (AC-20b), the column (AC-06b) or the column layout (AC-24) — published, in the contract's
+    /// snake_case, under the row's <see cref="BoardProblem.CurrentMember"/> and nowhere else. The
+    /// endpoint passes it only to a caller who has passed the membership check.
     /// </param>
     /// <param name="retryAfterSeconds">
     /// Written as <c>retry_after_seconds</c> and <c>Retry-After</c> on the two rows that carry it;
@@ -218,7 +220,7 @@ public static class ProblemDetailsSetup
     public static Task WriteBoardProblemAsync(
         this HttpContext context,
         string code,
-        string? currentName = null,
+        object? current = null,
         int? retryAfterSeconds = null)
     {
         var problem = BoardProblems.For(code);
@@ -228,8 +230,11 @@ public static class ProblemDetailsSetup
             retryAfterSeconds ??= ContendedRetryAfterSeconds;
         }
 
-        var extensions = currentName is not null && code == BoardProblems.ConfirmationMismatch
-            ? new Dictionary<string, object?> { ["current_name"] = currentName }
+        var extensions = current is not null && problem.CurrentMember is { } member
+            ? new Dictionary<string, object?>
+            {
+                [member] = JsonSerializer.SerializeToElement(current, BoardEndpoints.Json),
+            }
             : null;
 
         return context.WriteProblemAsync(
@@ -237,7 +242,7 @@ public static class ProblemDetailsSetup
             problem.CarriesRetryAfter ? retryAfterSeconds : null, extensions);
     }
 
-    /// <inheritdoc cref="WriteBoardProblemAsync(HttpContext, string, string?, int?)"/>
+    /// <inheritdoc cref="WriteBoardProblemAsync(HttpContext, string, object?, int?)"/>
     public static Task WriteBoardProblemAsync(this HttpContext context, BoardError error) =>
         context.WriteBoardProblemAsync(error.Code);
 

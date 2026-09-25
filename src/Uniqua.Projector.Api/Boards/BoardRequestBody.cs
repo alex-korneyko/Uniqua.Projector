@@ -31,4 +31,18 @@ public readonly struct BoardRequestBody(JsonElement body)
         value = string.Empty;
         return false;
     }
+
+    /// <summary>
+    /// The whole-number member <paramref name="name"/> that fits an <see cref="int"/>, or
+    /// <see langword="false"/> when the body is not an object, the member is absent, or it is not
+    /// such a number — the contract's <c>boards.request_invalid</c>.
+    /// </summary>
+    public bool TryGetInt32(string name, out int value)
+    {
+        value = 0;
+        return body.ValueKind is JsonValueKind.Object
+            && body.TryGetProperty(name, out var member)
+            && member.ValueKind is JsonValueKind.Number
+            && member.TryGetInt32(out value);
+    }
 }
