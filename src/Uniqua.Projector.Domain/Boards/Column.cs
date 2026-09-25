@@ -7,6 +7,11 @@ namespace Uniqua.Projector.Domain.Boards;
 /// </summary>
 public sealed class Column
 {
+    /// <summary>AC-05 / AC-08. The Text rule's bounds on a column name.</summary>
+    public const int MinNameLength = 1;
+
+    public const int MaxNameLength = 50;
+
     internal Column(Guid id, Guid boardId, string name, int position)
     {
         Id = id;

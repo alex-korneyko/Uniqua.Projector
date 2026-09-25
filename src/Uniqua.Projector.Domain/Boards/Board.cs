@@ -14,6 +14,9 @@ public sealed class Board
 
     public const int MaxNameLength = 100;
 
+    /// <summary>AC-11. A board can hold at most 20 columns.</summary>
+    public const int MaxColumns = 20;
+
     private readonly List<Column> _columns = [];
     private readonly List<BoardMembership> _memberships = [];
 
@@ -112,4 +115,162 @@ public sealed class Board
 
     private static bool IsValidName(string? name, out string trimmed) =>
         BoardText.TryNormalize(name, MinNameLength, MaxNameLength, out trimmed);
+
+    // ---- T2: column rules (ADR 0016 per-concern versions, ADR 0017 dense positions) ------------
+
+    /// <summary>AC-26 by construction: the only way a column is reached from outside the aggregate.</summary>
+    public Result<Column, BoardError> FindColumn(Guid columnId)
+    {
+        var column = _columns.Find(c => c.Id == columnId);
+        return column is null
+            ? Result<Column, BoardError>.Failure(BoardErrors.NotAvailable)
+            : Result<Column, BoardError>.Success(column);
+    }
+
+    /// <summary>
+    /// AC-05 / AC-08 / AC-11. Text rule 1-50, refuse at 20, append at the end. Never stale: an
+    /// added column overwrites nothing. Names need not be unique on the board.
+    /// </summary>
+    public Result<Column, BoardError> AddColumn(string name)
+    {
+        if (!IsValidColumnName(name, out var trimmed))
+        {
+            return Result<Column, BoardError>.Failure(BoardErrors.ColumnNameInvalid);
+        }
+
+        if (_columns.Count >= MaxColumns)
+        {
+            return Result<Column, BoardError>.Failure(BoardErrors.ColumnLimitReached);
+        }
+
+        var column = new Column(Ids.New(), Id, trimmed, _columns.Count);
+        _columns.Add(column);
+        LayoutChanged();
+        return Result<Column, BoardError>.Success(column);
+    }
+
+    /// <summary>
+    /// AC-06 / AC-06b / AC-08. Not on board -&gt; Text rule -&gt; stale -&gt; rename. Moves the
+    /// column's <c>NameVersion</c> only; the board's <c>ColumnLayoutVersion</c> is untouched (AC-24b).
+    /// </summary>
+    public Result<bool, BoardError> RenameColumn(Guid columnId, string name, int seenNameVersion)
+    {
+        var found = FindColumn(columnId);
+        if (!found.IsSuccess)
+        {
+            return Result<bool, BoardError>.Failure(found.Error!);
+        }
+
+        var column = found.Value;
+        if (!IsValidColumnName(name, out var trimmed))
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnNameInvalid);
+        }
+
+        if (column.NameVersion != seenNameVersion)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnRenamed(column));
+        }
+
+        column.Name = trimmed;
+        column.NameVersion++;
+        return Result<bool, BoardError>.Success(true);
+    }
+
+    /// <summary>
+    /// AC-06 / AC-24 / AC-24b. Not on board -&gt; stale -&gt; position in 0..n-1 -&gt; renumber.
+    /// A move to the column's own place is accepted and still moves the layout version.
+    /// </summary>
+    public Result<bool, BoardError> MoveColumn(Guid columnId, int position, int seenLayoutVersion)
+    {
+        var found = FindColumn(columnId);
+        if (!found.IsSuccess)
+        {
+            return Result<bool, BoardError>.Failure(found.Error!);
+        }
+
+        if (ColumnLayoutVersion != seenLayoutVersion)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnsChanged(_columns));
+        }
+
+        if (position < 0 || position >= _columns.Count)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnPositionInvalid);
+        }
+
+        var column = found.Value;
+        _columns.Remove(column);
+        _columns.Insert(position, column);
+        LayoutChanged();
+        return Result<bool, BoardError>.Success(true);
+    }
+
+    /// <summary>
+    /// AC-06b / AC-07 / AC-09 / AC-10. Not on board -&gt; stale -&gt; holds cards -&gt; last column
+    /// -&gt; remove. The survivors keep their relative order and are renumbered 0..n-1.
+    /// </summary>
+    public Result<bool, BoardError> DeleteColumn(Guid columnId, int seenNameVersion)
+    {
+        var found = FindColumn(columnId);
+        if (!found.IsSuccess)
+        {
+            return Result<bool, BoardError>.Failure(found.Error!);
+        }
+
+        var column = found.Value;
+        if (column.NameVersion != seenNameVersion)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnRenamed(column));
+        }
+
+        if (column.CardCount > 0)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.ColumnNotEmpty);
+        }
+
+        if (_columns.Count == 1)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.LastColumn);
+        }
+
+        _columns.Remove(column);
+        LayoutChanged();
+        return Result<bool, BoardError>.Success(true);
+    }
+
+    private static bool IsValidColumnName(string? name, out string trimmed) =>
+        BoardText.TryNormalize(name, Column.MinNameLength, Column.MaxNameLength, out trimmed);
+
+    /// <summary>
+    /// After every add, move and delete: renumber from list order so positions are exactly
+    /// 0..n-1 (ADR 0017), move the layout version on (ADR 0016), and check the invariant holds.
+    /// </summary>
+    private void LayoutChanged()
+    {
+        for (var i = 0; i < _columns.Count; i++)
+        {
+            _columns[i].Position = i;
+        }
+
+        ColumnLayoutVersion++;
+        EnsureColumnInvariant();
+    }
+
+    private void EnsureColumnInvariant()
+    {
+        if (_columns.Count is < 1 or > MaxColumns)
+        {
+            throw new InvalidOperationException(
+                $"A board must hold between 1 and {MaxColumns} columns; this one holds {_columns.Count}.");
+        }
+
+        for (var i = 0; i < _columns.Count; i++)
+        {
+            if (_columns[i].Position != i)
+            {
+                throw new InvalidOperationException("Column positions must be exactly 0..n-1.");
+            }
+        }
+    }
 }

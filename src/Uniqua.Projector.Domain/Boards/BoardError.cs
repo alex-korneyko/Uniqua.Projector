@@ -45,4 +45,46 @@ public static class BoardErrors
     public static BoardError ConfirmationMismatch(string currentName) => new(
         "boards.confirmation_mismatch",
         $"That does not match the board's current name, \"{currentName}\".");
+
+    /// <summary>AC-08. The Text rule's bounds on a column name.</summary>
+    public static readonly BoardError ColumnNameInvalid = new(
+        "boards.column_name_invalid",
+        $"A column name must be between {Column.MinNameLength} and {Column.MaxNameLength} characters long.");
+
+    /// <summary>AC-11. A board can hold at most 20 columns.</summary>
+    public static readonly BoardError ColumnLimitReached = new(
+        "boards.column_limit_reached",
+        "A board can hold at most 20 columns.");
+
+    /// <summary>
+    /// AC-06b. A rename or delete refused because the column was renamed since — carries its
+    /// current name.
+    /// </summary>
+    public static BoardError ColumnRenamed(Column current) => new(
+        "boards.column_renamed",
+        $"That column was renamed to \"{current.Name}\" since you last saw it.");
+
+    /// <summary>AC-09. A column that still holds cards cannot be deleted.</summary>
+    public static readonly BoardError ColumnNotEmpty = new(
+        "boards.column_not_empty",
+        "A column that still holds cards cannot be deleted.");
+
+    /// <summary>AC-10. A board must keep at least one column.</summary>
+    public static readonly BoardError LastColumn = new(
+        "boards.last_column",
+        "A board must keep at least one column.");
+
+    /// <summary>
+    /// AC-24. A reorder refused because the columns changed since — carries the current columns
+    /// and order.
+    /// </summary>
+    public static BoardError ColumnsChanged(IReadOnlyList<Column> currentLayout) => new(
+        "boards.columns_changed",
+        $"The columns changed since you last saw them: "
+        + string.Join(", ", currentLayout.OrderBy(c => c.Position).Select(c => c.Name)) + ".");
+
+    /// <summary>AC-24. A move to a position outside 0..n-1.</summary>
+    public static readonly BoardError ColumnPositionInvalid = new(
+        "boards.column_position_invalid",
+        "That is not a valid position for the column.");
 }
