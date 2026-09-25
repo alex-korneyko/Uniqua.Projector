@@ -5,7 +5,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | Build the Board aggregate with the Text rule, board creation and the owner-only rules | domain | Alex Korneiko | M | — | todo |
+| T1 | Build the Board aggregate with the Text rule, board creation and the owner-only rules | domain | Alex Korneiko | M | — | done |
 | T2 | Give the Board its column rules: add, rename, move and delete with dense positions and version checks | domain | Alex Korneiko | M | T1 | todo |
 | T3 | Admit, edit and delete cards through the Board's counters with the content-version check | domain | Alex Korneiko | S | T1 | todo |
 | T4 | Map the boards entities in EF Core and generate the CreateBoards migration | migration | Alex Korneiko | S | T1 | todo |
