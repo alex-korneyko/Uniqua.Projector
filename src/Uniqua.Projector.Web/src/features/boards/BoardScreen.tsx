@@ -18,7 +18,9 @@ import { useSession } from '@/features/auth/useSession'
 import { addCardItem } from '@/features/boards/AddCardForm'
 import { BoardHeader, renameBoardItem } from '@/features/boards/BoardHeader'
 import { BoardNotAvailable } from '@/features/boards/BoardNotAvailable'
+import { CardDetailDialog } from '@/features/boards/CardDetailDialog'
 import { ColumnRow } from '@/features/boards/ColumnRow'
+import { DeleteBoardDialog } from '@/features/boards/DeleteBoardDialog'
 import { KeptTextNotice, type KeptTextField } from '@/features/boards/KeptTextNotice'
 import { describeBoardRefusal, type GoneItem } from '@/features/boards/boardRefusals'
 import { keep, takeFor, type KeptDraft } from '@/features/boards/draftStore'
@@ -50,6 +52,12 @@ interface GoneText {
   kept: KeptDraft
 }
 
+/** A card that went while its dialog was open (AC-18b), with anything typed into it. */
+interface GoneCard {
+  heading: string
+  fields: KeptTextField[]
+}
+
 interface BoardViewProps {
   boardId: string
   accountId: string
@@ -67,6 +75,9 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
 
   const [offer, setOffer] = useState(() => peekKeptDraft(accountId, boardId))
   const [gone, setGone] = useState<GoneText | undefined>(undefined)
+  const [goneCard, setGoneCard] = useState<GoneCard | undefined>(undefined)
+  const [openCardId, setOpenCardId] = useState<string | undefined>(undefined)
+  const [deletingBoard, setDeletingBoard] = useState(false)
 
   /**
    * Every change on this screen reports its refusals here with what was typed, because the control
@@ -152,7 +163,11 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
 
   return (
     <main className="flex min-w-0 flex-col gap-4">
-      <BoardHeader board={board.data} onRefused={onRefused} />
+      <BoardHeader
+        board={board.data}
+        onRefused={onRefused}
+        onDeleteBoard={() => setDeletingBoard(true)}
+      />
 
       <div className="flex flex-col gap-2 empty:hidden">
         {offer !== undefined && (
@@ -170,6 +185,13 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
             onDismiss={() => setGone(undefined)}
           />
         )}
+        {goneCard !== undefined && (
+          <KeptTextNotice
+            heading={goneCard.heading}
+            fields={goneCard.fields}
+            onDismiss={() => setGoneCard(undefined)}
+          />
+        )}
         {resubmitRefusal !== undefined && (
           <p role="alert" className="text-destructive text-sm">
             {resubmitRefusal}
@@ -177,7 +199,28 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
         )}
       </div>
 
-      <ColumnRow board={board.data} onRefused={onRefused} />
+      <ColumnRow board={board.data} onRefused={onRefused} onOpenCard={setOpenCardId} />
+
+      {openCardId !== undefined && (
+        <CardDetailDialog
+          key={openCardId}
+          boardId={boardId}
+          cardId={openCardId}
+          summaryTitle={board.data.cards.find((card) => card.id === openCardId)?.title ?? ''}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setOpenCardId(undefined)
+            }
+          }}
+          onCardGone={(heading, fields = []) => setGoneCard({ heading, fields })}
+        />
+      )}
+
+      {/* Offered only to the owner: a re-read that says otherwise closes it (AC-22). */}
+      {deletingBoard && board.data.is_owner && (
+        <DeleteBoardDialog board={board.data} open onOpenChange={setDeletingBoard} />
+      )}
     </main>
   )
 }
