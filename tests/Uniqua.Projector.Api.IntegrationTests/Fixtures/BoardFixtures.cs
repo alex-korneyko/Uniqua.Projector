@@ -88,6 +88,46 @@ public static class BoardFixtures
     }
 
     /// <summary>
+    /// A board (through the API, so it starts with the three default columns) with
+    /// <paramref name="cardCount"/> cards inserted directly into its first column — up to one short
+    /// of the 1,000-card ceiling for AC-15's tests (data-model.md § Test fixtures). Inserted directly
+    /// rather than through <paramref name="cardCount"/> API calls, which would run into the
+    /// 120-per-minute change limit; <c>Boards.CardCount</c>, <c>Columns.CardCount</c> and
+    /// <c>Columns.NextCardPosition</c> are kept consistent with the rows inserted, same as the API
+    /// itself would leave them.
+    /// </summary>
+    public static async Task<TestBoard> ABoardWithCardsAsync(
+        this ApiFactory factory, TestAccount owner, int cardCount, string name = "Test board")
+    {
+        var board = await factory.ABoardAsync(owner, name);
+        var columnId = await factory.ScalarAsync<Guid>(
+            $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{board.Id}' ORDER BY [Position]");
+
+        for (var position = 0; position < cardCount; position++)
+        {
+            await factory.ExecuteAsync(
+                $"""
+                INSERT INTO [dbo].[Cards]
+                    ([Id], [BoardId], [ColumnId], [Position], [Title], [Description], [ContentVersion])
+                VALUES ('{Guid.CreateVersion7()}', '{board.Id}', '{columnId}', {position}, N'Filler {position}', N'', 1);
+                """);
+        }
+
+        if (cardCount > 0)
+        {
+            await factory.ExecuteAsync(
+                $"""
+                UPDATE [dbo].[Columns] SET [CardCount] = {cardCount}, [NextCardPosition] = {cardCount}
+                WHERE [Id] = '{columnId}';
+                """);
+            await factory.ExecuteAsync(
+                $"UPDATE [dbo].[Boards] SET [CardCount] = {cardCount} WHERE [Id] = '{board.Id}';");
+        }
+
+        return board;
+    }
+
+    /// <summary>
     /// A client carrying <paramref name="account"/>'s session cookie and the antiforgery pair a
     /// write needs, with its own apparent peer so per-account limits do not spill across tests.
     /// </summary>

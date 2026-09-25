@@ -10,8 +10,9 @@ namespace Uniqua.Projector.Api.Boards;
 
 /// <summary>
 /// The <c>/api/v1/boards</c> route group: <c>listMyBoards</c>, <c>createBoard</c>, <c>openBoard</c>,
-/// <c>renameBoard</c> and <c>deleteBoard</c>, and the column endpoints under it
-/// (<see cref="MapColumnEndpoints"/>, BoardEndpoints.Columns.cs). Each endpoint translates — it reads the request, calls
+/// <c>renameBoard</c> and <c>deleteBoard</c>, and the column and card endpoints under it
+/// (<see cref="MapColumnEndpoints"/>, BoardEndpoints.Columns.cs; <see cref="MapCardEndpoints"/>,
+/// BoardEndpoints.Cards.cs). Each endpoint translates — it reads the request, calls
 /// a use case and turns the outcome into the contract's response. None decides what is legal and
 /// none builds an error body: every refusal goes through <see cref="ProblemDetailsSetup"/> worded by
 /// <see cref="BoardProblems"/> (sad.md §8).
@@ -53,6 +54,7 @@ public static partial class BoardEndpoints
         boards.MapPatch("/{boardId}", RenameBoardAsync).WithName("renameBoard");
         boards.MapDelete("/{boardId}", DeleteBoardAsync).WithName("deleteBoard");
         boards.MapColumnEndpoints();
+        boards.MapCardEndpoints();
 
         return endpoints;
     }

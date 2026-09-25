@@ -32,6 +32,9 @@ public static class BoardProblems
     /// <summary>AC-24. Published with <c>current_layout</c>.</summary>
     public const string ColumnsChanged = "boards.columns_changed";
 
+    /// <summary>AC-23. Published with <c>current_card</c>.</summary>
+    public const string CardChanged = "boards.card_changed";
+
     private static readonly Dictionary<string, BoardProblem> Table = new[]
     {
         Row(BoardErrors.NotAvailable.Code, 404, "Board not available",
@@ -77,8 +80,8 @@ public static class BoardProblems
             "A card description can be at most 10,000 characters."),
         Row(BoardErrors.CardLimitReached.Code, 409, "No more cards can be added",
             "A board can hold at most 1,000 cards."),
-        Row("boards.card_changed", 409, "The card was changed",
-            "This card was changed since you opened it."),
+        Row(CardChanged, 409, "The card was changed",
+            "This card was changed since you opened it.", current: "current_card"),
     }.ToDictionary(problem => problem.Code);
 
     /// <summary>Every code this feature can publish.</summary>
@@ -113,7 +116,7 @@ public static class BoardProblems
 /// </param>
 /// <param name="CurrentMember">
 /// The extension member a stale change is answered with — <c>current_name</c>,
-/// <c>current_column</c> or <c>current_layout</c> — carrying the thing as it now stands; <see
+/// <c>current_column</c>, <c>current_layout</c> or <c>current_card</c> — carrying the thing as it now stands; <see
 /// langword="null"/> on every row that publishes none (contracts/openapi.yaml <c>Problem</c>).
 /// </param>
 public sealed record BoardProblem(
