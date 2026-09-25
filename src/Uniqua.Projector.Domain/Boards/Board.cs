@@ -38,6 +38,20 @@ public sealed class Board
         _memberships.Add(new BoardMembership(Ids.New(), id, ownerId, BoardRole.Owner));
     }
 
+    /// <summary>
+    /// Rehydrates a board already stored: every parameter is a stored value, and the columns and
+    /// memberships are filled in by whoever loads it. Creates nothing — a new board comes only
+    /// from <see cref="Create"/>.
+    /// </summary>
+    private Board(Guid id, string name, DateTimeOffset createdAt, int cardCount, int columnLayoutVersion)
+    {
+        Id = id;
+        Name = name;
+        CreatedAt = createdAt;
+        CardCount = cardCount;
+        ColumnLayoutVersion = columnLayoutVersion;
+    }
+
     public Guid Id { get; }
 
     public string Name { get; private set; }

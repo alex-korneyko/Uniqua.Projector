@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Uniqua.Projector.Domain.Accounts;
+using Uniqua.Projector.Domain.Boards;
 using Uniqua.Projector.Infrastructure.Accounts;
 
 namespace Uniqua.Projector.Infrastructure;
@@ -25,6 +26,17 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     /// first redeploy. The shape of this table is the framework's, not ours.
     /// </summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
+    /// <summary>
+    /// The board aggregate roots (ADR 0015). Columns and memberships are reached only through their
+    /// board; cards are read and written one at a time, but admitted only through the board.
+    /// </summary>
+    public DbSet<Board> Boards => Set<Board>();
+
+    public DbSet<Card> Cards => Set<Card>();
+
+    /// <summary>One row per account that has ever created a board — the 50-board ceiling's guard.</summary>
+    public DbSet<OwnedBoardCounter> OwnedBoardCounters => Set<OwnedBoardCounter>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
