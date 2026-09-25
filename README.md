@@ -27,6 +27,21 @@ line each:
 **→ [`docs/session-rules.md`](docs/session-rules.md)** has each of those with the file that enforces
 it, the test that proves it, and how to verify it yourself.
 
+## Board rules
+
+Four rules govern a board. In one line each:
+
+- **A non-member learns nothing** — any request naming a board the caller is not a member of gets
+  the very refusal a board that never existed gets, and no board content.
+- **Every column and card named belongs to the board that was checked** — one from another board is
+  refused as if it did not exist.
+- **A board's structure stays whole** — a column that still holds cards cannot be deleted, and a
+  board always keeps at least one column, even under simultaneous changes.
+- **A change against an outdated view is refused** — never silently applied over a newer one.
+
+**→ [`docs/board-rules.md`](docs/board-rules.md)** has each of those with the file that enforces it,
+the test that proves it, and how to verify it yourself.
+
 ## Getting started
 
 | What | Command |
@@ -60,6 +75,7 @@ same-origin — splitting them across hosts would break authentication.
 Each feature's API contract lives beside it, and is the contract of record:
 
 - [`docs/features/accounts-and-sessions/contracts/openapi.yaml`](docs/features/accounts-and-sessions/contracts/openapi.yaml)
+- [`docs/features/boards-columns-cards/contracts/openapi.yaml`](docs/features/boards-columns-cards/contracts/openapi.yaml)
 
 Every failure leaves this application as an RFC 9457 `application/problem+json` document carrying a
 stable `code`, produced by one handler. No endpoint builds an error shape of its own.

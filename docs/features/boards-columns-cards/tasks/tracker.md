@@ -17,7 +17,7 @@
 | T10 | Expose the column endpoints: add, rename, move and delete | ports | Alex Korneiko | M | T7, T9 | done |
 | T11 | Expose the card endpoints: add, open, edit and delete | ports | Alex Korneiko | M | T8, T9 | done |
 | T12 | Limit each account to 120 board change attempts per rolling minute, before the membership check | ports | Alex Korneiko | S | T9 | done |
-| T13 | Prove the membership boundary across every read and change kind, and map the four board rules to their tests | tests | Alex Korneiko | M | T10, T11, T12, T14 | todo |
+| T13 | Prove the membership boundary across every read and change kind, and map the four board rules to their tests | tests | Alex Korneiko | M | T10, T11, T12, T14 | done |
 | T14 | Prove the board invariants under 1,000 simultaneous pairs and the column order under 1,000 random sequences | tests | Alex Korneiko | L | T10, T11 | done |
 | T15 | Measure opening a full board, a single change and change throughput against the §6 budgets | tests | Alex Korneiko | S | T10, T11, T12 | todo |
 | T16 | Vendor Dialog and Textarea, add the destructive Button variant, and build PlainText and KeptTextNotice | ui | Alex Korneiko | S | — | todo |
