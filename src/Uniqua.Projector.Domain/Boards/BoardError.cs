@@ -87,4 +87,27 @@ public static class BoardErrors
     public static readonly BoardError ColumnPositionInvalid = new(
         "boards.column_position_invalid",
         "That is not a valid position for the column.");
+
+    /// <summary>AC-14. The Text rule's bounds on a card title.</summary>
+    public static readonly BoardError CardTitleInvalid = new(
+        "boards.card_title_invalid",
+        $"A card title must be between {Card.MinTitleLength} and {Card.MaxTitleLength} characters long.");
+
+    /// <summary>AC-14. The ceiling on a card description's length.</summary>
+    public static readonly BoardError CardDescriptionInvalid = new(
+        "boards.card_description_invalid",
+        $"A card description can be at most {Card.MaxDescriptionLength} characters long.");
+
+    /// <summary>AC-15. A board can hold at most 1,000 cards.</summary>
+    public static readonly BoardError CardLimitReached = new(
+        "boards.card_limit_reached",
+        $"A board can hold at most {Board.MaxCards} cards.");
+
+    /// <summary>
+    /// AC-23. An edit or delete refused because the card's title or description changed since —
+    /// carries the card as it is now.
+    /// </summary>
+    public static BoardError CardChanged(Card current) => new(
+        "boards.card_changed",
+        $"That card was changed to \"{current.Title}\" since you last saw it.");
 }

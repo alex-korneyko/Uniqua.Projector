@@ -17,6 +17,9 @@ public sealed class Board
     /// <summary>AC-11. A board can hold at most 20 columns.</summary>
     public const int MaxColumns = 20;
 
+    /// <summary>AC-15. A board can hold at most 1,000 cards, even under concurrent adds.</summary>
+    public const int MaxCards = 1_000;
+
     private readonly List<Column> _columns = [];
     private readonly List<BoardMembership> _memberships = [];
 
@@ -255,6 +258,63 @@ public sealed class Board
 
         ColumnLayoutVersion++;
         EnsureColumnInvariant();
+    }
+
+    // ---- T3: card rules (ADR 0017 gapped positions) ----------------------------------------------
+
+    /// <summary>
+    /// AC-12 / AC-14 / AC-15. Column not on board -&gt; Text rule on the title -&gt; on the
+    /// description -&gt; refuse at 1,000 -&gt; append at the column's next gapped position. An
+    /// absent description is stored as the empty string, the one representation of "none".
+    /// </summary>
+    public Result<Card, BoardError> AdmitCard(Guid columnId, string title, string? description)
+    {
+        var found = FindColumn(columnId);
+        if (!found.IsSuccess)
+        {
+            return Result<Card, BoardError>.Failure(found.Error!);
+        }
+
+        if (!Card.IsValidTitle(title, out var trimmedTitle))
+        {
+            return Result<Card, BoardError>.Failure(BoardErrors.CardTitleInvalid);
+        }
+
+        var text = description ?? string.Empty;
+        if (!Card.IsValidDescription(text))
+        {
+            return Result<Card, BoardError>.Failure(BoardErrors.CardDescriptionInvalid);
+        }
+
+        if (CardCount >= MaxCards)
+        {
+            return Result<Card, BoardError>.Failure(BoardErrors.CardLimitReached);
+        }
+
+        var column = found.Value;
+        var card = new Card(Ids.New(), Id, column.Id, column.NextCardPosition, trimmedTitle, text);
+        column.NextCardPosition++;
+        column.CardCount++;
+        CardCount++;
+        return Result<Card, BoardError>.Success(card);
+    }
+
+    /// <summary>
+    /// AC-18. The caller has already asked the card whether it is stale
+    /// (<see cref="Card.EnsureDeletable"/>); this only checks the card belongs to this board and
+    /// then adjusts the counters. Other cards' positions are left untouched (ADR 0017).
+    /// </summary>
+    public Result<bool, BoardError> RemoveCard(Card card)
+    {
+        var column = card.BoardId == Id ? _columns.Find(c => c.Id == card.ColumnId) : null;
+        if (column is null)
+        {
+            return Result<bool, BoardError>.Failure(BoardErrors.NotAvailable);
+        }
+
+        column.CardCount--;
+        CardCount--;
+        return Result<bool, BoardError>.Success(true);
     }
 
     private void EnsureColumnInvariant()
