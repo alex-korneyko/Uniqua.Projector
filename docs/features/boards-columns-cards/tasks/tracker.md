@@ -27,5 +27,16 @@
 | T20 | Build the board screen (SCR-04) with its owner header, card tiles and add-card form, and the not-available screen (SCR-08) | ui | Alex Korneiko | L | T16, T17, T18 | done |
 | T21 | Let members add, rename, drag and delete columns on the board, with every refusal shown in place | ui | Alex Korneiko | L | T20 | done |
 | T22 | Build the card detail dialog with edit and delete (SCR-05, SCR-06) and the board deletion dialog (SCR-07) | ui | Alex Korneiko | M | T20 | done |
+| T23 | Harden the board request binding: lone surrogates, unknown fields, unparsable item ids and empty delete bodies | ports | Alex Korneiko | S | — | todo |
+| T24 | Keep board content out of domain refusal details | domain | Alex Korneiko | S | — | todo |
+| T25 | Retry a delete that loses to a card insert, read only what a refusal needs, and return the stored board name | infra | Alex Korneiko | M | T23, T24 | todo |
+| T26 | Make the simultaneous-change race suite able to fail, and add the add-card / delete-same-column pair | tests | Alex Korneiko | M | T25 | todo |
+| T27 | Record the latency baseline only on a passing run and compare against the last recorded run | tests | Alex Korneiko | S | — | todo |
+| T28 | Close the integration coverage the test plan claims: AC-17 refusal counting and the missing rows | tests | Alex Korneiko | L | T23, T25 | todo |
+| T29 | Keep typed text across a session end for every change kind, and keep a rename whose column was deleted | ui | Alex Korneiko | M | — | todo |
+| T30 | Fix the add-card refusal after Cancel, strengthen the weak client tests, and bound the list screens under a full-width shell | ui | Alex Korneiko | M | T29 | todo |
+| T31 | Drive the thin path and the visitor board link end to end through the built client with Playwright | tests | Alex Korneiko | L | T30 | todo |
+| T32 | Run the client component tests, the Quality suites and the e2e flows in CI | ci | Alex Korneiko | S | T26, T27, T31 | todo |
+| T33 | Bring the contract, ADR 0015, AC-17, the test plan and spec §8 in line with the reviewed decisions | docs | Alex Korneiko | S | T28, T30 | todo |
 
-**Total:** 22 tasks, ~16.5 person-days (S = ½ day, M = ¾ day, L = 1 day).
+**Total:** 33 tasks — T1–T22 the original breakdown (~16.5 person-days); T23–T33 follow-ups from review 2026-09-26 (S = ½ day, M = ¾ day, L = 1 day).

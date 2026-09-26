@@ -557,6 +557,258 @@
         "src/Uniqua.Projector.Web/src/features/boards/__tests__/DeleteBoardDialog.test.tsx"
       ],
       "file": "docs/features/boards-columns-cards/tasks/22-card-detail-and-deletion-dialogs.md"
+    },
+    {
+      "id": "T23",
+      "title": "Harden the board request binding: lone surrogates, unknown fields, unparsable item ids and empty delete bodies",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-18b"
+      ],
+      "dod": "Integration tests (RED first) prove: a lone-surrogate string in each text-carrying change answers 400 `boards.request_invalid` (not 500) for a member and the non-member refusal for a non-member; an unknown member answers 400 `boards.request_invalid` for a member on each body-carrying operation; a non-UUID column/card id with a bad body answers the same as a well-formed missing id with a bad body; an empty-body deleteBoard answers `boards.request_invalid` after membership. `dotnet build` and `dotnet format --verify-no-changes` clean.",
+      "files_hint": [
+        "src/Uniqua.Projector.Api/Boards/BoardRequestBody.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.Columns.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.Cards.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/CardEndpointTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/23-harden-board-request-binding.md"
+    },
+    {
+      "id": "T24",
+      "title": "Keep board content out of domain refusal details",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-25"
+      ],
+      "dod": "Domain unit tests (RED first) assert that no BoardError produced by any refusal contains the board name, a column name, a card title or a card description in `Detail`, and that any current state callers need is available as typed properties. Existing domain tests stay green.",
+      "files_hint": [
+        "src/Uniqua.Projector.Domain/Boards/BoardError.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/BoardTests.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/BoardColumnTests.cs",
+        "tests/Uniqua.Projector.Domain.Tests/Boards/CardTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/24-board-error-details-without-content.md"
+    },
+    {
+      "id": "T25",
+      "title": "Retry a delete that loses to a card insert, read only what a refusal needs, and return the stored board name",
+      "layer": "infra",
+      "deps": [
+        "T23",
+        "T24"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-19"
+      ],
+      "dod": "Integration tests (RED first) prove: a SaveAsync whose DELETE fails with FK 547 surfaces as `BoardConcurrencyConflict` and the use case re-decides to `column_not_empty` (drive it deterministically, e.g. insert a card on a separate connection between load and save); the rename response equals the stored name; refusal paths issue no card-summary query (use the existing `CommandRecorder` fixture). Build and format clean; existing tests green.",
+      "files_hint": [
+        "src/Uniqua.Projector.Infrastructure/Boards/BoardStore.cs",
+        "src/Uniqua.Projector.Application/Boards/Ports/IBoardStore.cs",
+        "src/Uniqua.Projector.Application/Boards/BoardChangeRetry.cs",
+        "src/Uniqua.Projector.Application/Boards/OpenBoard.cs",
+        "src/Uniqua.Projector.Application/Boards/RenameBoard.cs",
+        "src/Uniqua.Projector.Application/Boards/DeleteBoard.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.cs",
+        "src/Uniqua.Projector.Api/Boards/BoardEndpoints.Columns.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardStoreTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardUseCaseTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/25-store-fk-conflict-and-lean-refusal-reads.md"
+    },
+    {
+      "id": "T26",
+      "title": "Make the simultaneous-change race suite able to fail, and add the add-card / delete-same-column pair",
+      "layer": "tests",
+      "deps": [
+        "T25"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-09",
+        "AC-10b",
+        "AC-11",
+        "AC-15"
+      ],
+      "dod": "Each race pair would fail if the retry replayed the stale decision instead of reloading (verify by temporarily breaking the retry locally — do not commit that). The suite asserts exactly-one-success + the loser's refusal for every pair, including the new add-card-to-X / delete-X pair. Integration suite green against the SQL Server container.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/ContentionForcer.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardInvariantRaceTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardStoreTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnUseCaseTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/CardUseCaseTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardUseCaseTests.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/26-race-suite-that-can-fail.md"
+    },
+    {
+      "id": "T27",
+      "title": "Record the latency baseline only on a passing run and compare against the last recorded run",
+      "layer": "tests",
+      "deps": [],
+      "acs": [],
+      "dod": "A test (RED first) proves a regressed run fails and leaves the recorded baseline unchanged, and an ordinary run does not rewrite the committed file. The smoke run still passes on the reference machine.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardLatencyBudgetTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/.baselines/board-latency-budget.json"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/27-latency-baseline-that-can-fail.md"
+    },
+    {
+      "id": "T28",
+      "title": "Close the integration coverage the test plan claims: AC-17 refusal counting and the missing rows",
+      "layer": "tests",
+      "deps": [
+        "T23",
+        "T25"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-06b",
+        "AC-14",
+        "AC-17",
+        "AC-18",
+        "AC-18b",
+        "AC-19",
+        "AC-20",
+        "AC-21",
+        "AC-23",
+        "AC-25",
+        "AC-28"
+      ],
+      "dod": "Every listed case is a test that fails when the behaviour breaks (check at least the AC-17 rewrite by breaking the counting locally — do not commit that). Integration suite green against the SQL Server container. Where a case genuinely cannot be built, stop and say why instead of narrowing silently.",
+      "files_hint": [
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardChangeRateLimitTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/CardEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnEndpointTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/ColumnUseCaseTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Boards/BoardUseCaseTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Quality/BoardBoundaryTests.cs",
+        "tests/Uniqua.Projector.Api.IntegrationTests/Fixtures/BoardFixtures.cs"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/28-integration-coverage-gaps.md"
+    },
+    {
+      "id": "T29",
+      "title": "Keep typed text across a session end for every change kind, and keep a rename whose column was deleted",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-28",
+        "AC-18b"
+      ],
+      "dod": "BoardScreen-level component tests (RED first, mocked API) for a 401 on each of the six text-carrying change kinds: sign-in form shown, text kept, offered back after signing in as the same account, discarded for a different account; and for a rename whose column was deleted: the notice is shown with the typed name. `ColumnManagement.test.tsx:339` extended beyond \"onRefused fired\". `npm test`, `npm run lint`, `npm run build` clean.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/BoardScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/CardDetailDialog.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/DeleteBoardDialog.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/ColumnHeader.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/AddColumnForm.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/BoardScreen.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/CardDetailDialog.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/DeleteBoardDialog.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/ColumnManagement.test.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/29-kept-text-for-every-change-kind.md"
+    },
+    {
+      "id": "T30",
+      "title": "Fix the add-card refusal after Cancel, strengthen the weak client tests, and bound the list screens under a full-width shell",
+      "layer": "ui",
+      "deps": [
+        "T29"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-17",
+        "AC-21",
+        "AC-27"
+      ],
+      "dod": "Component tests (RED first where behaviour changes; strengthened tests must be shown failing against the old assertion) pass; the full `npm test` run passes with no timeout; `npm run lint` and `npm run build` clean.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/src/features/boards/AddCardForm.tsx",
+        "src/Uniqua.Projector.Web/src/app/__tests__/routes.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/CreateBoardDialog.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/BoardScreen.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/__tests__/ColumnManagement.test.tsx",
+        "src/Uniqua.Projector.Web/src/features/auth/AccountShell.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardListScreen.tsx",
+        "src/Uniqua.Projector.Web/src/features/boards/BoardNotAvailable.tsx"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/30-ui-refusal-and-test-fixes.md"
+    },
+    {
+      "id": "T31",
+      "title": "Drive the thin path and the visitor board link end to end through the built client with Playwright",
+      "layer": "tests",
+      "deps": [
+        "T30"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-12",
+        "AC-27"
+      ],
+      "dod": "`npm --prefix src/Uniqua.Projector.Web run test:e2e` passes locally against Docker for both flows; each flow asserts the business-observable outcome (the board with its card visible after a reload; the return to the board address; the not-available screen for a non-member). Unit `npm test`, lint and build still clean. Report the licence of every package added to the lockfile.",
+      "files_hint": [
+        "src/Uniqua.Projector.Web/package.json",
+        "src/Uniqua.Projector.Web/package-lock.json",
+        "src/Uniqua.Projector.Web/playwright.config.ts",
+        "src/Uniqua.Projector.Web/e2e/thin-path.spec.ts",
+        "src/Uniqua.Projector.Web/e2e/board-link.spec.ts",
+        "src/Uniqua.Projector.Web/.gitignore"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/31-e2e-thin-path-and-board-link.md"
+    },
+    {
+      "id": "T32",
+      "title": "Run the client component tests, the Quality suites and the e2e flows in CI",
+      "layer": "ci",
+      "deps": [
+        "T26",
+        "T27",
+        "T31"
+      ],
+      "acs": [],
+      "dod": "CI runs `npm test`, a named Quality job for the race and column-order suites, and the e2e job; the workflow YAML is valid.",
+      "files_hint": [
+        ".github/workflows/ci.yml"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/32-ci-client-quality-e2e.md"
+    },
+    {
+      "id": "T33",
+      "title": "Bring the contract, ADR 0015, AC-17, the test plan and spec §8 in line with the reviewed decisions",
+      "layer": "docs",
+      "deps": [
+        "T28",
+        "T30"
+      ],
+      "acs": [
+        "AC-17",
+        "AC-20",
+        "AC-21",
+        "AC-22",
+        "AC-25"
+      ],
+      "dod": "openapi.yaml path descriptions for renameBoard/deleteBoard state shape-before-owner and the cursor as implemented; sad.md §6 order matches; ADR 0015 says 3 attempts (2 retries); AC-17 names the two exempt refusals; test-plan.md rows 99 and 131 corrected and AC-17/AC-21 component rows mapped; tasks T20/T21 acs include AC-17/AC-21; spec §8 questions 2 and 4 ticked with references.",
+      "files_hint": [
+        "docs/features/boards-columns-cards/contracts/openapi.yaml",
+        "docs/features/boards-columns-cards/sad.md",
+        "docs/features/boards-columns-cards/adr/0015-guard-board-invariants-with-an-optimistic-concurrency-token-and-bounded-retry.md",
+        "docs/features/boards-columns-cards/spec.md",
+        "docs/features/boards-columns-cards/test-plan.md",
+        "docs/features/boards-columns-cards/tasks.json"
+      ],
+      "file": "docs/features/boards-columns-cards/tasks/33-align-docs-with-review.md"
     }
   ]
 }
