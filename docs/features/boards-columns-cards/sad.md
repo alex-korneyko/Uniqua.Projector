@@ -867,7 +867,7 @@ sequenceDiagram
 **Flagged for the stages that follow — flags only, nothing was decided here.**
 
 - **Participant naming diverges from the `sequences` default.** Flows 4–13 name the real §5 containers, as flows 1–3 and the accounts-and-sessions SAD do, rather than the generic `<ui>` / `<service>` / `<data-store>` placeholders — a choice confirmed at this stage, recorded so it reads as deliberate.
-- **Check precedence is now fixed by these flows**, closing `ux-flows.md`'s third design input: not on this board → owner check (board rename and delete only) → text limits → stale → ceilings and column rules. For a column deletion, stale comes before holds-cards and last-column.
+- **Check precedence is now fixed by these flows**, closing `ux-flows.md`'s third design input: request shape → not on this board → owner check (board rename and delete only) → text limits → stale → ceilings and column rules. The request shape is judged right after the membership check and before the owner check, so a member who is not the owner and sends a malformed rename or deletion is told the request is invalid, never that only the owner may make it (contracts/openapi.yaml order of checks; review 2026-09-26, B6b). For a column deletion, stale comes before holds-cards and last-column.
 - **No new participant** was needed; every flow uses §5 containers only. No flow is asynchronous — there is no queue, callback or scheduled job in this feature.
 - **The client-side return-address guard and the kept-text store (flows 12, 13)** are logic the tests must reach through a component or unit test; no server test can see them.
 

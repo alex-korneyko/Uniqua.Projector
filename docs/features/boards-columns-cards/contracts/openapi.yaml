@@ -269,10 +269,10 @@ paths:
                 name: "Test board, renamed"
         "400":
           description: |
-            `boards.request_malformed` (not JSON, before membership). After membership and the owner
-            check: `boards.request_invalid` (`name` absent or not a string) or
-            `boards.board_name_invalid` (empty after trimming or over 100 characters; flow 11, rename,
-            first branch).
+            `boards.request_malformed` (not JSON, before membership). After membership, before the
+            owner check: `boards.request_invalid` (`name` absent, not a string, or an unknown member
+            present). After the owner check: `boards.board_name_invalid` (empty after trimming or over
+            100 characters; flow 11, rename, first branch).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -336,7 +336,8 @@ paths:
         "400":
           description: |
             `boards.request_malformed` (not JSON, before membership), or `boards.request_invalid`
-            (`confirm_name` absent or not a string; after membership and the owner check).
+            (`confirm_name` absent, not a string, or an unknown member present; after membership and
+            before the owner check, per the order of checks above).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1339,7 +1340,7 @@ components:
         has_prev: { type: boolean }
         next_cursor:
           type: [string, "null"]
-          description: opaque; pass as `after`. Encodes the last item's (created_at, id). Null when there is no next page
+          description: opaque; pass as `after`. Today it names the last item's board id and is resolved against the caller's current list, so a cursor naming a board that has since left the list is refused as `boards.request_invalid`; while every list fits one page it is always null. Roadmap step 7 replaces it with a seek on the last item's (created_at, id) without changing its opacity. Null when there is no next page
         prev_cursor:
           type: [string, "null"]
           description: opaque; pass as `before`. Null when there is no previous page

@@ -26,7 +26,7 @@ Several board rules are counts or cross-row facts: at most 20 columns and 1,000 
 
 ## Considered options
 
-1. **Optimistic concurrency token with bounded retry** — the board row carries a `rowversion`; every structural change also updates the board row; a conflicting writer reloads, re-runs the domain rules and retries up to 3 times. The 50-board cap uses the same pattern on a per-account owned-board counter.
+1. **Optimistic concurrency token with bounded retry** — the board row carries a `rowversion`; every structural change also updates the board row; a conflicting writer reloads, re-runs the domain rules and tries again, at most 3 attempts in all (2 retries). The 50-board cap uses the same pattern on a per-account owned-board counter.
 2. **Pessimistic row lock** — each structural change first locks the board row with an `UPDLOCK` hint inside a transaction.
 3. **Serializable transactions** — each change runs at `SERIALIZABLE` isolation and the database's range locks keep counts true.
 
@@ -42,7 +42,7 @@ Several board rules are counts or cross-row facts: at most 20 columns and 1,000 
 
 **Negative**
 - The board row is updated on every structural change (its card count at least), so it is a per-board hot row — fine under the per-account limit of 120 changes per minute, and a ceiling to re-measure if boards ever get many simultaneous members.
-- A retry costs one extra round trip inside the 200 ms budget; after 3 conflicts the change fails with a retryable problem rather than looping.
+- A retry costs one extra round trip inside the 200 ms budget; after 3 conflicting attempts (the first try and 2 retries) the change fails with a retryable problem rather than looping.
 - Board creation needs an owned-board counter per account that the domain owns; the account's Identity row is not the place (its `ConcurrencyStamp` belongs to Identity). The `data-model` stage places it.
 
 **Neutral**

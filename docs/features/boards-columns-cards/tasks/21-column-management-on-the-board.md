@@ -4,7 +4,7 @@ title: "Let members add, rename, drag and delete columns on the board, with ever
 layer: "ui"
 deps: ["T20"]
 blocks: []
-acs: ["AC-05", "AC-06", "AC-06b", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-24"]
+acs: ["AC-05", "AC-06", "AC-06b", "AC-07", "AC-08", "AC-09", "AC-10", "AC-11", "AC-24", "AC-21"]
 files_hint:
   - "src/Uniqua.Projector.Web/src/features/boards/ColumnRow.tsx"
   - "src/Uniqua.Projector.Web/src/features/boards/BoardColumn.tsx"

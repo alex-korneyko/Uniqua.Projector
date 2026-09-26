@@ -489,7 +489,8 @@
         "AC-19",
         "AC-22",
         "AC-25",
-        "AC-28"
+        "AC-28",
+        "AC-17"
       ],
       "dod": "Component tests with a mocked API pass for SCR-04 screen states (loading, error, not-available rendering SCR-08, member default with no owner controls, owner default, kept-text offer, kept-text gone), the owner's board rename states, and every add-card state, with titles shown only through PlainText and SCR-08 identical for all three causes.",
       "files_hint": [
@@ -520,7 +521,8 @@
         "AC-09",
         "AC-10",
         "AC-11",
-        "AC-24"
+        "AC-24",
+        "AC-21"
       ],
       "dod": "Component tests with a mocked API pass for every add-column state and every column-header state — rename editing/pending/validation/stale (typed name kept, current name shown)/gone/success, drag with pointer and keyboard, move stale (layout patched, notice shown)/gone/success, delete pending/stale/not-empty/last-column/gone/success — with no confirmation on delete and the trash button never pre-disabled.",
       "files_hint": [

@@ -4,7 +4,7 @@ title: "Build the board screen (SCR-04) with its owner header, card tiles and ad
 layer: "ui"
 deps: ["T16", "T17", "T18"]
 blocks: ["T21", "T22"]
-acs: ["AC-12", "AC-15", "AC-18b", "AC-19", "AC-22", "AC-25", "AC-28"]
+acs: ["AC-12", "AC-15", "AC-18b", "AC-19", "AC-22", "AC-25", "AC-28", "AC-17"]
 files_hint:
   - "src/Uniqua.Projector.Web/src/features/boards/BoardScreen.tsx"
   - "src/Uniqua.Projector.Web/src/features/boards/BoardHeader.tsx"
