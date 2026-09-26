@@ -36,7 +36,7 @@
 | T29 | Keep typed text across a session end for every change kind, and keep a rename whose column was deleted | ui | Alex Korneiko | M | — | done |
 | T30 | Fix the add-card refusal after Cancel, strengthen the weak client tests, and bound the list screens under a full-width shell | ui | Alex Korneiko | M | T29 | done |
 | T31 | Drive the thin path and the visitor board link end to end through the built client with Playwright | tests | Alex Korneiko | L | T30 | done |
-| T32 | Run the client component tests, the Quality suites and the e2e flows in CI | ci | Alex Korneiko | S | T26, T27, T31 | todo |
-| T33 | Bring the contract, ADR 0015, AC-17, the test plan and spec §8 in line with the reviewed decisions | docs | Alex Korneiko | S | T28, T30 | todo |
+| T32 | Run the client component tests, the Quality suites and the e2e flows in CI | ci | Alex Korneiko | S | T26, T27, T31 | done |
+| T33 | Bring the contract, ADR 0015, AC-17, the test plan and spec §8 in line with the reviewed decisions | docs | Alex Korneiko | S | T28, T30 | done |
 
 **Total:** 33 tasks — T1–T22 the original breakdown (~16.5 person-days); T23–T33 follow-ups from review 2026-09-26 (S = ½ day, M = ¾ day, L = 1 day).

@@ -29,6 +29,9 @@ jobs:
       - name: Lint client
         run: npm --prefix src/Uniqua.Projector.Web run lint
 
+      - name: Test client components
+        run: npm --prefix src/Uniqua.Projector.Web test
+
       - name: Build client
         run: npm --prefix src/Uniqua.Projector.Web run build
 
@@ -40,5 +43,64 @@ jobs:
 
       # The integration tests start their own SQL Server through Testcontainers; the Docker daemon
       # on the GitHub-hosted runner is what they bind to, so no service container is declared here.
+      # The two board-invariant suites (1,000 forced race pairs, 1,000 random column-order
+      # sequences) run in their own named job below, so a red there is visible by name.
       - name: Test
-        run: dotnet test Uniqua.Projector.slnx --configuration Release --no-build
+        run: >-
+          dotnet test Uniqua.Projector.slnx --configuration Release --no-build
+          --filter "FullyQualifiedName!~Quality.BoardInvariantRaceTests&FullyQualifiedName!~Quality.ColumnOrderConsistencyTests"
+
+  board-invariants:
+    name: Board invariants (race and column-order suites)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build server
+        run: dotnet build Uniqua.Projector.slnx --configuration Release
+
+      - name: Race and column-order suites
+        run: >-
+          dotnet test tests/Uniqua.Projector.Api.IntegrationTests --configuration Release --no-build
+          --filter "FullyQualifiedName~Quality.BoardInvariantRaceTests|FullyQualifiedName~Quality.ColumnOrderConsistencyTests"
+
+  e2e:
+    name: End-to-end through the built client
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/Uniqua.Projector.Web/package-lock.json
+
+      - name: Install client dependencies
+        run: npm --prefix src/Uniqua.Projector.Web ci
+
+      - name: Install Playwright's Chromium
+        working-directory: src/Uniqua.Projector.Web
+        run: npx playwright install --with-deps chromium
+
+      # The e2e launcher applies the migrations with dotnet-ef, as deployment does, and serves the
+      # API over HTTPS on localhost with the development certificate.
+      - name: Install dotnet-ef and the development certificate
+        run: |
+          dotnet tool install --global dotnet-ef
+          dotnet dev-certs https
+
+      # The launcher starts its own SQL Server container on the runner's Docker daemon, builds the
+      # client into wwwroot and runs the API from it: one origin, as shipped.
+      - name: Thin path and board link
+        run: npm --prefix src/Uniqua.Projector.Web run test:e2e
