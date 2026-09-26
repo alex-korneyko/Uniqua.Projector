@@ -55,6 +55,41 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
     }
 
+    [Fact]
+    public async Task Creating_a_board_with_a_name_over_a_hundred_characters_is_refused_and_writes_nothing()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        // 101 code points once trimmed — one past the ceiling; the surrounding spaces do not count.
+        var response = await client.PostAsJsonAsync(Boards, new { name = $"  {new string('n', 101)}  " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[BoardMemberships] WHERE [AccountId] = '{owner.Id}'"));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT ISNULL(MAX([OwnedBoardCount]), 0) FROM [dbo].[OwnedBoardCounters] WHERE [AccountId] = '{owner.Id}'"));
+    }
+
+    [Theory]
+    [InlineData("  \t ")]
+    [InlineData("101")]
+    public async Task The_owner_renaming_to_an_unusable_name_is_refused_and_the_name_is_unchanged(string name)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A name worth keeping");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}", new { name = name == "101" ? new string('r', 101) : name });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
+        Assert.Equal("A name worth keeping", await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{board.Id}'"));
+    }
+
     // ---- AC-03: the 50-owned-board ceiling -----------------------------------------------------
 
     [Fact]
@@ -143,6 +178,66 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         var reopened = await client.GetAsync($"{Boards}/{board.Id}");
         Assert.Equal(HttpStatusCode.NotFound, reopened.StatusCode);
         Assert.Equal("boards.not_available", await CodeOfAsync(reopened));
+    }
+
+    [Fact]
+    public async Task After_a_board_is_deleted_its_former_columns_and_cards_answer_as_never_existed()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Going with everything on it");
+        await factory.AMemberOfAsync(board.Id, member);
+        var client = await factory.AWritingClientAsync(owner);
+
+        var columnId = await factory.ScalarAsync<Guid>(
+            $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{board.Id}' ORDER BY [Position]");
+        var added = await client.PostAsJsonAsync(
+            $"{Boards}/{board.Id}/cards", new { column_id = columnId, title = "Goes with the board" });
+        var cardId = Guid.Parse((await BodyAsync(added)).GetProperty("id").GetString()!);
+
+        var deletion = await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+        Assert.Equal(HttpStatusCode.NoContent, deletion.StatusCode);
+
+        // Probed as the owner and as the former member, against the ids they last saw.
+        var neverExisted = Guid.CreateVersion7();
+        foreach (var prober in new[] { client, await factory.AWritingClientAsync(member) })
+        {
+            var probes = new (HttpRequestMessage Former, HttpRequestMessage Never)[]
+            {
+                (new(HttpMethod.Get, $"{Boards}/{board.Id}/cards/{cardId}"),
+                 new(HttpMethod.Get, $"{Boards}/{neverExisted}/cards/{cardId}")),
+                (new(HttpMethod.Patch, $"{Boards}/{board.Id}/cards/{cardId}")
+                    { Content = JsonContent.Create(new { title = "Too late", content_version = 1 }) },
+                 new(HttpMethod.Patch, $"{Boards}/{neverExisted}/cards/{cardId}")
+                    { Content = JsonContent.Create(new { title = "Too late", content_version = 1 }) }),
+                (new(HttpMethod.Patch, $"{Boards}/{board.Id}/columns/{columnId}")
+                    { Content = JsonContent.Create(new { name = "Too late", name_version = 1 }) },
+                 new(HttpMethod.Patch, $"{Boards}/{neverExisted}/columns/{columnId}")
+                    { Content = JsonContent.Create(new { name = "Too late", name_version = 1 }) }),
+                (new(HttpMethod.Post, $"{Boards}/{board.Id}/cards")
+                    { Content = JsonContent.Create(new { column_id = columnId, title = "Too late" }) },
+                 new(HttpMethod.Post, $"{Boards}/{neverExisted}/cards")
+                    { Content = JsonContent.Create(new { column_id = columnId, title = "Too late" }) }),
+            };
+
+            foreach (var (former, never) in probes)
+            {
+                var formerResponse = await prober.SendAsync(former);
+                var neverResponse = await prober.SendAsync(never);
+
+                Assert.Equal(HttpStatusCode.NotFound, formerResponse.StatusCode);
+                Assert.Equal("boards.not_available", await CodeOfAsync(formerResponse));
+                await AssertIndistinguishableAsync(formerResponse, neverResponse);
+            }
+        }
+
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [Id] = '{columnId}'"));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [Id] = '{cardId}'"));
     }
 
     [Fact]

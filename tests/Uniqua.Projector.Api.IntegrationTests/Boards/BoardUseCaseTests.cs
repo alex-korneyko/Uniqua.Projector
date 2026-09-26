@@ -202,14 +202,16 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
     // ---- AC-19: the owner renames -------------------------------------------------------------
 
     [Fact]
-    public async Task Owner_renaming_records_the_new_name()
+    public async Task Owner_renaming_records_the_new_name_and_every_member_sees_it_in_their_list()
     {
         var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
 
         using var createScope = factory.Services.CreateScope();
         var created = await createScope.ServiceProvider.GetRequiredService<CreateBoard>()
             .ExecuteAsync(owner.Id, "Old name", CancellationToken.None);
         Assert.True(created.IsSuccess);
+        await factory.AMemberOfAsync(created.Value.Id, member);
 
         using var scope = factory.Services.CreateScope();
         var result = await scope.ServiceProvider.GetRequiredService<RenameBoard>()
@@ -218,6 +220,14 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
         Assert.True(result.IsSuccess);
         Assert.Equal("New name", await factory.ScalarAsync<string>(
             $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'"));
+
+        // AC-19 "every member sees it in their list of boards": the non-owner member's own list.
+        using var listScope = factory.Services.CreateScope();
+        var memberList = await listScope.ServiceProvider.GetRequiredService<ListMyBoards>()
+            .ExecuteAsync(member.Id, CancellationToken.None);
+        var entry = Assert.Single(memberList, board => board.Id == created.Value.Id);
+        Assert.Equal("New name", entry.Name);
+        Assert.False(entry.IsOwner);
     }
 
     // ---- T25 (review Q4g; AC-19): the rename answers with the name the domain stored ----------------

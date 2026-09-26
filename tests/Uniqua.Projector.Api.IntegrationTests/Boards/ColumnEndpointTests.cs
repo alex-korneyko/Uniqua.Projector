@@ -427,6 +427,104 @@ public sealed class ColumnEndpointTests(ApiFactory factory)
         Assert.Equal(2, remaining);
     }
 
+    // ---- AC-18b (review B7d): a deleted column is refused exactly as a column that never existed ------
+
+    [Theory]
+    [InlineData("rename")]
+    [InlineData("move")]
+    [InlineData("delete")]
+    public async Task A_change_naming_a_deleted_column_is_refused_exactly_as_one_naming_a_random_id(string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that loses a column");
+        await factory.AMemberOfAsync(board.Id, member);
+        var goneId = await LastColumnIdAsync(board.Id);
+
+        var ownerClient = await factory.AWritingClientAsync(owner);
+        var removed = await ownerClient.SendAsync(new HttpRequestMessage(HttpMethod.Delete, Column(board.Id, goneId))
+        {
+            Content = JsonContent.Create(new { name_version = 1 }),
+        });
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        var layoutVersion = (await BodyAsync(removed)).GetProperty("column_layout_version").GetInt32();
+        var before = await (await ownerClient.GetAsync($"{Boards}/{board.Id}")).Content.ReadAsStringAsync();
+
+        HttpRequestMessage Request(Guid columnId) => operation switch
+        {
+            "rename" => new(HttpMethod.Patch, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name = "Kept typing", name_version = 1 }),
+            },
+            "move" => new(HttpMethod.Put, Position(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { position = 0, column_layout_version = layoutVersion }),
+            },
+            _ => new(HttpMethod.Delete, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name_version = 1 }),
+            },
+        };
+
+        var memberClient = await factory.AWritingClientAsync(member);
+        var deleted = await memberClient.SendAsync(Request(goneId));
+        var random = await memberClient.SendAsync(Request(Guid.CreateVersion7()));
+
+        Assert.Equal(HttpStatusCode.NotFound, deleted.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(deleted));
+        await AssertSameRefusalAsync(random, deleted);
+
+        var after = await (await ownerClient.GetAsync($"{Boards}/{board.Id}")).Content.ReadAsStringAsync();
+        Assert.Equal(before, after);
+    }
+
+    // ---- AC-06b (review B7d): a stale rename or delete from a genuinely separate session -------------
+
+    [Theory]
+    [InlineData("another member", "rename")]
+    [InlineData("another member", "delete")]
+    [InlineData("the same account in a second session", "rename")]
+    [InlineData("the same account in a second session", "delete")]
+    public async Task A_change_from_a_session_whose_view_predates_another_sessions_rename_is_refused(
+        string other, string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board open in two places");
+        await factory.AMemberOfAsync(board.Id, member);
+        var columnId = await LastColumnIdAsync(board.Id);
+
+        var firstSession = await factory.AWritingClientAsync(owner);
+        var secondSession = other == "another member"
+            ? await factory.AWritingClientAsync(member)
+            : await factory.AWritingClientAsync(owner with { SessionId = await factory.ALiveSessionAsync(owner) });
+
+        var seen = (await BodyAsync(await firstSession.GetAsync($"{Boards}/{board.Id}")))
+            .GetProperty("columns").EnumerateArray()
+            .Single(column => column.GetProperty("id").GetString() == columnId.ToString())
+            .GetProperty("name_version").GetInt32();
+
+        var winner = await secondSession.PatchAsJsonAsync(
+            Column(board.Id, columnId), new { name = "Renamed elsewhere", name_version = seen });
+        Assert.Equal(HttpStatusCode.OK, winner.StatusCode);
+
+        var stale = operation == "rename"
+            ? await firstSession.PatchAsJsonAsync(
+                Column(board.Id, columnId), new { name = "My own name", name_version = seen })
+            : await firstSession.SendAsync(new HttpRequestMessage(HttpMethod.Delete, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name_version = seen }),
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var body = await BodyAsync(stale);
+        Assert.Equal("boards.column_renamed", body.GetProperty("code").GetString());
+        Assert.Equal("Renamed elsewhere", body.GetProperty("current_column").GetProperty("name").GetString());
+        Assert.Equal(seen + 1, body.GetProperty("current_column").GetProperty("name_version").GetInt32());
+
+        Assert.Equal(["To do", "In progress", "Renamed elsewhere"], await ColumnNamesAsync(board.Id));
+    }
+
     // ---- T23 (review Q1): a lone-surrogate name is an unusable string, not a server error --------------
 
     [Theory]
@@ -545,21 +643,25 @@ public sealed class ColumnEndpointTests(ApiFactory factory)
         }
     }
 
-    /// <summary>Status, content type and every member but <c>instance</c> and <c>traceId</c> agree.</summary>
+    /// <summary>
+    /// Field for field: status, content type, and every body member but <c>instance</c> and
+    /// <c>traceId</c> (which echo the request itself) — present in both, with the same value.
+    /// </summary>
     private static async Task AssertSameRefusalAsync(HttpResponseMessage expected, HttpResponseMessage actual)
     {
         Assert.Equal(expected.StatusCode, actual.StatusCode);
         Assert.Equal(
             expected.Content.Headers.ContentType?.ToString(), actual.Content.Headers.ContentType?.ToString());
 
-        var expectedBody = await BodyAsync(expected);
-        var actualBody = await BodyAsync(actual);
-        foreach (var name in new[] { "type", "title", "status", "detail", "code" })
-        {
-            Assert.Equal(
-                expectedBody.TryGetProperty(name, out var a) ? a.ToString() : null,
-                actualBody.TryGetProperty(name, out var b) ? b.ToString() : null);
-        }
+        static string[] Members(JsonElement body) =>
+        [
+            .. body.EnumerateObject()
+                .Where(member => member.Name is not ("instance" or "traceId"))
+                .OrderBy(member => member.Name, StringComparer.Ordinal)
+                .Select(member => $"{member.Name}={member.Value}"),
+        ];
+
+        Assert.Equal(Members(await BodyAsync(expected)), Members(await BodyAsync(actual)));
     }
 
     private async Task<Guid> FirstColumnIdAsync(Guid boardId) =>

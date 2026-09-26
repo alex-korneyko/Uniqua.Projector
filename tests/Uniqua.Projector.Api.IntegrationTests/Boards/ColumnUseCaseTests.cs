@@ -318,13 +318,45 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
             Assert.True(deleted.IsSuccess);
         }
 
-        using var scope = factory.Services.CreateScope();
-        var result = await scope.ServiceProvider.GetRequiredService<RenameColumn>()
-            .ExecuteAsync(boardId, owner.Id, columnId, "Too late", 1, CancellationToken.None);
+        // AC-18b: every change that can name a column — rename, move, delete and adding a card to it —
+        // refuses the deleted id with the very refusal a never-issued id gets, and changes nothing.
+        var neverIssued = Guid.CreateVersion7();
+        var before = await ColumnNamesInOrderAsync(boardId);
 
-        Assert.False(result.IsSuccess);
-        Assert.Same(BoardErrors.NotAvailable, result.Error);
+        async Task<BoardError?[]> RefusalsFor(Guid id)
+        {
+            using var scope = factory.Services.CreateScope();
+            var services = scope.ServiceProvider;
+            return
+            [
+                (await services.GetRequiredService<RenameColumn>()
+                    .ExecuteAsync(boardId, owner.Id, id, "Too late", 1, CancellationToken.None)).Error,
+                (await services.GetRequiredService<MoveColumn>()
+                    .ExecuteAsync(boardId, owner.Id, id, 0, 2, CancellationToken.None)).Error,
+                (await services.GetRequiredService<DeleteColumn>()
+                    .ExecuteAsync(boardId, owner.Id, id, 1, CancellationToken.None)).Error,
+                (await services.GetRequiredService<AddCard>()
+                    .ExecuteAsync(boardId, owner.Id, id, "Into the void", null, CancellationToken.None)).Error,
+            ];
+        }
+
+        var forDeleted = await RefusalsFor(columnId);
+        var forNeverIssued = await RefusalsFor(neverIssued);
+
+        Assert.All(forDeleted, error => Assert.Same(BoardErrors.NotAvailable, error));
+        Assert.Equal(forNeverIssued, forDeleted);
+        Assert.Equal(before, await ColumnNamesInOrderAsync(boardId));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [BoardId] = '{boardId}'"));
     }
+
+    private async Task<string> ColumnNamesInOrderAsync(Guid boardId) =>
+        await factory.ScalarAsync<string>(
+            $"""
+            SELECT STRING_AGG(CONCAT([Name], '@', [Position], 'v', [NameVersion]), '|')
+                WITHIN GROUP (ORDER BY [Position])
+            FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}'
+            """) ?? string.Empty;
 
     // ---- Every one of the four begins with the member-scoped load: a non-member is refused ---------
     // ---- NotAvailable before anything about the board or its columns is revealed -------------------
