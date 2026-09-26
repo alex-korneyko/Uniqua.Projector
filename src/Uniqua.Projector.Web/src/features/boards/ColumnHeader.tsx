@@ -65,10 +65,12 @@ export function ColumnHeader({ boardId, column, handle, onRefused }: ColumnHeade
         setEditing(false)
         return renamed
       } catch (error) {
+        // The version typed against goes with it, for a column no longer on the board when the
+        // name is applied again (AC-28): the server, not this client, then says it is gone.
         onRefused(error, {
           boardId,
           item: renameColumnItem,
-          fields: { column_id: column.id, name: body.name },
+          fields: { column_id: column.id, name: body.name, name_version: String(body.name_version) },
         })
         throw error
       }

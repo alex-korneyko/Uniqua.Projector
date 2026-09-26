@@ -27,6 +27,11 @@ describe('isInAppPath', () => {
     ['/\\evil', false],
     ['', false],
     ['boards/018f3a2b', false],
+    // A browser strips a tab, turning this into `//evil` — another host.
+    ['/\t/evil', false],
+    ['/\u0000x', false],
+    // Percent-encoded slashes are never decoded into the path's first segment: it stays in-app.
+    ['/%2F%2Fevil', true],
   ])('isInAppPath(%j) is %p', (path, expected) => {
     expect(isInAppPath(path)).toBe(expected)
   })
@@ -161,6 +166,7 @@ describe('a visitor who follows a board link (AC-27)', () => {
     await userEvent.type(screen.getByLabelText(/password/i), 'whatever-they-typed')
     await userEvent.click(screen.getByRole('button', { name: /^sign in$/i }))
 
-    await waitFor(() => expect(screen.getByTestId('current-path')).toHaveTextContent('/'))
+    // Exactly the board list: `toHaveTextContent('/')` would also match `//evil.example` itself.
+    await waitFor(() => expect(screen.getByTestId('current-path').textContent).toBe('/'))
   })
 })

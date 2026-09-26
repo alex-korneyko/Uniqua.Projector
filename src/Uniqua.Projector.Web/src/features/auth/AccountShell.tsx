@@ -92,8 +92,9 @@ export function AccountShell({ children, signedIn }: AccountShellProps) {
   }
 
   return (
-    // Widened past the auth screens' max-w-md: the board list and the board need the room.
-    <div className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-8">
+    // Full width: the board (SCR-04) needs every column of room it can get. The screens that read
+    // better narrow — the board list (SCR-02) and not-available (SCR-08) — bound themselves.
+    <div className="flex min-h-dvh flex-col gap-6 p-8">
       <header className="flex items-center justify-between gap-4 border-b pb-4">
         {/* AC-11: the display name, and never the address — not even as a fallback. */}
         <span className="font-medium">{state.account.display_name}</span>

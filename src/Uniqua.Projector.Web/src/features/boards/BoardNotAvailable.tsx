@@ -13,7 +13,8 @@ export function BoardNotAvailable() {
   const navigate = useNavigate()
 
   return (
-    <main className="flex flex-col">
+    // Bounded here, not by the shell: the shell is full width so the board (SCR-04) gets the room.
+    <main className="mx-auto flex w-full max-w-3xl flex-col">
       <Card>
         <CardHeader>
           <CardTitle>Board not available</CardTitle>

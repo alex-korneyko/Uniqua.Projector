@@ -102,7 +102,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderDialog(board = aBoard(), onOpenChange = vi.fn()) {
+function renderDialog(board = aBoard(), onOpenChange = vi.fn(), onRefused = vi.fn(), initialConfirmName?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(boardQueryKey(boardId), board)
   client.setQueryData(boardsQueryKey, aListPage())
@@ -113,14 +113,22 @@ function renderDialog(board = aBoard(), onOpenChange = vi.fn()) {
         <Routes>
           <Route
             path="/boards/:boardId"
-            element={<DeleteBoardDialog board={board} open onOpenChange={onOpenChange} />}
+            element={
+              <DeleteBoardDialog
+                board={board}
+                open
+                onOpenChange={onOpenChange}
+                onRefused={onRefused}
+                initialConfirmName={initialConfirmName}
+              />
+            }
           />
           <Route path="/" element={<p>My boards</p>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  return { client, onOpenChange }
+  return { client, onOpenChange, onRefused }
 }
 
 // ---- always-enabled confirm --------------------------------------------------------------------
@@ -210,6 +218,33 @@ describe('not-available', () => {
     await userEvent.click(screen.getByRole('button', { name: /^delete board$/i }))
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false))
+  })
+})
+
+// ---- session-ended (AC-28) --------------------------------------------------------------------
+
+describe('session-ended', () => {
+  it('401: hands the typed name to the screen to keep, filed under delete_board', async () => {
+    deleteHandler = () =>
+      Promise.resolve(problem(401, { code: 'accounts.session_not_recognised', detail: 'Sign in to continue.' }))
+
+    const { onRefused } = renderDialog()
+    await userEvent.type(screen.getByLabelText(/type the board's name to confirm/i), 'Q4 laun')
+    await userEvent.click(screen.getByRole('button', { name: /^delete board$/i }))
+
+    await waitFor(() => expect(onRefused).toHaveBeenCalledTimes(1))
+    expect(onRefused.mock.calls[0][1]).toEqual({
+      boardId,
+      item: 'delete_board',
+      fields: { confirm_name: 'Q4 laun' },
+    })
+  })
+
+  it('reopened by «Apply again»: starts with the kept name filled in, and deletes nothing by itself', () => {
+    renderDialog(aBoard(), vi.fn(), vi.fn(), 'Q4 laun')
+
+    expect(screen.getByLabelText(/type the board's name to confirm/i)).toHaveValue('Q4 laun')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
 

@@ -49,7 +49,8 @@ export function BoardListScreen() {
   }
 
   return (
-    <main className="flex flex-col gap-6">
+    // Bounded here, not by the shell: the shell is full width so the board (SCR-04) gets the room.
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-6">
       {keptName !== undefined && (
         <KeptTextNotice
           heading="You were signed out before this was saved:"

@@ -105,7 +105,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function renderDialog(onCardGone = vi.fn(), onOpenChange = vi.fn(), board = aBoard()) {
+function renderDialog(onCardGone = vi.fn(), onOpenChange = vi.fn(), board = aBoard(), onRefused = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.setQueryData(boardQueryKey(boardId), board)
   render(
@@ -117,10 +117,11 @@ function renderDialog(onCardGone = vi.fn(), onOpenChange = vi.fn(), board = aBoa
         open
         onOpenChange={onOpenChange}
         onCardGone={onCardGone}
+        onRefused={onRefused}
       />
     </QueryClientProvider>,
   )
-  return { client, onCardGone, onOpenChange }
+  return { client, onCardGone, onOpenChange, onRefused }
 }
 
 // ---- loading ----------------------------------------------------------------------------------
@@ -243,6 +244,39 @@ describe('validation', () => {
     ).toBeInTheDocument()
     expect(screen.getByLabelText(/^title$/i)).toHaveValue('')
     expect(screen.getByLabelText(/description/i)).toHaveValue('Kept text')
+  })
+})
+
+// ---- session-ended (AC-28) ------------------------------------------------------------------------
+
+describe('session-ended (save)', () => {
+  it('401: hands the typed title and description to the screen to keep, filed under edit_card', async () => {
+    changeHandler = (url, init) =>
+      url.endsWith(cardPath) && init?.method === 'PATCH'
+        ? Promise.resolve(
+            problem(401, { code: 'accounts.session_not_recognised', detail: 'Sign in to continue.' }),
+          )
+        : undefined
+
+    const { onRefused } = renderDialog()
+    await userEvent.click(await screen.findByRole('button', { name: /^edit$/i }))
+    const titleInput = screen.getByLabelText(/^title$/i)
+    await userEvent.clear(titleInput)
+    await userEvent.type(titleInput, 'Typed title')
+    await userEvent.type(screen.getByLabelText(/description/i), 'Typed description')
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(onRefused).toHaveBeenCalledTimes(1))
+    expect(onRefused.mock.calls[0][1]).toEqual({
+      boardId,
+      item: 'edit_card',
+      fields: {
+        card_id: cardId,
+        title: 'Typed title',
+        description: 'Typed description',
+        content_version: '1',
+      },
+    })
   })
 })
 

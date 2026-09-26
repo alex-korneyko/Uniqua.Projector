@@ -143,7 +143,7 @@ describe('Add column', () => {
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
   })
 
-  it('pending: shows "Adding…" while the request is in flight', async () => {
+  it('pending: «Add» reads «Adding…» and is disabled while the request is in flight', async () => {
     changeHandler = (url, init) => {
       if (url.endsWith(columnsPath) && init?.method === 'POST') {
         return new Promise(() => {})
@@ -155,7 +155,7 @@ describe('Add column', () => {
     await userEvent.type(input, 'Review')
     await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
 
-    expect(await screen.findByText(/adding/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^adding…$/i })).toBeDisabled()
   })
 
   it('validation 400 column_name_invalid: shows the refusal line and keeps what was typed', async () => {
@@ -347,8 +347,14 @@ describe('Column rename', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(onRefused).toHaveBeenCalled())
-    const [, kept] = onRefused.mock.calls[0] as [unknown, KeptDraft]
-    expect(kept.fields.name).toBe('Orphaned name')
+    const [error, kept] = onRefused.mock.calls[0] as [unknown, KeptDraft]
+    expect(error).toMatchObject({ status: 404, code: 'boards.not_available' })
+    // Everything SCR-04 needs to tell the column is gone (AC-18b) or to apply the name again (AC-28).
+    expect(kept).toEqual({
+      boardId,
+      item: 'rename_column',
+      fields: { column_id: columnA.id, name: 'Orphaned name', name_version: String(columnA.name_version) },
+    })
   })
 
   it('success: shows the new name and closes the editor', async () => {
