@@ -19,7 +19,7 @@
 | T12 | Limit each account to 120 board change attempts per rolling minute, before the membership check | ports | Alex Korneiko | S | T9 | done |
 | T13 | Prove the membership boundary across every read and change kind, and map the four board rules to their tests | tests | Alex Korneiko | M | T10, T11, T12, T14 | done |
 | T14 | Prove the board invariants under 1,000 simultaneous pairs and the column order under 1,000 random sequences | tests | Alex Korneiko | L | T10, T11 | done |
-| T15 | Measure opening a full board, a single change and change throughput against the §6 budgets | tests | Alex Korneiko | S | T10, T11, T12 | todo |
+| T15 | Measure opening a full board, a single change and change throughput against the §6 budgets | tests | Alex Korneiko | S | T10, T11, T12 | done |
 | T16 | Vendor Dialog and Textarea, add the destructive Button variant, and build PlainText and KeptTextNotice | ui | Alex Korneiko | S | — | todo |
 | T17 | Write the typed boards API client, its query keys and cache patches, and the board refusal wording | ui | Alex Korneiko | M | — | todo |
 | T18 | Give the client board addresses with React Router, a guarded return address, and typed text kept across a sign-in | ui | Alex Korneiko | M | — | todo |
