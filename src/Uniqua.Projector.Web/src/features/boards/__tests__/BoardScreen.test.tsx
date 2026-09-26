@@ -262,6 +262,15 @@ describe('the default state, a member (is_owner: false)', () => {
     // The card tile is shown, ordered by position, its title as literal text.
     const tile = screen.getByRole('button', { name: 'First card' })
     expect(tile).toBeInTheDocument()
+
+    // AC-21: every column and card change is offered to a member exactly as to the owner.
+    expect(screen.getByRole('button', { name: /\+\s*add column/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^rename column$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^delete column$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^move column to do$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /\+\s*add card/i })).toBeEnabled()
+    // The tile opens the card, where it is edited or deleted (SCR-05, SCR-06).
+    expect(tile).toBeEnabled()
   })
 
   it('shows a card title literally, never as markup (edge case)', async () => {
@@ -437,7 +446,7 @@ describe('add card', () => {
     expect(screen.getByText(/at most 10,000 characters/i)).toBeInTheDocument()
   })
 
-  it('pending: disables the submit control while the request is in flight', async () => {
+  it('pending: «Add» reads «Adding…» and is disabled while the request is in flight', async () => {
     changeHandler = (url, init) => {
       if (url.includes(`/api/v1/boards/${boardId}/cards`) && init?.method === 'POST') {
         return new Promise(() => {})
@@ -449,7 +458,54 @@ describe('add card', () => {
     await userEvent.type(title, 'A new card')
     await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
 
-    expect(screen.getByRole('button', { name: /^add$/i })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: /^adding…$/i })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /^add$/i })).not.toBeInTheDocument()
+  })
+
+  it('a refusal, then Cancel and «+ Add card» again: the reopened form is empty, with no refusal', async () => {
+    withAddCardHandler(() =>
+      problem(409, {
+        code: 'boards.card_limit_reached',
+        title: 'This board is full.',
+        detail: 'A board can hold at most 1,000 cards.',
+      }),
+    )
+
+    const { title } = await openForm()
+    await userEvent.type(title, 'One more card')
+    await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByText(/a board can hold at most 1,000 cards/i)
+
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await userEvent.click(screen.getByRole('button', { name: /\+\s*add card/i }))
+
+    expect(screen.getByLabelText(/^title$/i)).toHaveValue('')
+    expect(screen.queryByText(/a board can hold at most 1,000 cards/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('rate-limited 429 (AC-17): says changes are limited and when to continue, in place, keeping both fields', async () => {
+    withAddCardHandler(() =>
+      problem(429, {
+        code: 'boards.change_rate_limited',
+        title: 'Changes are temporarily limited.',
+        detail: 'You have made many changes in the past minute.',
+        retry_after_seconds: 12,
+      }),
+    )
+
+    const { title, description } = await openForm()
+    await userEvent.type(title, 'Limited title')
+    await userEvent.type(description, 'Limited description')
+    await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Changes are temporarily limited. You have made many changes in the past minute. Try again in 12 seconds.',
+    )
+    expect(screen.getByLabelText(/^title$/i)).toHaveValue('Limited title')
+    expect(screen.getByLabelText(/description/i)).toHaveValue('Limited description')
+    // Nothing changed: no tile for the refused card.
+    expect(screen.queryByRole('button', { name: 'Limited title' })).not.toBeInTheDocument()
   })
 
   it('validation 400 card_title_invalid: shows the refusal under the title field, keeping both fields', async () => {

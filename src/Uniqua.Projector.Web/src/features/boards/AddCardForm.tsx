@@ -31,6 +31,8 @@ const descriptionInvalid = 'boards.card_description_invalid'
  */
 export function AddCardForm({ boardId, columnId, onRefused }: AddCardFormProps) {
   const [open, setOpen] = useState(false)
+  // The last refusal belongs to the form it was shown in: a closed and reopened form starts clean.
+  const [refusalShown, setRefusalShown] = useState(false)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
 
@@ -52,13 +54,23 @@ export function AddCardForm({ boardId, columnId, onRefused }: AddCardFormProps) 
 
   if (!open) {
     return (
-      <Button variant="ghost" className="w-full justify-start" onClick={() => setOpen(true)}>
+      <Button
+        variant="ghost"
+        className="w-full justify-start"
+        onClick={() => {
+          setRefusalShown(false)
+          setOpen(true)
+        }}
+      >
         + Add card
       </Button>
     )
   }
 
-  const refusal = add.error === undefined ? undefined : describeBoardRefusal(add.error, add.resolvedAs, 'column')
+  const refusal =
+    refusalShown && add.error !== undefined
+      ? describeBoardRefusal(add.error, add.resolvedAs, 'column')
+      : undefined
   const refusedCode = add.error instanceof ApiError ? add.error.code : undefined
   const titleRefusal = refusedCode === titleInvalid ? refusal : undefined
   const descriptionRefusal = refusedCode === descriptionInvalid ? refusal : undefined
@@ -71,6 +83,7 @@ export function AddCardForm({ boardId, columnId, onRefused }: AddCardFormProps) 
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setRefusalShown(true)
     add.change({
       column_id: columnId,
       title,
@@ -81,6 +94,7 @@ export function AddCardForm({ boardId, columnId, onRefused }: AddCardFormProps) 
   const close = () => {
     setTitle('')
     setDescription('')
+    setRefusalShown(false)
     setOpen(false)
   }
 
@@ -121,16 +135,11 @@ export function AddCardForm({ boardId, columnId, onRefused }: AddCardFormProps) 
       <RefusalLine text={formRefusal} />
 
       <div className="flex items-center justify-end gap-2">
-        {add.isPending && (
-          <span role="status" aria-live="polite" className="text-muted-foreground text-xs">
-            Adding…
-          </span>
-        )}
         <Button type="button" variant="ghost" size="sm" onClick={close}>
           Cancel
         </Button>
         <Button type="submit" size="sm" disabled={add.isPending}>
-          Add
+          {add.isPending ? 'Adding…' : 'Add'}
         </Button>
       </div>
     </form>

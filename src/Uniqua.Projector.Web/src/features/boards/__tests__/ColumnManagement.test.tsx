@@ -143,7 +143,7 @@ describe('Add column', () => {
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
   })
 
-  it('pending: shows "Adding…" while the request is in flight', async () => {
+  it('pending: «Add» reads «Adding…» and is disabled while the request is in flight', async () => {
     changeHandler = (url, init) => {
       if (url.endsWith(columnsPath) && init?.method === 'POST') {
         return new Promise(() => {})
@@ -155,7 +155,7 @@ describe('Add column', () => {
     await userEvent.type(input, 'Review')
     await userEvent.click(screen.getByRole('button', { name: /^add$/i }))
 
-    expect(await screen.findByText(/adding/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^adding…$/i })).toBeDisabled()
   })
 
   it('validation 400 column_name_invalid: shows the refusal line and keeps what was typed', async () => {

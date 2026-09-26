@@ -178,11 +178,22 @@ describe('validation (AC-02)', () => {
       }),
     )
 
+    // A name the client's own check accepts, so the refusal can only be the server's. Pasted, not
+    // typed: key-by-key typing of a long value is what made this test time out in the full run.
+    const acceptedByTheClient = 'A name only the server refuses'
+
     renderDialog()
-    await fillAndSubmit('x'.repeat(101))
+    await userEvent.click(nameField())
+    await userEvent.paste(acceptedByTheClient)
+    await userEvent.click(screen.getByRole('button', { name: /^create$/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/between 1 and 100 characters/i)
-    expect(nameField()).toHaveValue('x'.repeat(101))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toMatch(/\/api\/v1\/boards$/)
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ name: acceptedByTheClient })
+    expect(nameField()).toHaveValue(acceptedByTheClient)
     await waitFor(() => expect(nameField()).toHaveFocus())
   })
 })
