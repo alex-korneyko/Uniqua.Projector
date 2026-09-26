@@ -182,9 +182,8 @@ public static partial class BoardEndpoints
             return;
         }
 
-        // The use case stored the name trimmed by the Text rule; that is the name the board now has.
-        await context.Response.WriteAsJsonAsync(
-            new BoardName(id, BoardText.Trim(name)), Json, cancellationToken);
+        // The name the Board stored, trimmed by the Text rule there — never re-derived here.
+        await context.Response.WriteAsJsonAsync(new BoardName(id, result.Value), Json, cancellationToken);
     }
 
     private static async Task DeleteBoardAsync(
@@ -232,9 +231,9 @@ public static partial class BoardEndpoints
             return;
         }
 
-        // AC-20b: shown the board's current name — read through the same member-scoped load, so a
-        // board deleted in the meantime is answered as every absent board is.
-        var current = await open.ExecuteAsync(id, accountId, cancellationToken);
+        // AC-20b: shown the board's current name — read through the same member-scoped load (no
+        // cards: review Q4f), so a board deleted in the meantime is answered as every absent board is.
+        var current = await open.OutlineAsync(id, accountId, cancellationToken);
         if (!current.IsSuccess)
         {
             await context.WriteBoardProblemAsync(current.Error!);
@@ -252,7 +251,8 @@ public static partial class BoardEndpoints
     private static async Task RefuseShapeAsync(
         HttpContext context, OpenBoard open, Guid boardId, Guid accountId, CancellationToken cancellationToken)
     {
-        var member = await open.ExecuteAsync(boardId, accountId, cancellationToken);
+        // Membership is all this needs; the outline reads no card (review Q4f).
+        var member = await open.OutlineAsync(boardId, accountId, cancellationToken);
 
         await context.WriteBoardProblemAsync(
             member.IsSuccess ? BoardProblems.RequestInvalid : member.Error!.Code);

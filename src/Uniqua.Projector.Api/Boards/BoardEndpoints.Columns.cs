@@ -230,10 +230,11 @@ public static partial class BoardEndpoints
         Guid boardId,
         Guid accountId,
         string code,
-        Func<BoardView, object?> current,
+        Func<BoardOutline, object?> current,
         CancellationToken cancellationToken)
     {
-        var board = await open.ExecuteAsync(boardId, accountId, cancellationToken);
+        // The board's columns as they now stand, without its cards (review Q4f).
+        var board = await open.OutlineAsync(boardId, accountId, cancellationToken);
         if (!board.IsSuccess)
         {
             await context.WriteBoardProblemAsync(board.Error!);

@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Uniqua.Projector.Application.Boards;
 using Uniqua.Projector.Application.Boards.Ports;
@@ -97,7 +98,22 @@ internal sealed class BoardStore(AppDbContext context) : IBoardStore
         {
             throw new BoardConcurrencyConflict();
         }
+        catch (DbUpdateException exception) when (IsForeignKeyViolation(exception))
+        {
+            // A card committed into a column this save deletes (or a column deleted under a card
+            // this save inserts): the NO ACTION foreign key from Cards to Columns refuses the
+            // statement. That is the same lost race a version miss is, so the bounded retry reloads
+            // and the Board re-decides — column_not_empty, or the column is gone (AC-09, AC-18b;
+            // review Q2b) — instead of the member getting a 500.
+            throw new BoardConcurrencyConflict();
+        }
     }
+
+    /// <summary>SQL Server error 547: a statement conflicted with a FOREIGN KEY (or CHECK) constraint.</summary>
+    private const int ConstraintViolation = 547;
+
+    private static bool IsForeignKeyViolation(DbUpdateException exception) =>
+        exception.InnerException is SqlException { Number: ConstraintViolation };
 
     /// <summary>
     /// data-model.md § Notes for implement: one <c>DELETE</c> against Boards, conditioned on the

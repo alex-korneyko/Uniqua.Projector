@@ -64,7 +64,8 @@ public interface IBoardStore
 
     /// <summary>
     /// Persists every change queued since the last call. A lost race on a board's, a column's, a
-    /// card's or the owned-board counter's version surfaces as a
+    /// card's or the owned-board counter's version — or a card and a column deletion meeting at the
+    /// Cards-to-Columns foreign key — surfaces as a
     /// <see cref="Uniqua.Projector.Application.Boards.BoardConcurrencyConflict"/> rather than an EF
     /// Core exception type, so the exception never crosses into Application from anywhere but this
     /// port (ADR 0015; CLAUDE.md § Persistence is EF Core).

@@ -218,6 +218,29 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
             $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'"));
     }
 
+    // ---- T25 (review Q4g; AC-19): the rename answers with the name the domain stored ----------------
+
+    [Fact]
+    public async Task Renaming_returns_the_name_the_board_now_has_exactly_as_stored()
+    {
+        var owner = await factory.AnAccountAsync();
+
+        using var createScope = factory.Services.CreateScope();
+        var created = await createScope.ServiceProvider.GetRequiredService<CreateBoard>()
+            .ExecuteAsync(owner.Id, "Old name", CancellationToken.None);
+        Assert.True(created.IsSuccess);
+
+        using var scope = factory.Services.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<RenameBoard>()
+            .ExecuteAsync(created.Value.Id, owner.Id, " \t Padded  new name  ", CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var stored = await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'");
+        Assert.Equal("Padded  new name", stored);
+        Assert.Equal(stored, result.Value);
+    }
+
     // ---- AC-22: a Member is refused OwnerOnly before the name is even looked at --------------------
 
     [Fact]

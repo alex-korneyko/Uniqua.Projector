@@ -469,6 +469,80 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
     }
 
+    // ---- T25 (review Q4f): a refusal reads only what it answers with, never the card list -----------
+
+    [Theory]
+    [InlineData("renameBoard, wrong shape", "boards.request_invalid")]
+    [InlineData("addCard, wrong shape", "boards.request_invalid")]
+    [InlineData("deleteBoard, confirmation mismatch", "boards.confirmation_mismatch")]
+    [InlineData("renameColumn, stale name_version", "boards.column_renamed")]
+    [InlineData("moveColumn, stale layout version", "boards.columns_changed")]
+    public async Task A_refusal_reads_no_card_summaries_on_its_way_out(string refusal, string expectedCode)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardWithCardsAsync(owner, cardCount: 5, name: "A board holding cards");
+        var client = await factory.AWritingClientAsync(owner);
+        var columnId = await factory.ScalarAsync<Guid>(
+            $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{board.Id}' ORDER BY [Position]");
+
+        // Make the column's name and the board's layout move on, so the stale requests below are stale.
+        var renamed = await client.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}/columns/{columnId}", new { name = "Renamed first", name_version = 1 });
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        var added = await client.PostAsJsonAsync($"{Boards}/{board.Id}/columns", new { name = "Added first" });
+        Assert.Equal(HttpStatusCode.Created, added.StatusCode);
+
+        var request = refusal switch
+        {
+            "renameBoard, wrong shape" => new HttpRequestMessage(HttpMethod.Patch, $"{Boards}/{board.Id}")
+            {
+                Content = JsonContent.Create(new { name = 5 }),
+            },
+            "addCard, wrong shape" => new HttpRequestMessage(HttpMethod.Post, $"{Boards}/{board.Id}/cards")
+            {
+                Content = JsonContent.Create(new { title = "No column named" }),
+            },
+            "deleteBoard, confirmation mismatch" => new HttpRequestMessage(HttpMethod.Delete, $"{Boards}/{board.Id}")
+            {
+                Content = JsonContent.Create(new { confirm_name = "Not its name" }),
+            },
+            "renameColumn, stale name_version" => new HttpRequestMessage(
+                HttpMethod.Patch, $"{Boards}/{board.Id}/columns/{columnId}")
+            {
+                Content = JsonContent.Create(new { name = "Mine", name_version = 1 }),
+            },
+            _ => new HttpRequestMessage(HttpMethod.Put, $"{Boards}/{board.Id}/columns/{columnId}/position")
+            {
+                Content = JsonContent.Create(new { position = 1, column_layout_version = 1 }),
+            },
+        };
+
+        factory.Commands.Clear();
+        var response = await client.SendAsync(request);
+        var statements = factory.Commands.Statements;
+
+        Assert.Equal(expectedCode, await CodeOfAsync(response));
+        Assert.DoesNotContain(statements, sql => sql.Contains("FROM [Cards]", StringComparison.Ordinal));
+
+        // What the refusal does carry is still the board as it now stands.
+        var body = await BodyAsync(response);
+        switch (expectedCode)
+        {
+            case "boards.confirmation_mismatch":
+                Assert.Equal(board.Name, body.GetProperty("current_name").GetString());
+                break;
+            case "boards.column_renamed":
+                Assert.Equal("Renamed first", body.GetProperty("current_column").GetProperty("name").GetString());
+                Assert.Equal(2, body.GetProperty("current_column").GetProperty("name_version").GetInt32());
+                break;
+            case "boards.columns_changed":
+                var layout = body.GetProperty("current_layout");
+                Assert.Equal(2, layout.GetProperty("column_layout_version").GetInt32());
+                Assert.Equal(4, layout.GetProperty("columns").GetArrayLength());
+                break;
+        }
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     /// <summary>

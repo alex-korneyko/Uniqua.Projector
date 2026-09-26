@@ -10,7 +10,8 @@ namespace Uniqua.Projector.Application.Boards;
 /// <see cref="BoardErrors.NotAvailable"/> before anything about the board is revealed), then
 /// <see cref="Board.Rename"/> — which checks ownership before the Text rule, so a Member is refused
 /// <see cref="BoardErrors.OwnerOnly"/> even for a name that would otherwise be invalid — then a save
-/// retried under <see cref="BoardChangeRetry"/> (ADR 0015; sad.md §6, flow 2).
+/// retried under <see cref="BoardChangeRetry"/> (ADR 0015; sad.md §6, flow 2). Answers with the
+/// name the Board stored — trimmed by the Text rule there, not re-derived by the caller (review Q4g).
 /// </summary>
 /// <remarks>
 /// Each attempt runs in a scope of its own so a lost race reloads the board rather than getting
@@ -18,7 +19,7 @@ namespace Uniqua.Projector.Application.Boards;
 /// </remarks>
 public sealed class RenameBoard(IServiceScopeFactory scopes)
 {
-    public async Task<Result<bool, BoardError>> ExecuteAsync(
+    public async Task<Result<string, BoardError>> ExecuteAsync(
         Guid boardId, Guid accountId, string name, CancellationToken cancellationToken)
     {
         var outcome = await BoardChangeRetry.RunAsync(async _ =>
@@ -29,21 +30,21 @@ public sealed class RenameBoard(IServiceScopeFactory scopes)
             var loaded = await boards.LoadForMemberAsync(boardId, accountId, cancellationToken);
             if (loaded is null)
             {
-                return Result<bool, BoardError>.Failure(BoardErrors.NotAvailable);
+                return Result<string, BoardError>.Failure(BoardErrors.NotAvailable);
             }
 
             var renamed = loaded.Board.Rename(accountId, name);
             if (!renamed.IsSuccess)
             {
-                return renamed;
+                return Result<string, BoardError>.Failure(renamed.Error!);
             }
 
             await boards.SaveAsync(cancellationToken);
-            return renamed;
+            return Result<string, BoardError>.Success(loaded.Board.Name);
         });
 
         return outcome.Contended
-            ? Result<bool, BoardError>.Failure(BoardErrors.Contended)
+            ? Result<string, BoardError>.Failure(BoardErrors.Contended)
             : outcome.Value;
     }
 }

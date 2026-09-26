@@ -62,12 +62,34 @@ public sealed class ContentionForcer : DbCommandInterceptor
     /// </summary>
     public int InterceptedAttempts { get; private set; }
 
+    private Regex? _oncePattern;
+    private string? _onceSql;
+
+    /// <summary>Whether the statement armed by <see cref="RunOnceBefore"/> has run.</summary>
+    public bool RanOnce { get; private set; }
+
+    /// <summary>
+    /// Arms a one-shot: just before the first command whose text matches <paramref name="pattern"/>,
+    /// runs <paramref name="sql"/> on a separate connection, committed — someone else's change landing
+    /// between a use case's load and its save — then disarms. Works whether or not
+    /// <see cref="Enabled"/> is set.
+    /// </summary>
+    public void RunOnceBefore(string pattern, string sql)
+    {
+        _oncePattern = new Regex(pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        _onceSql = sql;
+        RanOnce = false;
+    }
+
     public void Reset()
     {
         Enabled = false;
         TargetAccountId = Guid.Empty;
         TargetId = Guid.Empty;
         InterceptedAttempts = 0;
+        _oncePattern = null;
+        _onceSql = null;
+        RanOnce = false;
     }
 
     public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
@@ -76,6 +98,8 @@ public sealed class ContentionForcer : DbCommandInterceptor
         InterceptionResult<int> result,
         CancellationToken cancellationToken = default)
     {
+        await RunOnceIfMatchedAsync(command, cancellationToken);
+
         if (Enabled && ConditionalUpdate.IsMatch(command.CommandText))
         {
             InterceptedAttempts++;
@@ -109,8 +133,32 @@ public sealed class ContentionForcer : DbCommandInterceptor
         InterceptionResult<DbDataReader> result,
         CancellationToken cancellationToken = default)
     {
+        await RunOnceIfMatchedAsync(command, cancellationToken);
         await BumpBoardRowIfMatchedAsync(command, cancellationToken);
         return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    private async Task RunOnceIfMatchedAsync(DbCommand command, CancellationToken cancellationToken)
+    {
+        if (_oncePattern is not { } pattern || !pattern.IsMatch(command.CommandText))
+        {
+            return;
+        }
+
+        // Disarm before running, so two racing commands cannot both take the one shot.
+        if (Interlocked.Exchange(ref _onceSql, null) is not { } sql)
+        {
+            return;
+        }
+
+        _oncePattern = null;
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var once = connection.CreateCommand();
+        once.CommandText = sql;
+        await once.ExecuteNonQueryAsync(cancellationToken);
+        RanOnce = true;
     }
 
     private async Task BumpBoardRowIfMatchedAsync(DbCommand command, CancellationToken cancellationToken)
