@@ -33,6 +33,16 @@ export class ApiError extends Error {
   /** Why, in the contract's words — "An email address identifies exactly one account." */
   readonly detail: string | undefined
   readonly retryAfterSeconds: number | undefined
+  /**
+   * The `current_*` members of RFC 9457's Problem shape (boards-columns-cards, ADR 0016): the state
+   * a stale refusal carries back, so a caller can show it without a second round trip. Untyped here
+   * — accounts never sends one, and typing it to a boards schema would make this module depend on
+   * boards to describe an accounts response.
+   */
+  readonly currentCard: unknown
+  readonly currentColumn: unknown
+  readonly currentLayout: unknown
+  readonly currentName: unknown
 
   constructor(
     status: number,
@@ -40,6 +50,7 @@ export class ApiError extends Error {
     title: string | undefined,
     detail: string | undefined,
     retryAfterSeconds: number | undefined,
+    current?: { card?: unknown; column?: unknown; layout?: unknown; name?: unknown },
   ) {
     super(detail ?? title ?? `The request failed with status ${status}.`)
     this.name = 'ApiError'
@@ -48,6 +59,10 @@ export class ApiError extends Error {
     this.title = title
     this.detail = detail
     this.retryAfterSeconds = retryAfterSeconds
+    this.currentCard = current?.card
+    this.currentColumn = current?.column
+    this.currentLayout = current?.layout
+    this.currentName = current?.name
   }
 
   /** Whether this refusal means "not signed in" — the one the client answers by showing the form. */
@@ -83,13 +98,18 @@ export async function deleteCurrentSession(): Promise<void> {
   await request<void>('/api/v1/sessions/current', { method: 'DELETE', expectsBody: false })
 }
 
-interface RequestOptions {
+export interface RequestOptions {
   method?: string
   body?: unknown
   expectsBody?: boolean
 }
 
-async function request<TResult>(
+/**
+ * The one place every call attaches the session cookie and, on a change, the antiforgery token —
+ * shared by every feature's transport (boards-columns-cards' `api/boards.ts` included) rather than
+ * reimplemented per feature.
+ */
+export async function request<TResult>(
   path: string,
   { method = 'GET', body, expectsBody = true }: RequestOptions = {},
 ): Promise<TResult> {
@@ -137,6 +157,10 @@ async function asApiError(response: Response): Promise<ApiError> {
       title?: string
       detail?: string
       retry_after_seconds?: number
+      current_card?: unknown
+      current_column?: unknown
+      current_layout?: unknown
+      current_name?: unknown
     }
 
     return new ApiError(
@@ -145,6 +169,12 @@ async function asApiError(response: Response): Promise<ApiError> {
       problem.title,
       problem.detail,
       problem.retry_after_seconds,
+      {
+        card: problem.current_card,
+        column: problem.current_column,
+        layout: problem.current_layout,
+        name: problem.current_name,
+      },
     )
   } catch {
     return new ApiError(response.status, undefined, undefined, undefined, undefined)

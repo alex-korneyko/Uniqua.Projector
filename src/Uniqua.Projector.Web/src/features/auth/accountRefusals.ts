@@ -84,7 +84,7 @@ export function describeRefusal(error: unknown): Refusal {
  * The title as the statement, then the detail as the reason — or whichever of the two the server
  * sent. A detail that already begins with the title is shown alone rather than saying it twice.
  */
-function statementAndReason(error: ApiError, fallback: string): string {
+export function statementAndReason(error: ApiError, fallback: string): string {
   const title = error.title?.trim()
   const detail = error.detail?.trim()
 
@@ -106,7 +106,7 @@ function asSentence(text: string): string {
 }
 
 /** Adds the plain retry, unless the message already tells the visitor to try again. */
-function withRetry(message: string): string {
+export function withRetry(message: string): string {
   return /try again/i.test(message) ? message : `${message} Please try again.`
 }
 
@@ -114,7 +114,7 @@ function withRetry(message: string): string {
  * AC-01b / AC-12 both ask that the visitor be told when they may try again, so the number is
  * shown — once, whichever of the two rate limits sent it.
  */
-function rateLimitMessage(error: ApiError, fallback: string): string {
+export function rateLimitMessage(error: ApiError, fallback: string): string {
   const statement = statementAndReason(error, fallback)
 
   if (/try again/i.test(statement)) {
