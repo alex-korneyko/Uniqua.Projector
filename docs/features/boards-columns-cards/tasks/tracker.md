@@ -20,12 +20,12 @@
 | T13 | Prove the membership boundary across every read and change kind, and map the four board rules to their tests | tests | Alex Korneiko | M | T10, T11, T12, T14 | done |
 | T14 | Prove the board invariants under 1,000 simultaneous pairs and the column order under 1,000 random sequences | tests | Alex Korneiko | L | T10, T11 | done |
 | T15 | Measure opening a full board, a single change and change throughput against the §6 budgets | tests | Alex Korneiko | S | T10, T11, T12 | done |
-| T16 | Vendor Dialog and Textarea, add the destructive Button variant, and build PlainText and KeptTextNotice | ui | Alex Korneiko | S | — | todo |
-| T17 | Write the typed boards API client, its query keys and cache patches, and the board refusal wording | ui | Alex Korneiko | M | — | todo |
-| T18 | Give the client board addresses with React Router, a guarded return address, and typed text kept across a sign-in | ui | Alex Korneiko | M | — | todo |
-| T19 | Build the board list (SCR-02) and the create-board dialog (SCR-03) | ui | Alex Korneiko | M | T16, T17, T18 | todo |
-| T20 | Build the board screen (SCR-04) with its owner header, card tiles and add-card form, and the not-available screen (SCR-08) | ui | Alex Korneiko | L | T16, T17, T18 | todo |
-| T21 | Let members add, rename, drag and delete columns on the board, with every refusal shown in place | ui | Alex Korneiko | L | T20 | todo |
-| T22 | Build the card detail dialog with edit and delete (SCR-05, SCR-06) and the board deletion dialog (SCR-07) | ui | Alex Korneiko | M | T20 | todo |
+| T16 | Vendor Dialog and Textarea, add the destructive Button variant, and build PlainText and KeptTextNotice | ui | Alex Korneiko | S | — | done |
+| T17 | Write the typed boards API client, its query keys and cache patches, and the board refusal wording | ui | Alex Korneiko | M | — | done |
+| T18 | Give the client board addresses with React Router, a guarded return address, and typed text kept across a sign-in | ui | Alex Korneiko | M | — | done |
+| T19 | Build the board list (SCR-02) and the create-board dialog (SCR-03) | ui | Alex Korneiko | M | T16, T17, T18 | done |
+| T20 | Build the board screen (SCR-04) with its owner header, card tiles and add-card form, and the not-available screen (SCR-08) | ui | Alex Korneiko | L | T16, T17, T18 | done |
+| T21 | Let members add, rename, drag and delete columns on the board, with every refusal shown in place | ui | Alex Korneiko | L | T20 | done |
+| T22 | Build the card detail dialog with edit and delete (SCR-05, SCR-06) and the board deletion dialog (SCR-07) | ui | Alex Korneiko | M | T20 | done |
 
 **Total:** 22 tasks, ~16.5 person-days (S = ½ day, M = ¾ day, L = 1 day).
