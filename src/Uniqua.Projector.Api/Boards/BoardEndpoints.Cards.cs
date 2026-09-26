@@ -51,15 +51,16 @@ public static partial class BoardEndpoints
         var request = new BoardRequestBody(body);
         if (!request.TryGetString("column_id", out var columnText)
             || !request.TryGetString("title", out var title)
-            || !TryGetOptionalString(body, "description", out var description))
+            || !request.TryGetOptionalString("description", out var description)
+            || !request.HasOnly("column_id", "title", "description"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
         }
 
-        // A column_id that is not a UUID names no column on this board. Guid.Empty is never an id
-        // (Ids.New() issues v7 only), so the Board answers it as any absent column, after membership.
-        var columnId = Guid.TryParse(columnText, out var parsed) ? parsed : Guid.Empty;
+        // A column_id that is not a UUID names no column on this board: answered as any absent
+        // column, after membership.
+        var columnId = BoardRequestBody.ItemId(columnText);
 
         var result = await add.ExecuteAsync(
             id, accountId, columnId, title, description ?? string.Empty, cancellationToken);
@@ -86,11 +87,13 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(cardId, out var card))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
+
+        var card = BoardRequestBody.ItemId(cardId);
 
         var result = await open.ExecuteAsync(id, accountId, card, cancellationToken);
         if (!result.IsSuccess)
@@ -118,17 +121,21 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(cardId, out var card))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
 
+        var card = BoardRequestBody.ItemId(cardId);
+
         // Neither title nor description is the same incomplete request as a field of the wrong type.
-        if (!new BoardRequestBody(body).TryGetInt32("content_version", out var contentVersion)
-            || !TryGetOptionalString(body, "title", out var title)
-            || !TryGetOptionalString(body, "description", out var description)
-            || (title is null && description is null))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetInt32("content_version", out var contentVersion)
+            || !request.TryGetOptionalString("title", out var title)
+            || !request.TryGetOptionalString("description", out var description)
+            || (title is null && description is null)
+            || !request.HasOnly("title", "description", "content_version"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -161,15 +168,18 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(cardId, out var card))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
 
+        var card = BoardRequestBody.ItemId(cardId);
+
         // A DELETE may arrive with no body at all; that is the same incomplete request as one
         // missing content_version, answered only after the membership check.
-        if (!new BoardRequestBody(body ?? default).TryGetInt32("content_version", out var contentVersion))
+        var request = new BoardRequestBody(body ?? default);
+        if (!request.TryGetInt32("content_version", out var contentVersion) || !request.HasOnly("content_version"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -213,31 +223,5 @@ public static partial class BoardEndpoints
         }
 
         await context.WriteBoardProblemAsync(BoardProblems.CardChanged, current.Value);
-    }
-
-    /// <summary>
-    /// An optional string member: absent is <see langword="null"/> and fine; present, it must be a
-    /// string, or the request is the contract's <c>boards.request_invalid</c>.
-    /// </summary>
-    private static bool TryGetOptionalString(JsonElement body, string name, out string? value)
-    {
-        value = null;
-        if (body.ValueKind is not JsonValueKind.Object)
-        {
-            return false;
-        }
-
-        if (!body.TryGetProperty(name, out _))
-        {
-            return true;
-        }
-
-        if (!new BoardRequestBody(body).TryGetString(name, out var present))
-        {
-            return false;
-        }
-
-        value = present;
-        return true;
     }
 }

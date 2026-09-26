@@ -349,7 +349,138 @@ public sealed class CardEndpointTests(ApiFactory factory)
         Assert.Equal(1, stillThere);
     }
 
+    // ---- T23 (review Q1): a lone-surrogate string is an unusable string, not a server error ------------
+
+    [Theory]
+    [InlineData("add", """{"column_id":"{column}","title":"\ud800"}""")]
+    [InlineData("add", """{"column_id":"{column}","title":"Fine","description":"\udc00 trailing"}""")]
+    [InlineData("add", """{"column_id":"\ud800","title":"Fine"}""")]
+    [InlineData("edit", """{"title":"\ud800","content_version":1}""")]
+    [InlineData("edit", """{"description":"lead \udbff","content_version":1}""")]
+    public async Task A_lone_surrogate_in_card_text_is_request_invalid_for_a_member_and_not_available_for_anyone_else(
+        string operation, string template)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that gets broken card text");
+        var columnId = await FirstColumnIdAsync(board.Id);
+        var cardId = await ACardAsync(owner, board.Id, columnId, "Untouched");
+
+        var json = template.Replace("{column}", columnId.ToString(), StringComparison.Ordinal);
+        var (method, url) = operation == "add"
+            ? (HttpMethod.Post, Cards(board.Id))
+            : (HttpMethod.Patch, Card(board.Id, cardId));
+
+        var ownerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(owner), method, url, json);
+        var strangerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(stranger), method, url, json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+        await AssertOnlyCardIsAsync(board.Id, cardId, "Untouched", contentVersion: 1);
+    }
+
+    // ---- T23 (review B6a): a member outside the request schema is request_invalid --------------------
+
+    [Theory]
+    [InlineData("add", """{"column_id":"{column}","title":"Extra","extra":1}""")]
+    [InlineData("edit", """{"title":"Extra","content_version":1,"position":4}""")]
+    [InlineData("delete", """{"content_version":1,"extra":{}}""")]
+    public async Task An_unknown_member_in_a_card_change_is_request_invalid_after_membership_and_changes_nothing(
+        string operation, string template)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board with strict card schemas");
+        var columnId = await FirstColumnIdAsync(board.Id);
+        var cardId = await ACardAsync(owner, board.Id, columnId, "Untouched");
+
+        var json = template.Replace("{column}", columnId.ToString(), StringComparison.Ordinal);
+        var (method, url) = operation switch
+        {
+            "add" => (HttpMethod.Post, Cards(board.Id)),
+            "edit" => (HttpMethod.Patch, Card(board.Id, cardId)),
+            _ => (HttpMethod.Delete, Card(board.Id, cardId)),
+        };
+
+        var ownerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(owner), method, url, json);
+        var strangerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(stranger), method, url, json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+        await AssertOnlyCardIsAsync(board.Id, cardId, "Untouched", contentVersion: 1);
+    }
+
+    // ---- T23 (review B6c): a non-UUID card id is a card that does not exist, after the shape ---------
+
+    [Theory]
+    [InlineData("PATCH")]
+    [InlineData("DELETE")]
+    public async Task A_non_uuid_card_id_with_a_bad_body_is_answered_like_a_missing_card_id_with_a_bad_body(
+        string method)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board asked about cards it lacks");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var notAUuid = await SendJsonTextAsync(
+            client, new HttpMethod(method), $"{Boards}/{board.Id}/cards/not-a-uuid", "{}");
+        var missing = await SendJsonTextAsync(
+            client, new HttpMethod(method), Card(board.Id, Guid.CreateVersion7()), "{}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(missing));
+        await AssertSameRefusalAsync(missing, notAUuid);
+    }
+
     // ---- Helpers --------------------------------------------------------------------------------------
+
+    /// <summary>Sends <paramref name="json"/> exactly as written, byte for byte.</summary>
+    private static Task<HttpResponseMessage> SendJsonTextAsync(
+        HttpClient client, HttpMethod method, string url, string json) =>
+        client.SendAsync(new HttpRequestMessage(method, url)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        });
+
+    private async Task<Guid> ACardAsync(TestAccount owner, Guid boardId, Guid columnId, string title)
+    {
+        var client = await factory.AWritingClientAsync(owner);
+        var added = await client.PostAsJsonAsync(Cards(boardId), new { column_id = columnId, title });
+        Assert.Equal(HttpStatusCode.Created, added.StatusCode);
+        return Guid.Parse((await BodyAsync(added)).GetProperty("id").GetString()!);
+    }
+
+    /// <summary>The board still holds exactly this one card, as it was written.</summary>
+    private async Task AssertOnlyCardIsAsync(Guid boardId, Guid cardId, string title, int contentVersion)
+    {
+        Assert.Equal(1, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [BoardId] = '{boardId}'"));
+        Assert.Equal(title, await factory.ScalarAsync<string>(
+            $"SELECT [Title] FROM [dbo].[Cards] WHERE [Id] = '{cardId}'"));
+        Assert.Equal(contentVersion, await factory.ScalarAsync<int>(
+            $"SELECT [ContentVersion] FROM [dbo].[Cards] WHERE [Id] = '{cardId}'"));
+    }
+
+    /// <summary>Status, content type and every member but <c>instance</c> and <c>traceId</c> agree.</summary>
+    private static async Task AssertSameRefusalAsync(HttpResponseMessage expected, HttpResponseMessage actual)
+    {
+        Assert.Equal(expected.StatusCode, actual.StatusCode);
+        Assert.Equal(
+            expected.Content.Headers.ContentType?.ToString(), actual.Content.Headers.ContentType?.ToString());
+
+        var expectedBody = await BodyAsync(expected);
+        var actualBody = await BodyAsync(actual);
+        foreach (var name in new[] { "type", "title", "status", "detail", "code" })
+        {
+            Assert.Equal(
+                expectedBody.TryGetProperty(name, out var a) ? a.ToString() : null,
+                actualBody.TryGetProperty(name, out var b) ? b.ToString() : null);
+        }
+    }
 
     private async Task<Guid> FirstColumnIdAsync(Guid boardId) =>
         await factory.ScalarAsync<Guid>(

@@ -364,7 +364,123 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
     }
 
+    // ---- T23 (review Q1): a lone-surrogate string is an unusable string, not a server error ----------
+
+    [Fact]
+    public async Task Creating_a_board_whose_name_is_a_lone_surrogate_is_refused_as_request_invalid()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await SendJsonTextAsync(client, HttpMethod.Post, Boards, """{"name":"\ud800"}""");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(response));
+    }
+
+    [Theory]
+    [InlineData("PATCH", """{"name":"\ud800"}""")]
+    [InlineData("DELETE", """{"confirm_name":"\udc00"}""")]
+    public async Task A_lone_surrogate_in_a_board_change_is_request_invalid_for_a_member_and_not_available_for_anyone_else(
+        string method, string json)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that gets a broken string");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillNamed = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(board.Name, (await BodyAsync(stillNamed)).GetProperty("name").GetString());
+    }
+
+    // ---- T23 (review B6a): a member outside the request schema is request_invalid --------------------
+
+    [Fact]
+    public async Task Creating_a_board_with_an_unknown_member_is_refused_and_creates_nothing()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await SendJsonTextAsync(
+            client, HttpMethod.Post, Boards, """{"name":"A board with extras","extra":1}""");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(response));
+
+        var owned = await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[BoardMemberships] WHERE [AccountId] = '{owner.Id}'");
+        Assert.Equal(0, owned);
+    }
+
+    [Theory]
+    [InlineData("PATCH", """{"name":"Renamed with extras","extra":1}""")]
+    [InlineData("DELETE", """{"confirm_name":"A board with a strict schema","extra":true}""")]
+    public async Task An_unknown_member_in_a_board_change_is_request_invalid_after_membership_and_changes_nothing(
+        string method, string json)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board with a strict schema");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillThere = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+        Assert.Equal(board.Name, (await BodyAsync(stillThere)).GetProperty("name").GetString());
+    }
+
+    // ---- T23 (review Q4d): deleteBoard with no body is judged after membership, like the others ------
+
+    [Fact]
+    public async Task Deleting_a_board_with_no_body_is_request_invalid_after_membership_but_not_available_before_it()
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board for a bodiless delete");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), HttpMethod.Delete, $"{Boards}/{board.Id}", json: null);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), HttpMethod.Delete, $"{Boards}/{board.Id}", json: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillThere = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Sends <paramref name="json"/> exactly as written — a lone-surrogate escape or an extra member
+    /// cannot be produced by serialising an anonymous object — or no body at all when it is null.
+    /// </summary>
+    private static Task<HttpResponseMessage> SendJsonTextAsync(
+        HttpClient client, HttpMethod method, string url, string? json) =>
+        client.SendAsync(new HttpRequestMessage(method, url)
+        {
+            Content = json is null ? null : new StringContent(json, Encoding.UTF8, "application/json"),
+        });
 
     private static Task<HttpResponseMessage> PatchNotJsonAsync(HttpClient client, Guid boardId) =>
         client.PatchAsync(

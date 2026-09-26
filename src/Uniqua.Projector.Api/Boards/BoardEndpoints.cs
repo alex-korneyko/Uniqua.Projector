@@ -102,7 +102,8 @@ public static partial class BoardEndpoints
         }
 
         // No board is named yet, so there is no membership to establish before judging the shape.
-        if (!new BoardRequestBody(body).TryGetString("name", out var name))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetString("name", out var name) || !request.HasOnly("name"))
         {
             await context.WriteBoardProblemAsync(BoardProblems.RequestInvalid);
             return;
@@ -167,7 +168,8 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!new BoardRequestBody(body).TryGetString("name", out var name))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetString("name", out var name) || !request.HasOnly("name"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -190,7 +192,7 @@ public static partial class BoardEndpoints
         DeleteBoard delete,
         OpenBoard open,
         string boardId,
-        [FromBody] JsonElement body,
+        [FromBody] JsonElement? body,
         CancellationToken cancellationToken)
     {
         if (RecognisedSession.AccountId(context.User) is not { } accountId)
@@ -207,7 +209,11 @@ public static partial class BoardEndpoints
 
         // The confirmation travels in the body only; a confirm_name in the query string is never
         // read, since URLs reach proxy access logs and board names are never logged (sad.md §8).
-        if (!new BoardRequestBody(body).TryGetString("confirm_name", out var typedName))
+        // A DELETE may arrive with no body at all; that is the same incomplete request as one
+        // missing confirm_name, answered only after the membership check, as deleteColumn and
+        // deleteCard answer it (review Q4d).
+        var request = new BoardRequestBody(body ?? default);
+        if (!request.TryGetString("confirm_name", out var typedName) || !request.HasOnly("confirm_name"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
