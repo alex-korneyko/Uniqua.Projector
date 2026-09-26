@@ -26,10 +26,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import type { KeptTextField } from '@/features/boards/KeptTextNotice'
 import { PlainText } from '@/features/boards/PlainText'
 import { describeBoardRefusal } from '@/features/boards/boardRefusals'
+import type { KeptDraft } from '@/features/boards/draftStore'
 import { useBoardChange, type BoardChangeResolution } from '@/features/boards/useBoardChange'
+
+/** The item a kept card edit is filed under in `draftStore`, offered back by SCR-04. */
+export const editCardItem = 'edit_card'
 
 export interface CardDetailDialogProps {
   boardId: string
@@ -39,10 +42,15 @@ export interface CardDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   /**
-   * SCR-05 gone (read or save) when the board still answers: the line to show once this dialog has
-   * closed, and — after a refused save — what was typed, so it is not lost (AC-18b).
+   * SCR-05 gone (read) or SCR-06 gone (delete) when the board still answers: the line to show once
+   * this dialog has closed. Nothing was typed into either, so there is no text to keep.
    */
-  onCardGone: (message: string, kept?: KeptTextField[]) => void
+  onCardGone: (message: string) => void
+  /**
+   * Every refusal of a save, with what was typed, for the screen to act on: kept across a sign-in
+   * (AC-28), or shown with «That card no longer exists.» once this dialog has closed (AC-18b).
+   */
+  onRefused: (error: unknown, kept: KeptDraft) => void
 }
 
 type Step = 'reading' | 'editing' | 'confirming'
@@ -66,6 +74,7 @@ export function CardDetailDialog({
   open,
   onOpenChange,
   onCardGone,
+  onRefused,
 }: CardDetailDialogProps) {
   const queryClient = useQueryClient()
 
@@ -98,9 +107,14 @@ export function CardDetailDialog({
   const edit = useBoardChange<EditCardRequest, Card>({
     boardId,
     mutationFn: async (body) => {
-      const saved = await editCard(boardId, cardId, body)
-      setStep('reading')
-      return saved
+      try {
+        const saved = await editCard(boardId, cardId, body)
+        setStep('reading')
+        return saved
+      } catch (error) {
+        onRefused(error, keptEdit(boardId, cardId, body))
+        throw error
+      }
     },
     applyAccepted: (board, saved) => patchBoard(board, { kind: 'card-edited', card: saved }),
     acceptedCard: (saved) => saved,
@@ -127,10 +141,8 @@ export function CardDetailDialog({
     },
   })
 
-  useReportGone(edit.error, edit.resolvedAs, () => {
-    onOpenChange(false)
-    onCardGone(cardGoneText, keptFields(title, description))
-  })
+  // The screen shows the gone notice with the typed text, from the refusal handed to `onRefused`.
+  useReportGone(edit.error, edit.resolvedAs, () => onOpenChange(false))
   useReportGone(remove.error, remove.resolvedAs, () => {
     onOpenChange(false)
     onCardGone(cardGoneText)
@@ -430,10 +442,15 @@ async function boardStillAnswers(queryClient: QueryClient, boardId: string): Pro
   }
 }
 
-function keptFields(title: string, description: string): KeptTextField[] {
-  const fields: KeptTextField[] = [{ label: 'Card title', value: title }]
-  if (description.length > 0) {
-    fields.push({ label: 'Description', value: description })
+function keptEdit(boardId: string, cardId: string, body: EditCardRequest): KeptDraft {
+  return {
+    boardId,
+    item: editCardItem,
+    fields: {
+      card_id: cardId,
+      title: body.title ?? '',
+      description: body.description ?? '',
+      content_version: String(body.content_version),
+    },
   }
-  return fields
 }

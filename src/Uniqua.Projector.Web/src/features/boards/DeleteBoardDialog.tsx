@@ -25,12 +25,20 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { PlainText } from '@/features/boards/PlainText'
 import { describeBoardRefusal } from '@/features/boards/boardRefusals'
+import type { KeptDraft } from '@/features/boards/draftStore'
 import { useBoardChange } from '@/features/boards/useBoardChange'
+
+/** The item a kept board deletion is filed under in `draftStore`, offered back by SCR-04. */
+export const deleteBoardItem = 'delete_board'
 
 export interface DeleteBoardDialogProps {
   board: Board
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** The name to start with: what was typed before a sign-in, when «Apply again» reopens this (AC-28). */
+  initialConfirmName?: string
+  /** Every refusal, with the typed name, for the screen to act on (kept text across a sign-in). */
+  onRefused: (error: unknown, kept: KeptDraft) => void
 }
 
 const ownerOnly = 'boards.owner_only'
@@ -42,10 +50,16 @@ const ownerOnly = 'boards.owner_only'
  * `useBoardChange`) and keeps the typed text; an accepted deletion leaves for SCR-02 with the board
  * gone from the list cache and its own query dropped.
  */
-export function DeleteBoardDialog({ board, open, onOpenChange }: DeleteBoardDialogProps) {
+export function DeleteBoardDialog({
+  board,
+  open,
+  onOpenChange,
+  initialConfirmName = '',
+  onRefused,
+}: DeleteBoardDialogProps) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [confirmName, setConfirmName] = useState('')
+  const [confirmName, setConfirmName] = useState(initialConfirmName)
 
   const remove = useBoardChange<DeleteBoardRequest, void>({
     boardId: board.id,
@@ -53,6 +67,11 @@ export function DeleteBoardDialog({ board, open, onOpenChange }: DeleteBoardDial
       try {
         await deleteBoard(board.id, body)
       } catch (error) {
+        onRefused(error, {
+          boardId: board.id,
+          item: deleteBoardItem,
+          fields: { confirm_name: body.confirm_name },
+        })
         if (error instanceof ApiError && error.status === 404) {
           // Already gone: SCR-08 takes over from the board query once it is read again.
           onOpenChange(false)

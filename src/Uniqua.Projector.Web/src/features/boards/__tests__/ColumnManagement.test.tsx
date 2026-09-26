@@ -347,8 +347,14 @@ describe('Column rename', () => {
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
 
     await waitFor(() => expect(onRefused).toHaveBeenCalled())
-    const [, kept] = onRefused.mock.calls[0] as [unknown, KeptDraft]
-    expect(kept.fields.name).toBe('Orphaned name')
+    const [error, kept] = onRefused.mock.calls[0] as [unknown, KeptDraft]
+    expect(error).toMatchObject({ status: 404, code: 'boards.not_available' })
+    // Everything SCR-04 needs to tell the column is gone (AC-18b) or to apply the name again (AC-28).
+    expect(kept).toEqual({
+      boardId,
+      item: 'rename_column',
+      fields: { column_id: columnA.id, name: 'Orphaned name', name_version: String(columnA.name_version) },
+    })
   })
 
   it('success: shows the new name and closes the editor', async () => {

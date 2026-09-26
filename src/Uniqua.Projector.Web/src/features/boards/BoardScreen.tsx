@@ -1,26 +1,32 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useParams } from 'react-router'
 
 import { ApiError } from '@/api/accounts'
 import {
   addCard,
+  addColumn,
   boardQueryKey,
   boardsQueryKey,
+  cardQueryKey,
+  editCard,
   openBoard,
   patchBoard,
   renameBoard,
+  renameColumn,
   type Board,
   type BoardChange,
 } from '@/api/boards'
 import { Button } from '@/components/ui/button'
 import { useSession } from '@/features/auth/useSession'
 import { addCardItem } from '@/features/boards/AddCardForm'
+import { addColumnItem } from '@/features/boards/AddColumnForm'
 import { BoardHeader, renameBoardItem } from '@/features/boards/BoardHeader'
 import { BoardNotAvailable } from '@/features/boards/BoardNotAvailable'
-import { CardDetailDialog } from '@/features/boards/CardDetailDialog'
+import { CardDetailDialog, editCardItem } from '@/features/boards/CardDetailDialog'
+import { renameColumnItem } from '@/features/boards/ColumnHeader'
 import { ColumnRow } from '@/features/boards/ColumnRow'
-import { DeleteBoardDialog } from '@/features/boards/DeleteBoardDialog'
+import { DeleteBoardDialog, deleteBoardItem } from '@/features/boards/DeleteBoardDialog'
 import { KeptTextNotice, type KeptTextField } from '@/features/boards/KeptTextNotice'
 import { describeBoardRefusal, type GoneItem } from '@/features/boards/boardRefusals'
 import { keep, takeFor, type KeptDraft } from '@/features/boards/draftStore'
@@ -52,12 +58,6 @@ interface GoneText {
   kept: KeptDraft
 }
 
-/** A card that went while its dialog was open (AC-18b), with anything typed into it. */
-interface GoneCard {
-  heading: string
-  fields: KeptTextField[]
-}
-
 interface BoardViewProps {
   boardId: string
   accountId: string
@@ -75,9 +75,11 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
 
   const [offer, setOffer] = useState(() => peekKeptDraft(accountId, boardId))
   const [gone, setGone] = useState<GoneText | undefined>(undefined)
-  const [goneCard, setGoneCard] = useState<GoneCard | undefined>(undefined)
+  // A card that went while its dialog was only being read or deleted: nothing typed to keep.
+  const [goneCard, setGoneCard] = useState<string | undefined>(undefined)
   const [openCardId, setOpenCardId] = useState<string | undefined>(undefined)
-  const [deletingBoard, setDeletingBoard] = useState(false)
+  // The board deletion dialog, open with the name to start from (kept across a sign-in, or empty).
+  const [deletingBoard, setDeletingBoard] = useState<string | undefined>(undefined)
 
   /**
    * Every change on this screen reports its refusals here with what was typed, because the control
@@ -107,9 +109,7 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
     boardId,
     mutationFn: async (kept) => {
       try {
-        return await submitKept(boardId, kept, () => {
-          void queryClient.invalidateQueries({ queryKey: boardsQueryKey })
-        })
+        return await submitKept(queryClient, boardId, kept)
       } catch (error) {
         onRefused(error, kept)
         throw error
@@ -145,7 +145,13 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
   const applyOffer = () => {
     const kept = takeFor(accountId)
     setOffer(undefined)
-    if (kept !== undefined) {
+    if (kept === undefined) {
+      return
+    }
+    if (kept.item === deleteBoardItem) {
+      // A deletion is never applied by «Apply again»: it only reopens its dialog, filled in.
+      setDeletingBoard(kept.fields.confirm_name ?? '')
+    } else {
       resubmit.change(kept)
     }
   }
@@ -166,7 +172,7 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
       <BoardHeader
         board={board.data}
         onRefused={onRefused}
-        onDeleteBoard={() => setDeletingBoard(true)}
+        onDeleteBoard={() => setDeletingBoard('')}
       />
 
       <div className="flex flex-col gap-2 empty:hidden">
@@ -186,11 +192,7 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
           />
         )}
         {goneCard !== undefined && (
-          <KeptTextNotice
-            heading={goneCard.heading}
-            fields={goneCard.fields}
-            onDismiss={() => setGoneCard(undefined)}
-          />
+          <KeptTextNotice heading={goneCard} fields={[]} onDismiss={() => setGoneCard(undefined)} />
         )}
         {resubmitRefusal !== undefined && (
           <p role="alert" className="text-destructive text-sm">
@@ -213,13 +215,24 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
               setOpenCardId(undefined)
             }
           }}
-          onCardGone={(heading, fields = []) => setGoneCard({ heading, fields })}
+          onCardGone={setGoneCard}
+          onRefused={onRefused}
         />
       )}
 
       {/* Offered only to the owner: a re-read that says otherwise closes it (AC-22). */}
-      {deletingBoard && board.data.is_owner && (
-        <DeleteBoardDialog board={board.data} open onOpenChange={setDeletingBoard} />
+      {deletingBoard !== undefined && board.data.is_owner && (
+        <DeleteBoardDialog
+          board={board.data}
+          open
+          initialConfirmName={deletingBoard}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDeletingBoard(undefined)
+            }
+          }}
+          onRefused={onRefused}
+        />
       )}
     </main>
   )
@@ -227,14 +240,25 @@ function BoardView({ boardId, accountId }: BoardViewProps) {
 
 // ---- kept text ------------------------------------------------------------------------------------
 
-/** The kept items this screen can offer back, and which of them names a column or card that can go. */
-const offeredItems: ReadonlyMap<string, GoneItem | undefined> = new Map([
+/** Every change that carries typed text, so every one this screen can offer back (AC-28). */
+const offeredItems: ReadonlySet<string> = new Set([
+  addCardItem,
+  renameBoardItem,
+  addColumnItem,
+  renameColumnItem,
+  editCardItem,
+  deleteBoardItem,
+])
+
+/** The kept changes that name a column or card that can go meanwhile, and which of the two (AC-18b). */
+const goneItems: ReadonlyMap<string, GoneItem> = new Map([
   [addCardItem, 'column'],
-  [renameBoardItem, undefined],
+  [renameColumnItem, 'column'],
+  [editCardItem, 'card'],
 ])
 
 function goneItemOf(item: string): GoneItem | undefined {
-  return offeredItems.get(item)
+  return goneItems.get(item)
 }
 
 /**
@@ -252,48 +276,112 @@ function peekKeptDraft(accountId: string, boardId: string): KeptDraft | undefine
   return draft.boardId === boardId && offeredItems.has(draft.item) ? draft : undefined
 }
 
-/** Kept text resubmitted as an ordinary change, so it can be refused like any other. */
+/**
+ * Kept text resubmitted as an ordinary change, so it can be refused like any other. A column rename
+ * and a card edit go against the version the board has now — read afresh, since nothing reached
+ * this tab while it was signed out — because the member has just chosen to apply this text. The
+ * version typed against is sent only for a column or card no longer on the board, which the server
+ * then refuses as gone (AC-18b).
+ */
 async function submitKept(
+  queryClient: QueryClient,
   boardId: string,
   kept: KeptDraft,
-  onBoardRenamed: () => void,
 ): Promise<BoardChange> {
   const { fields } = kept
 
-  if (kept.item === addCardItem) {
-    const card = await addCard(boardId, {
-      column_id: fields.column_id ?? '',
-      title: fields.title ?? '',
-      description: fields.description ? fields.description : undefined,
-    })
-    return { kind: 'card-added', card }
-  }
+  switch (kept.item) {
+    case addCardItem: {
+      const card = await addCard(boardId, {
+        column_id: fields.column_id ?? '',
+        title: fields.title ?? '',
+        description: fields.description ? fields.description : undefined,
+      })
+      return { kind: 'card-added', card }
+    }
 
-  const renamed = await renameBoard(boardId, { name: fields.name ?? '' })
-  onBoardRenamed()
-  return { kind: 'board-renamed', board: renamed }
+    case addColumnItem: {
+      const added = await addColumn(boardId, { name: fields.name ?? '' })
+      return { kind: 'column-added', added }
+    }
+
+    case renameColumnItem: {
+      const columnId = fields.column_id ?? ''
+      const board = await readBoardNow(queryClient, boardId)
+      const current = board.columns.find((column) => column.id === columnId)
+      const column = await renameColumn(boardId, columnId, {
+        name: fields.name ?? '',
+        name_version: current?.name_version ?? Number(fields.name_version),
+      })
+      return { kind: 'column-renamed', column }
+    }
+
+    case editCardItem: {
+      const cardId = fields.card_id ?? ''
+      const board = await readBoardNow(queryClient, boardId)
+      const current = board.cards.find((card) => card.id === cardId)
+      const card = await editCard(boardId, cardId, {
+        title: fields.title ?? '',
+        description: fields.description ?? '',
+        content_version: current?.content_version ?? Number(fields.content_version),
+      })
+      queryClient.setQueryData(cardQueryKey(boardId, card.id), card)
+      return { kind: 'card-edited', card }
+    }
+
+    default: {
+      const renamed = await renameBoard(boardId, { name: fields.name ?? '' })
+      void queryClient.invalidateQueries({ queryKey: boardsQueryKey })
+      return { kind: 'board-renamed', board: renamed }
+    }
+  }
+}
+
+/** The board as the server has it now, written to the cache as any read of it is. */
+function readBoardNow(queryClient: QueryClient, boardId: string): Promise<Board> {
+  return queryClient.fetchQuery({
+    queryKey: boardQueryKey(boardId),
+    queryFn: () => openBoard(boardId),
+    staleTime: 0,
+    retry: false,
+  })
 }
 
 function fieldsOf(kept: KeptDraft): KeptTextField[] {
   const { fields } = kept
 
-  if (kept.item === addCardItem) {
-    const shown: KeptTextField[] = [{ label: 'Card title', value: fields.title ?? '' }]
-    if (fields.description) {
-      shown.push({ label: 'Description', value: fields.description })
+  switch (kept.item) {
+    case addCardItem:
+    case editCardItem: {
+      const shown: KeptTextField[] = [{ label: 'Card title', value: fields.title ?? '' }]
+      if (fields.description) {
+        shown.push({ label: 'Description', value: fields.description })
+      }
+      return shown
     }
-    return shown
-  }
 
-  return [{ label: 'Board name', value: fields.name ?? '' }]
+    case addColumnItem:
+    case renameColumnItem:
+      return [{ label: 'Column name', value: fields.name ?? '' }]
+
+    case deleteBoardItem:
+      return [{ label: 'Name typed to delete the board', value: fields.confirm_name ?? '' }]
+
+    default:
+      return [{ label: 'Board name', value: fields.name ?? '' }]
+  }
 }
 
 /** Whether the column or card a kept change named is no longer on the board as last read. */
 function targetIsGone(board: Board, kept: KeptDraft): boolean {
-  if (kept.item === addCardItem) {
-    return !board.columns.some((column) => column.id === kept.fields.column_id)
+  switch (goneItemOf(kept.item)) {
+    case 'column':
+      return !board.columns.some((column) => column.id === kept.fields.column_id)
+    case 'card':
+      return !board.cards.some((card) => card.id === kept.fields.card_id)
+    default:
+      return false
   }
-  return false
 }
 
 // ---- refusals of the read ------------------------------------------------------------------------
