@@ -30,7 +30,7 @@
 | T23 | Harden the board request binding: lone surrogates, unknown fields, unparsable item ids and empty delete bodies | ports | Alex Korneiko | S | — | done |
 | T24 | Keep board content out of domain refusal details | domain | Alex Korneiko | S | — | done |
 | T25 | Retry a delete that loses to a card insert, read only what a refusal needs, and return the stored board name | infra | Alex Korneiko | M | T23, T24 | done |
-| T26 | Make the simultaneous-change race suite able to fail, and add the add-card / delete-same-column pair | tests | Alex Korneiko | M | T25 | todo |
+| T26 | Make the simultaneous-change race suite able to fail, and add the add-card / delete-same-column pair | tests | Alex Korneiko | M | T25 | done |
 | T27 | Record the latency baseline only on a passing run and compare against the last recorded run | tests | Alex Korneiko | S | — | todo |
 | T28 | Close the integration coverage the test plan claims: AC-17 refusal counting and the missing rows | tests | Alex Korneiko | L | T23, T25 | todo |
 | T29 | Keep typed text across a session end for every change kind, and keep a rename whose column was deleted | ui | Alex Korneiko | M | — | todo |

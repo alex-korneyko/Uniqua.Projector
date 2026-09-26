@@ -71,7 +71,11 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner.Id, name, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(AddAsync("Racer A"), AddAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => AddAsync("Racer A"), () => AddAsync("Racer B"));
+        Assert.True(race.Collided, "the two adds never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var refusal = results.Single(r => !r.IsSuccess);
@@ -235,7 +239,11 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner.Id, columnId, 1, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(DeleteAsync(firstId), DeleteAsync(lastId));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => DeleteAsync(firstId), () => DeleteAsync(lastId));
+        Assert.True(race.Collided, "the two deletes never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var refusal = results.Single(r => !r.IsSuccess);
@@ -260,7 +268,11 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner.Id, columnId, name, 1, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(RenameAsync("Racer A"), RenameAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => RenameAsync("Racer A"), () => RenameAsync("Racer B"));
+        Assert.True(race.Collided, "the two renames never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var winnerName = await factory.ScalarAsync<string>(

@@ -71,10 +71,8 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
     public async Task Two_creations_at_forty_nine_owned_boards_forced_to_collide_let_exactly_one_succeed()
     {
         // Edge case table: "Two creations at 49 owned boards, forced to collide" -> exactly one
-        // succeeds, the other OwnedBoardLimitReached after the retry re-decides. Real concurrent
-        // writers against the same OwnedBoardCounters row force the collision (as
-        // RegisterAccountTests' concurrent-duplicate-address test does for accounts), rather than
-        // asserting on timing.
+        // succeeds, the other OwnedBoardLimitReached after the retry re-decides. The collision is
+        // forced by ContentionForcer.RaceAsync rather than hoped for from timing.
         var owner = await factory.AnAccountAsync();
         await SetOwnedBoardCountAsync(owner.Id, OwnedBoardCounter.MaxOwnedBoards - 1);
 
@@ -85,7 +83,11 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(owner.Id, name, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(CreateAsync("Racer A"), CreateAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => CreateAsync("Racer A"), () => CreateAsync("Racer B"));
+        Assert.True(race.Collided, "the two creations never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var refusal = results.Single(r => !r.IsSuccess);

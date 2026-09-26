@@ -55,7 +55,11 @@ public sealed class CardUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner.Id, columnId, title, null, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(AddAsync("Racer A"), AddAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => AddAsync("Racer A"), () => AddAsync("Racer B"));
+        Assert.True(race.Collided, "the two adds never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var refusal = results.Single(r => !r.IsSuccess);
@@ -102,7 +106,11 @@ public sealed class CardUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner.Id, cardId, title, null, seenContentVersion: 1, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(EditAsync("Racer A"), EditAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => EditAsync("Racer A"), () => EditAsync("Racer B"));
+        Assert.True(race.Collided, "the two edits never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var winnerTitle = await factory.ScalarAsync<string>(
