@@ -18,13 +18,22 @@ namespace Uniqua.Projector.Api.IntegrationTests.Quality;
 /// <para>
 /// <strong>This is a regression check, not the measurement</strong>, exactly as
 /// <see cref="LatencyBudgetTests"/> already is for the accounts-and-sessions figures: the real
-/// figures are the reference-machine smoke run's (sad.md §10). CI compares this run's p95/p95/rate
-/// against the last recorded run and fails only on a p95 more than <see cref="RegressionTolerance"/>
-/// slower (or, for throughput, that much lower) — set <see cref="ReferenceMachineFlag"/> to assert
-/// the absolute spec §6 figures instead, on the machine those figures are actually measured on.
+/// figures are the reference-machine smoke run's (sad.md §10). It also times from the client, round
+/// trip through the in-process test server, whereas spec §6 budgets server-side time (review Q6):
+/// the figures are comparable run to run, not with the §6 budgets. CI compares this run's
+/// p95/p95/rate against the last recorded run (spec §8, fourth question) and fails on a p95 more
+/// than <see cref="RegressionTolerance"/> slower (or, for throughput, that much lower) — set
+/// <see cref="ReferenceMachineFlag"/> to assert the absolute spec §6 figures instead, on the
+/// machine those figures are actually measured on.
 /// </para>
 /// <para>
-/// No recorded baseline yet is not a failure (edge case table): the run records one and passes.
+/// The last recorded run is <c>Quality/.baselines/board-latency-budget.json</c>, a deliberately
+/// committed artefact (review Q3). An ordinary run only reads it. To refresh it, run this test with
+/// <see cref="RecordFlag"/> set (<c>BOARD_LATENCY_RECORD=1</c>) on the machine CI's figures should be
+/// held to, and commit the file: the new figures are written only once every assertion above has
+/// passed, so a failing run can never lower its own bar, and they replace the old ones outright
+/// rather than ratcheting. No recorded baseline yet is not a failure (edge case table): the run
+/// passes, and records one only when asked to.
 /// </para>
 /// </remarks>
 [Collection(DatabaseCollection.Name)]
@@ -47,12 +56,22 @@ public sealed class BoardLatencyBudgetTests(ApiFactory factory)
     private const int WorkloadSeconds = 60;
 
     /// <summary>
-    /// The per-account limit is 120 changes/minute (2/s). Each cycle below spends 8 changes, so
-    /// pacing a cycle to take at least this long keeps every account safely under the ceiling
-    /// instead of exactly on it — an account tripping <c>boards.change_rate_limited</c> mid-run
-    /// means the workload itself is miscalibrated (edge case table), not a real measurement.
+    /// Each cycle below spends 8 changes and is paced to take at least this long: 1.8 changes/s per
+    /// account, a real-time rate under the 2/s the per-account limit (120/minute) allows.
     /// </summary>
+    /// <remarks>
+    /// The pacing is not what keeps an account under the limit during this test: the limiter reads
+    /// the frozen <see cref="TestClock"/>, so no attempt ever leaves its minute and every attempt of
+    /// the whole run counts against one window (review Q3). What keeps the run clear is the total —
+    /// at most ⌈60 s / period⌉ = 14 cycles × 8 changes, plus <see cref="SetupChangesPerAccount"/>,
+    /// = 114 attempts — and the test asserts that bound rather than assuming it. An account tripping
+    /// <c>boards.change_rate_limited</c> mid-run means the workload itself is miscalibrated (edge
+    /// case table), not a real measurement.
+    /// </remarks>
     private static readonly TimeSpan MinCyclePeriod = TimeSpan.FromSeconds(8 / 1.8);
+
+    /// <summary>The two board creations <see cref="SeedAccountAsync"/> makes for each account.</summary>
+    private const int SetupChangesPerAccount = 2;
 
     // ---- §6 budgets ----------------------------------------------------------------------------
 
@@ -65,6 +84,9 @@ public sealed class BoardLatencyBudgetTests(ApiFactory factory)
 
     /// <summary>Set to run the absolute §6 assertions, on the machine those figures are measured on.</summary>
     private const string ReferenceMachineFlag = "UNIQUA_REFERENCE_MACHINE";
+
+    /// <summary>Set (to <c>1</c>) to write a passing run's figures as the new recorded baseline.</summary>
+    private const string RecordFlag = "BOARD_LATENCY_RECORD";
 
     private static readonly string BaselinePath = BaselineFilePath();
 
@@ -106,6 +128,14 @@ public sealed class BoardLatencyBudgetTests(ApiFactory factory)
         var changeCount = perAccountCounts.Sum();
         var changesPerSecond = changeCount / workload.Elapsed.TotalSeconds;
 
+        // Under the frozen clock every attempt of the run shares one rate-limit window: the bound
+        // the workload relies on, asserted (see MinCyclePeriod).
+        var mostAttempts = perAccountCounts.Max() + SetupChangesPerAccount;
+        Assert.True(
+            mostAttempts <= Api.Boards.BoardChangeRateLimit.PermittedPerWindow,
+            $"an account made {mostAttempts} change attempts in one frozen-clock window, over the "
+            + $"{Api.Boards.BoardChangeRateLimit.PermittedPerWindow} the limit admits — the workload is miscalibrated.");
+
         // ---- assert -------------------------------------------------------------------------------
 
         var p95Open = Percentile95(openSamples);
@@ -130,7 +160,112 @@ public sealed class BoardLatencyBudgetTests(ApiFactory factory)
                 + $"{ThroughputFloorPerSecond:F0}/s on the reference machine.");
         }
 
-        AssertAgainstBaselineOrRecord(p95Open, p95Change, changesPerSecond);
+        AssertAgainstBaselineOrRecord(
+            BaselinePath,
+            new BoardLatencyBaseline(p95Open, p95Change, changesPerSecond),
+            record: Environment.GetEnvironmentVariable(RecordFlag) is "1" or "true");
+    }
+
+    // ---- T27 (review Q3): the baseline is the last recorded run — compared with, never loosened -----
+
+    private static readonly BoardLatencyBaseline Recorded = new(OpenP95Ms: 100, ChangeP95Ms: 100, ChangesPerSecond: 50);
+
+    [Theory]
+    [InlineData(126, 90, 55)]
+    [InlineData(90, 126, 55)]
+    [InlineData(90, 90, 39)]
+    public void A_regressed_run_fails_and_leaves_the_recorded_baseline_unchanged(
+        double openP95, double changeP95, double changesPerSecond)
+    {
+        var path = AScratchBaseline(Recorded);
+        try
+        {
+            var before = File.ReadAllText(path);
+
+            // Even a run asked to record must not lower its own bar by failing.
+            Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => AssertAgainstBaselineOrRecord(
+                path, new BoardLatencyBaseline(openP95, changeP95, changesPerSecond), record: true));
+
+            Assert.Equal(before, File.ReadAllText(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_passing_ordinary_run_does_not_rewrite_the_committed_baseline()
+    {
+        var path = AScratchBaseline(Recorded);
+        try
+        {
+            var before = File.ReadAllText(path);
+
+            // Slower than recorded, but inside the 25% tolerance: a pass, and nothing written.
+            AssertAgainstBaselineOrRecord(path, new BoardLatencyBaseline(120, 120, 42), record: false);
+
+            Assert.Equal(before, File.ReadAllText(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_passing_run_asked_to_record_writes_its_own_figures_not_a_ratchet_of_old_and_new()
+    {
+        var path = AScratchBaseline(Recorded);
+        try
+        {
+            var current = new BoardLatencyBaseline(OpenP95Ms: 110, ChangeP95Ms: 80, ChangesPerSecond: 60);
+
+            AssertAgainstBaselineOrRecord(path, current, record: true);
+
+            Assert.Equal(current, ReadBaseline(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void With_no_baseline_yet_a_run_passes_and_only_a_recording_run_writes_one(bool record)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"board-latency-{Guid.NewGuid():N}.json");
+        try
+        {
+            var current = new BoardLatencyBaseline(OpenP95Ms: 110, ChangeP95Ms: 80, ChangesPerSecond: 60);
+
+            AssertAgainstBaselineOrRecord(path, current, record);
+
+            Assert.Equal(record, File.Exists(path));
+            if (record)
+            {
+                Assert.Equal(current, ReadBaseline(path));
+            }
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void The_committed_baseline_is_there_for_ci_to_compare_against()
+    {
+        Assert.NotNull(ReadBaseline(BaselinePath));
+    }
+
+    private static string AScratchBaseline(BoardLatencyBaseline baseline)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"board-latency-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(baseline));
+        return path;
     }
 
     // ---- workload: one account's 60 s of the eight change kinds, in a fixed round-robin order that
@@ -384,64 +519,53 @@ public sealed class BoardLatencyBudgetTests(ApiFactory factory)
 
     // ---- CI regression check: 25% tolerance against the last recorded run (sad.md §10 QG-3) --------
 
-    private void AssertAgainstBaselineOrRecord(double p95Open, double p95Change, double changesPerSecond)
+    /// <summary>
+    /// Compares <paramref name="current"/> with the last recorded run at
+    /// <paramref name="baselinePath"/>, if there is one, and only then — every assertion having
+    /// passed — writes <paramref name="current"/> as the new record, and only when
+    /// <paramref name="record"/> asks for it (review Q3).
+    /// </summary>
+    private static void AssertAgainstBaselineOrRecord(string baselinePath, BoardLatencyBaseline current, bool record)
     {
-        var current = new BoardLatencyBaseline(p95Open, p95Change, changesPerSecond);
-        var previous = ReadBaseline();
+        var (p95Open, p95Change, changesPerSecond) = current;
 
-        if (previous is null)
+        if (ReadBaseline(baselinePath) is { } previous)
         {
-            // Edge case table: no recorded baseline yet — the run records one and passes.
-            WriteBaseline(current);
-            return;
+            Assert.False(
+                p95Open > previous.OpenP95Ms * RegressionTolerance,
+                $"p95 to open a full board was {p95Open:F0} ms, more than {RegressionTolerance}x the last "
+                + $"recorded {previous.OpenP95Ms:F0} ms.");
+            Assert.False(
+                p95Change > previous.ChangeP95Ms * RegressionTolerance,
+                $"p95 for a single change was {p95Change:F0} ms, more than {RegressionTolerance}x the last "
+                + $"recorded {previous.ChangeP95Ms:F0} ms.");
+            Assert.False(
+                changesPerSecond < previous.ChangesPerSecond / RegressionTolerance,
+                $"throughput was {changesPerSecond:F1} changes/s, more than {RegressionTolerance}x slower "
+                + $"than the last recorded {previous.ChangesPerSecond:F1} changes/s.");
         }
 
-        // Ratchet the recorded baseline in the safe direction only — never let a run that merely
-        // got lucky (a faster open, a faster change, a higher throughput) tighten what the next
-        // run is held to. A shared machine's open p95 has been observed from 85 to 119 ms across
-        // five runs with no code change (test-author review, defect report); overwriting the
-        // baseline with whichever figure a run happened to produce meant a normal fast run set a
-        // limit the very next normal run failed. Written before the assertions below, and
-        // unconditionally, so a baseline that started too tight self-corrects on the next run
-        // instead of failing every run after it forever.
-        WriteBaseline(new BoardLatencyBaseline(
-            OpenP95Ms: Math.Max(previous.OpenP95Ms, current.OpenP95Ms),
-            ChangeP95Ms: Math.Max(previous.ChangeP95Ms, current.ChangeP95Ms),
-            ChangesPerSecond: Math.Min(previous.ChangesPerSecond, current.ChangesPerSecond)));
-
-        var openFloorExceeded = p95Open > previous.OpenP95Ms * RegressionTolerance;
-        var changeFloorExceeded = p95Change > previous.ChangeP95Ms * RegressionTolerance;
-        var throughputFloorExceeded = changesPerSecond < previous.ChangesPerSecond / RegressionTolerance;
-
-        Assert.False(
-            openFloorExceeded,
-            $"p95 to open a full board was {p95Open:F0} ms, more than {RegressionTolerance}x the last "
-            + $"recorded {previous.OpenP95Ms:F0} ms.");
-        Assert.False(
-            changeFloorExceeded,
-            $"p95 for a single change was {p95Change:F0} ms, more than {RegressionTolerance}x the last "
-            + $"recorded {previous.ChangeP95Ms:F0} ms.");
-        Assert.False(
-            throughputFloorExceeded,
-            $"throughput was {changesPerSecond:F1} changes/s, more than {RegressionTolerance}x slower "
-            + $"than the last recorded {previous.ChangesPerSecond:F1} changes/s.");
+        if (record)
+        {
+            WriteBaseline(baselinePath, current);
+        }
     }
 
-    private static BoardLatencyBaseline? ReadBaseline()
+    private static BoardLatencyBaseline? ReadBaseline(string baselinePath)
     {
-        if (!File.Exists(BaselinePath))
+        if (!File.Exists(baselinePath))
         {
             return null;
         }
 
-        var json = File.ReadAllText(BaselinePath);
+        var json = File.ReadAllText(baselinePath);
         return JsonSerializer.Deserialize<BoardLatencyBaseline>(json);
     }
 
-    private static void WriteBaseline(BoardLatencyBaseline baseline)
+    private static void WriteBaseline(string baselinePath, BoardLatencyBaseline baseline)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(BaselinePath)!);
-        File.WriteAllText(BaselinePath, JsonSerializer.Serialize(baseline));
+        Directory.CreateDirectory(Path.GetDirectoryName(baselinePath)!);
+        File.WriteAllText(baselinePath, JsonSerializer.Serialize(baseline));
     }
 
     private static string BaselineFilePath([CallerFilePath] string sourcePath = "") =>
