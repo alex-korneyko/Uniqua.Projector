@@ -273,4 +273,97 @@ public sealed class BoardTests
 
         Assert.Same(BoardErrors.OwnerOnly, result.Error);
     }
+
+    // ---- T24 (review Q4e; AC-25, sad.md §8 Logging): no board content in a refusal's detail -------
+
+    [Fact]
+    public void A_confirmation_mismatch_carries_the_current_name_as_a_value_and_never_in_its_detail()
+    {
+        var board = ABoard("Zanzibar retreat");
+
+        var result = board.ConfirmDeletion(OwnerId, "something else");
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("boards.confirmation_mismatch", result.Error!.Code);
+        Assert.Equal("Zanzibar retreat", result.Error.CurrentName);
+        Assert.DoesNotContain("Zanzibar", result.Error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Every refusal <see cref="BoardErrors"/> can build, including any factory added later: built
+    /// twice from two boards holding different content, its <see cref="BoardError.Detail"/> is the
+    /// same fixed sentence and contains none of either board's names, titles or descriptions. A
+    /// factory taking a parameter type this test does not know fails it, so a new one cannot slip
+    /// past unexamined.
+    /// </summary>
+    [Fact]
+    public void Every_refusal_detail_is_a_fixed_sentence_whatever_the_board_holds()
+    {
+        var first = new ContentBoard("Aardvark board", "Aardvark column", "Aardvark card", "Aardvark notes");
+        var second = new ContentBoard("Zebra board", "Zebra column", "Zebra card", "Zebra notes");
+
+        var factories = typeof(BoardErrors)
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(method => method.ReturnType == typeof(BoardError))
+            .ToArray();
+        Assert.NotEmpty(factories);
+
+        var fixedOnes = typeof(BoardErrors)
+            .GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            .Where(field => field.FieldType == typeof(BoardError))
+            .Select(field => (BoardError)field.GetValue(null)!);
+
+        foreach (var error in fixedOnes)
+        {
+            first.AssertCarriesNoContent(error.Detail);
+            second.AssertCarriesNoContent(error.Detail);
+        }
+
+        foreach (var factory in factories)
+        {
+            var fromFirst = (BoardError)factory.Invoke(null, first.ArgumentsFor(factory))!;
+            var fromSecond = (BoardError)factory.Invoke(null, second.ArgumentsFor(factory))!;
+
+            Assert.Equal(fromFirst.Detail, fromSecond.Detail);
+            first.AssertCarriesNoContent(fromFirst.Detail);
+            second.AssertCarriesNoContent(fromSecond.Detail);
+        }
+    }
+
+    /// <summary>A board whose every piece of text starts with one distinctive word.</summary>
+    private sealed class ContentBoard
+    {
+        private readonly string[] _texts;
+
+        public ContentBoard(string boardName, string columnName, string cardTitle, string cardDescription)
+        {
+            Board = Board.Create(OwnerId, boardName, Now).Value;
+            Board.RenameColumn(Board.Columns[0].Id, columnName, Board.Columns[0].NameVersion);
+            Card = Board.AdmitCard(Board.Columns[0].Id, cardTitle, cardDescription).Value;
+            _texts = [boardName, columnName, cardTitle, cardDescription];
+        }
+
+        public Board Board { get; }
+
+        public Card Card { get; }
+
+        public object[] ArgumentsFor(System.Reflection.MethodInfo factory) =>
+            [.. factory.GetParameters().Select(parameter => parameter.ParameterType switch
+            {
+                var type when type == typeof(string) => (object)Board.Name,
+                var type when type == typeof(Column) => Board.Columns[0],
+                var type when type.IsAssignableFrom(typeof(List<Column>)) => Board.Columns.ToList(),
+                var type when type == typeof(Card) => Card,
+                var type => throw new Xunit.Sdk.XunitException(
+                    $"BoardErrors.{factory.Name} takes a {type.Name}; teach this test to build one."),
+            })];
+
+        public void AssertCarriesNoContent(string detail)
+        {
+            foreach (var text in _texts)
+            {
+                Assert.DoesNotContain(text, detail, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
 }

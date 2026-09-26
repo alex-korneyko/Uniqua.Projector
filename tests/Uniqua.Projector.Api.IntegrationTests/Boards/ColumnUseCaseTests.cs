@@ -138,7 +138,7 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
 
         Assert.False(stale.IsSuccess);
         Assert.Equal("boards.column_renamed", stale.Error!.Code);
-        Assert.Contains("Renamed already", stale.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal("Renamed already", stale.Error.CurrentColumn!.Name);
         Assert.Equal("Renamed already", await factory.ScalarAsync<string>(
             $"SELECT [Name] FROM [dbo].[Columns] WHERE [Id] = '{columnId}'"));
     }
@@ -163,7 +163,7 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
 
         Assert.False(result.IsSuccess);
         Assert.Equal("boards.column_renamed", result.Error!.Code);
-        Assert.Contains("Renamed since", result.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal("Renamed since", result.Error.CurrentColumn!.Name);
         Assert.Equal(1, await factory.ScalarAsync<int>(
             $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [Id] = '{columnId}'"));
     }
@@ -269,7 +269,7 @@ public sealed class ColumnUseCaseTests(ApiFactory factory)
 
         var refusal = results.Single(r => !r.IsSuccess);
         Assert.Equal("boards.column_renamed", refusal.Error!.Code);
-        Assert.Contains(winnerName!, refusal.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal(winnerName, refusal.Error.CurrentColumn!.Name);
     }
 
     // ---- AC-18b: a column id from another board, and a deleted column's id, both answer NotAvailable

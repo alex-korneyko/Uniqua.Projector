@@ -27,6 +27,16 @@ public sealed class BoardColumnTests
         setter.Invoke(column, [column.CardCount + 1]);
     }
 
+    /// <summary>
+    /// AC-24: refused as <c>boards.columns_changed</c>, carrying the board's columns as they now
+    /// stand, in position order.
+    /// </summary>
+    private static void AssertColumnsChangedWith(Board board, BoardError? error)
+    {
+        Assert.Equal(BoardErrors.ColumnsChanged(board.Columns).Code, error!.Code);
+        Assert.Equal(board.Columns.OrderBy(c => c.Position), error.CurrentLayout!);
+    }
+
     private static void AssertDensePositions(Board board)
     {
         var positions = board.Columns.Select(c => c.Position).OrderBy(p => p).ToArray();
@@ -335,7 +345,7 @@ public sealed class BoardColumnTests
         var result = board.MoveColumn(board.Columns[0].Id, 1, staleLayoutVersion);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal(BoardErrors.ColumnsChanged(board.Columns), result.Error);
+        AssertColumnsChangedWith(board, result.Error);
     }
 
     [Fact]
@@ -370,7 +380,7 @@ public sealed class BoardColumnTests
         var result = board.MoveColumn(board.Columns[0].Id, 99, staleLayoutVersion);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal(BoardErrors.ColumnsChanged(board.Columns), result.Error);
+        AssertColumnsChangedWith(board, result.Error);
     }
 
     // ---- Precedence: a column not on the board answers the same for every operation ----------------
@@ -450,6 +460,43 @@ public sealed class BoardColumnTests
             }
 
             AssertDensePositions(board);
+        }
+    }
+
+    // ---- T24 (review Q4e; AC-25, sad.md §8 Logging): no column name in a refusal's detail ---------
+
+    [Fact]
+    public void A_stale_column_rename_carries_the_current_column_as_a_value_and_never_its_name_in_the_detail()
+    {
+        var board = ABoard();
+        var column = board.Columns[0];
+        var staleVersion = column.NameVersion;
+        board.RenameColumn(column.Id, "Quetzal lane", staleVersion);
+
+        var result = board.RenameColumn(column.Id, "My name", staleVersion);
+
+        Assert.Equal("boards.column_renamed", result.Error!.Code);
+        Assert.Same(column, result.Error.CurrentColumn);
+        Assert.Equal("Quetzal lane", result.Error.CurrentColumn!.Name);
+        Assert.DoesNotContain("Quetzal", result.Error.Detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void A_stale_move_carries_the_current_layout_as_values_and_never_a_column_name_in_the_detail()
+    {
+        var board = ABoard();
+        var staleLayoutVersion = board.ColumnLayoutVersion;
+        board.AddColumn("Quetzal lane");
+
+        var result = board.MoveColumn(board.Columns[0].Id, 1, staleLayoutVersion);
+
+        Assert.Equal("boards.columns_changed", result.Error!.Code);
+        Assert.Equal(
+            ["To do", "In progress", "Done", "Quetzal lane"],
+            result.Error.CurrentLayout!.Select(column => column.Name));
+        foreach (var name in board.Columns.Select(column => column.Name))
+        {
+            Assert.DoesNotContain(name, result.Error.Detail, StringComparison.OrdinalIgnoreCase);
         }
     }
 }

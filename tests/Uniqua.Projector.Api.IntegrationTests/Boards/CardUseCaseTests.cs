@@ -111,7 +111,7 @@ public sealed class CardUseCaseTests(ApiFactory factory)
 
         var refusal = results.Single(r => !r.IsSuccess);
         Assert.Equal("boards.card_changed", refusal.Error!.Code);
-        Assert.Contains(winnerTitle!, refusal.Error.Detail, StringComparison.Ordinal);
+        Assert.Equal(winnerTitle, refusal.Error.CurrentCard!.Title);
     }
 
     // ---- AC-18: deleting a card removes it and leaves the others' positions untouched ----------------

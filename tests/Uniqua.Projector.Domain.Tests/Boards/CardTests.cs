@@ -310,4 +310,25 @@ public sealed class CardTests
         Assert.False(result.IsSuccess);
         Assert.Same(BoardErrors.NotAvailable, result.Error);
     }
+
+    // ---- T24 (review Q4e; AC-25, sad.md §8 Logging): no card text in a refusal's detail -----------
+
+    [Fact]
+    public void A_stale_card_change_carries_the_current_card_as_a_value_and_never_its_text_in_the_detail()
+    {
+        var board = ABoard();
+        var card = ACard(board);
+        var staleVersion = card.ContentVersion;
+        card.Edit("Okapi title", "Okapi description", staleVersion);
+
+        var edit = card.Edit("My title", null, staleVersion);
+        var deletion = card.EnsureDeletable(staleVersion);
+
+        foreach (var error in new[] { edit.Error!, deletion.Error! })
+        {
+            Assert.Equal("boards.card_changed", error.Code);
+            Assert.Same(card, error.CurrentCard);
+            Assert.DoesNotContain("Okapi", error.Detail, StringComparison.OrdinalIgnoreCase);
+        }
+    }
 }
