@@ -62,11 +62,13 @@ public sealed class BoardChangeRateLimitTests(ApiFactory factory)
     // ---- AC-17: the refusal answers identically whichever board it names -------------------------
 
     [Fact]
-    public async Task The_rate_limited_refusal_is_identical_whether_the_board_is_owned_or_never_existed()
+    public async Task The_rate_limited_refusal_is_identical_whether_the_board_is_owned_foreign_or_never_existed()
     {
         factory.Clock.Reset();
         var caller = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
         var ownedBoard = await factory.ABoardAsync(caller, "Owned by the caller");
+        var foreignBoard = await factory.ABoardAsync(stranger, "The caller is not a member of this one");
         var client = await factory.AWritingClientAsync(caller);
 
         // Creating the owned board above already spent one slot; spend the rest on it too, so every
@@ -82,21 +84,36 @@ public sealed class BoardChangeRateLimitTests(ApiFactory factory)
 
         var toOwnedBoard = await client.PatchAsJsonAsync(
             $"{Boards}/{ownedBoard.Id}", new { name = "one-too-many" });
+        var toForeignBoard = await client.PatchAsJsonAsync(
+            $"{Boards}/{foreignBoard.Id}", new { name = "one-too-many" });
         var toNeverExisted = await client.PatchAsJsonAsync(
             $"{Boards}/{Guid.CreateVersion7()}", new { name = "one-too-many" });
 
         Assert.Equal(HttpStatusCode.TooManyRequests, toOwnedBoard.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, toForeignBoard.StatusCode);
         Assert.Equal(HttpStatusCode.TooManyRequests, toNeverExisted.StatusCode);
 
         var ownedBody = await BodyAsync(toOwnedBoard);
+        var foreignBody = await BodyAsync(toForeignBoard);
         var neverExistedBody = await BodyAsync(toNeverExisted);
 
-        foreach (var name in new[] { "type", "title", "status", "detail", "code" })
+        // retry_after_seconds and Retry-After included: every refusal here is at the same instant.
+        foreach (var name in new[] { "type", "title", "status", "detail", "code", "retry_after_seconds" })
         {
-            Assert.Equal(
-                ownedBody.TryGetProperty(name, out var a) ? a.ToString() : null,
-                neverExistedBody.TryGetProperty(name, out var b) ? b.ToString() : null);
+            var owned = ownedBody.TryGetProperty(name, out var a) ? a.ToString() : null;
+            Assert.Equal(owned, foreignBody.TryGetProperty(name, out var f) ? f.ToString() : null);
+            Assert.Equal(owned, neverExistedBody.TryGetProperty(name, out var b) ? b.ToString() : null);
         }
+
+        Assert.Equal(
+            toOwnedBoard.Headers.RetryAfter?.ToString(), toForeignBoard.Headers.RetryAfter?.ToString());
+        Assert.Equal(
+            toOwnedBoard.Headers.RetryAfter?.ToString(), toNeverExisted.Headers.RetryAfter?.ToString());
+
+        // Nothing changed on the foreign board either.
+        var foreignName = await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{foreignBoard.Id}'");
+        Assert.Equal(foreignBoard.Name, foreignName);
 
         // Nothing changed on the caller's own board while limited — it still shows the name from the
         // last accepted rename above, not the rejected "one-too-many".
@@ -106,41 +123,54 @@ public sealed class BoardChangeRateLimitTests(ApiFactory factory)
     }
 
     // ---- AC-17 / edge case: a refusal by the limit itself is never counted, so the account is ------
-    // admitted again once its earlier attempts fall out of the minute ------------------------------
+    // admitted again once its earlier attempts leave the minute ------------------------------------
 
+    /// <summary>
+    /// The clock is staggered so the two kinds of attempt leave the rolling minute at different
+    /// instants (review B5): 120 counted attempts at t0, then 120 attempts the limit refuses at
+    /// t0+30 s, then the clock moves to t0+61 s. The counted ones have left the minute; the refused
+    /// ones, had they counted, would still fill it until t0+90 s. Being admitted at t0+61 s is
+    /// therefore only possible if not one refusal was counted.
+    /// </summary>
     [Fact]
     public async Task An_account_that_stops_is_admitted_again_once_its_earlier_attempts_leave_the_minute()
     {
         factory.Clock.Reset();
-        var caller = await factory.AnAccountAsync();
-        var board = await factory.ABoardAsync(caller, "Board under the limit"); // spends 1 of 120
-        var client = await factory.AWritingClientAsync(caller);
-
-        for (var attempt = 0; attempt < PermittedChangesPerWindow - 1; attempt++)
+        try
         {
-            await client.PatchAsJsonAsync($"{Boards}/{board.Id}", new { name = $"attempt-{attempt}" });
-        }
+            var caller = await factory.AnAccountAsync();
+            var board = await factory.ABoardAsync(caller, "Board under the limit"); // 1 of 120, at t0
+            var client = await factory.AWritingClientAsync(caller);
 
-        // At the ceiling: refused, and retried a few times — none of those retries may count.
-        for (var retry = 0; retry < 5; retry++)
+            for (var attempt = 0; attempt < PermittedChangesPerWindow - 1; attempt++)
+            {
+                var counted = await client.PatchAsJsonAsync(
+                    $"{Boards}/{board.Id}", new { name = $"attempt-{attempt}" });
+                Assert.Equal(HttpStatusCode.OK, counted.StatusCode);
+            }
+
+            factory.Clock.Advance(TimeSpan.FromSeconds(30));
+
+            for (var retry = 0; retry < PermittedChangesPerWindow; retry++)
+            {
+                var refused = await client.PatchAsJsonAsync(
+                    $"{Boards}/{board.Id}", new { name = "still-limited" });
+                Assert.Equal(HttpStatusCode.TooManyRequests, refused.StatusCode);
+            }
+
+            factory.Clock.Advance(TimeSpan.FromSeconds(31));
+
+            var admittedAgain = await client.PatchAsJsonAsync(
+                $"{Boards}/{board.Id}", new { name = "Admitted again" });
+
+            Assert.Equal(HttpStatusCode.OK, admittedAgain.StatusCode);
+            Assert.Equal(
+                "Admitted again", (await BodyAsync(admittedAgain)).GetProperty("name").GetString());
+        }
+        finally
         {
-            var stillLimited = await client.PatchAsJsonAsync(
-                $"{Boards}/{board.Id}", new { name = "still-limited" });
-            Assert.Equal(HttpStatusCode.TooManyRequests, stillLimited.StatusCode);
+            factory.Clock.Reset();
         }
-
-        // Once every counted attempt has aged out of the rolling minute, the account is admitted
-        // again — proving the refusals above never counted against it.
-        factory.Clock.Advance(TimeSpan.FromSeconds(61));
-
-        var admittedAgain = await client.PatchAsJsonAsync(
-            $"{Boards}/{board.Id}", new { name = "Admitted again" });
-
-        Assert.Equal(HttpStatusCode.OK, admittedAgain.StatusCode);
-        Assert.Equal(
-            "Admitted again", (await BodyAsync(admittedAgain)).GetProperty("name").GetString());
-
-        factory.Clock.Reset();
     }
 
     // ---- Edge case: 500 reads in a minute are never limited ----------------------------------------
@@ -209,6 +239,47 @@ public sealed class BoardChangeRateLimitTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.OK, change.StatusCode);
 
         factory.Clock.Reset();
+    }
+
+    // ---- AC-28: a session that ends by itself, on the clock, is refused the same way (review B7d) ----
+
+    [Fact]
+    public async Task A_change_attempt_after_the_session_expired_on_the_clock_is_refused_and_not_counted()
+    {
+        factory.Clock.Reset();
+        try
+        {
+            var caller = await factory.AnAccountAsync();
+            var board = await factory.ABoardAsync(caller, "Before the session lapsed");
+            var client = await factory.AWritingClientAsync(caller);
+
+            // No sign-out: the session simply goes unused past its idle lifetime.
+            factory.Clock.Advance(Domain.Accounts.Session.IdleExpiryAfterLastStamp + TimeSpan.FromMinutes(1));
+
+            for (var attempt = 0; attempt < PermittedChangesPerWindow + 5; attempt++)
+            {
+                var response = await client.PatchAsJsonAsync(
+                    $"{Boards}/{board.Id}", new { name = $"after-expiry-{attempt}" });
+
+                Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+                Assert.Equal("accounts.session_not_recognised", await CodeOfAsync(response));
+            }
+
+            Assert.Equal("Before the session lapsed", await factory.ScalarAsync<string>(
+                $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{board.Id}'"));
+
+            // Not counted: a session opened now for the same account is admitted straight away.
+            var freshWritingClient = await factory.AWritingClientAsync(
+                caller with { SessionId = await factory.ALiveSessionAsync(caller) });
+            var change = await freshWritingClient.PatchAsJsonAsync(
+                $"{Boards}/{board.Id}", new { name = "Admitted after signing in again" });
+
+            Assert.Equal(HttpStatusCode.OK, change.StatusCode);
+        }
+        finally
+        {
+            factory.Clock.Reset();
+        }
     }
 
     // ---- Helpers -----------------------------------------------------------------------------------

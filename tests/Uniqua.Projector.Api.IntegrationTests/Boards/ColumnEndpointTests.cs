@@ -427,7 +427,242 @@ public sealed class ColumnEndpointTests(ApiFactory factory)
         Assert.Equal(2, remaining);
     }
 
+    // ---- AC-18b (review B7d): a deleted column is refused exactly as a column that never existed ------
+
+    [Theory]
+    [InlineData("rename")]
+    [InlineData("move")]
+    [InlineData("delete")]
+    public async Task A_change_naming_a_deleted_column_is_refused_exactly_as_one_naming_a_random_id(string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that loses a column");
+        await factory.AMemberOfAsync(board.Id, member);
+        var goneId = await LastColumnIdAsync(board.Id);
+
+        var ownerClient = await factory.AWritingClientAsync(owner);
+        var removed = await ownerClient.SendAsync(new HttpRequestMessage(HttpMethod.Delete, Column(board.Id, goneId))
+        {
+            Content = JsonContent.Create(new { name_version = 1 }),
+        });
+        Assert.Equal(HttpStatusCode.OK, removed.StatusCode);
+        var layoutVersion = (await BodyAsync(removed)).GetProperty("column_layout_version").GetInt32();
+        var before = await (await ownerClient.GetAsync($"{Boards}/{board.Id}")).Content.ReadAsStringAsync();
+
+        HttpRequestMessage Request(Guid columnId) => operation switch
+        {
+            "rename" => new(HttpMethod.Patch, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name = "Kept typing", name_version = 1 }),
+            },
+            "move" => new(HttpMethod.Put, Position(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { position = 0, column_layout_version = layoutVersion }),
+            },
+            _ => new(HttpMethod.Delete, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name_version = 1 }),
+            },
+        };
+
+        var memberClient = await factory.AWritingClientAsync(member);
+        var deleted = await memberClient.SendAsync(Request(goneId));
+        var random = await memberClient.SendAsync(Request(Guid.CreateVersion7()));
+
+        Assert.Equal(HttpStatusCode.NotFound, deleted.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(deleted));
+        await AssertSameRefusalAsync(random, deleted);
+
+        var after = await (await ownerClient.GetAsync($"{Boards}/{board.Id}")).Content.ReadAsStringAsync();
+        Assert.Equal(before, after);
+    }
+
+    // ---- AC-06b (review B7d): a stale rename or delete from a genuinely separate session -------------
+
+    [Theory]
+    [InlineData("another member", "rename")]
+    [InlineData("another member", "delete")]
+    [InlineData("the same account in a second session", "rename")]
+    [InlineData("the same account in a second session", "delete")]
+    public async Task A_change_from_a_session_whose_view_predates_another_sessions_rename_is_refused(
+        string other, string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board open in two places");
+        await factory.AMemberOfAsync(board.Id, member);
+        var columnId = await LastColumnIdAsync(board.Id);
+
+        var firstSession = await factory.AWritingClientAsync(owner);
+        var secondSession = other == "another member"
+            ? await factory.AWritingClientAsync(member)
+            : await factory.AWritingClientAsync(owner with { SessionId = await factory.ALiveSessionAsync(owner) });
+
+        var seen = (await BodyAsync(await firstSession.GetAsync($"{Boards}/{board.Id}")))
+            .GetProperty("columns").EnumerateArray()
+            .Single(column => column.GetProperty("id").GetString() == columnId.ToString())
+            .GetProperty("name_version").GetInt32();
+
+        var winner = await secondSession.PatchAsJsonAsync(
+            Column(board.Id, columnId), new { name = "Renamed elsewhere", name_version = seen });
+        Assert.Equal(HttpStatusCode.OK, winner.StatusCode);
+
+        var stale = operation == "rename"
+            ? await firstSession.PatchAsJsonAsync(
+                Column(board.Id, columnId), new { name = "My own name", name_version = seen })
+            : await firstSession.SendAsync(new HttpRequestMessage(HttpMethod.Delete, Column(board.Id, columnId))
+            {
+                Content = JsonContent.Create(new { name_version = seen }),
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var body = await BodyAsync(stale);
+        Assert.Equal("boards.column_renamed", body.GetProperty("code").GetString());
+        Assert.Equal("Renamed elsewhere", body.GetProperty("current_column").GetProperty("name").GetString());
+        Assert.Equal(seen + 1, body.GetProperty("current_column").GetProperty("name_version").GetInt32());
+
+        Assert.Equal(["To do", "In progress", "Renamed elsewhere"], await ColumnNamesAsync(board.Id));
+    }
+
+    // ---- T23 (review Q1): a lone-surrogate name is an unusable string, not a server error --------------
+
+    [Theory]
+    [InlineData("add")]
+    [InlineData("rename")]
+    public async Task A_lone_surrogate_column_name_is_request_invalid_for_a_member_and_not_available_for_anyone_else(
+        string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that gets a broken column name");
+        var columnId = await FirstColumnIdAsync(board.Id);
+
+        var (method, url, json) = operation == "add"
+            ? (HttpMethod.Post, Columns(board.Id), """{"name":"\ud800"}""")
+            : (HttpMethod.Patch, Column(board.Id, columnId), """{"name":"x\udfff","name_version":1}""");
+
+        var ownerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(owner), method, url, json);
+        var strangerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(stranger), method, url, json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+        Assert.Equal(["To do", "In progress", "Done"], await ColumnNamesAsync(board.Id));
+    }
+
+    // ---- T23 (review B6a): a member outside the request schema is request_invalid --------------------
+
+    [Theory]
+    [InlineData("add", """{"name":"Extra","extra":1}""")]
+    [InlineData("rename", """{"name":"Extra","name_version":1,"extra":1}""")]
+    [InlineData("move", """{"position":2,"column_layout_version":1,"extra":1}""")]
+    [InlineData("delete", """{"name_version":1,"extra":null}""")]
+    public async Task An_unknown_member_in_a_column_change_is_request_invalid_after_membership_and_changes_nothing(
+        string operation, string json)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board with strict column schemas");
+        var columnId = await FirstColumnIdAsync(board.Id);
+
+        var (method, url) = operation switch
+        {
+            "add" => (HttpMethod.Post, Columns(board.Id)),
+            "rename" => (HttpMethod.Patch, Column(board.Id, columnId)),
+            "move" => (HttpMethod.Put, Position(board.Id, columnId)),
+            _ => (HttpMethod.Delete, Column(board.Id, columnId)),
+        };
+
+        var ownerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(owner), method, url, json);
+        var strangerResponse = await SendJsonTextAsync(await factory.AWritingClientAsync(stranger), method, url, json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+        Assert.Equal(["To do", "In progress", "Done"], await ColumnNamesAsync(board.Id));
+    }
+
+    // ---- T23 (review B6c): a non-UUID column id is a column that does not exist, after the shape -------
+
+    [Theory]
+    [InlineData("rename")]
+    [InlineData("move")]
+    [InlineData("delete")]
+    public async Task A_non_uuid_column_id_with_a_bad_body_is_answered_like_a_missing_column_id_with_a_bad_body(
+        string operation)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board asked about columns it lacks");
+        var client = await factory.AWritingClientAsync(owner);
+
+        string UrlFor(string columnId) => operation == "move"
+            ? $"{Boards}/{board.Id}/columns/{columnId}/position"
+            : $"{Boards}/{board.Id}/columns/{columnId}";
+
+        var method = operation switch
+        {
+            "rename" => HttpMethod.Patch,
+            "move" => HttpMethod.Put,
+            _ => HttpMethod.Delete,
+        };
+
+        var notAUuid = await SendJsonTextAsync(client, method, UrlFor("not-a-uuid"), "{}");
+        var missing = await SendJsonTextAsync(client, method, UrlFor(Guid.CreateVersion7().ToString()), "{}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(missing));
+        await AssertSameRefusalAsync(missing, notAUuid);
+    }
+
     // ---- Helpers --------------------------------------------------------------------------------------
+
+    /// <summary>Sends <paramref name="json"/> exactly as written, byte for byte.</summary>
+    private static Task<HttpResponseMessage> SendJsonTextAsync(
+        HttpClient client, HttpMethod method, string url, string json) =>
+        client.SendAsync(new HttpRequestMessage(method, url)
+        {
+            Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json"),
+        });
+
+    private async Task<string[]> ColumnNamesAsync(Guid boardId)
+    {
+        var names = new List<string>();
+        for (var position = 0; ; position++)
+        {
+            var name = await factory.ScalarAsync<string?>(
+                $"SELECT [Name] FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}' AND [Position] = {position}");
+            if (name is null)
+            {
+                return [.. names];
+            }
+
+            names.Add(name);
+        }
+    }
+
+    /// <summary>
+    /// Field for field: status, content type, and every body member but <c>instance</c> and
+    /// <c>traceId</c> (which echo the request itself) — present in both, with the same value.
+    /// </summary>
+    private static async Task AssertSameRefusalAsync(HttpResponseMessage expected, HttpResponseMessage actual)
+    {
+        Assert.Equal(expected.StatusCode, actual.StatusCode);
+        Assert.Equal(
+            expected.Content.Headers.ContentType?.ToString(), actual.Content.Headers.ContentType?.ToString());
+
+        static string[] Members(JsonElement body) =>
+        [
+            .. body.EnumerateObject()
+                .Where(member => member.Name is not ("instance" or "traceId"))
+                .OrderBy(member => member.Name, StringComparer.Ordinal)
+                .Select(member => $"{member.Name}={member.Value}"),
+        ];
+
+        Assert.Equal(Members(await BodyAsync(expected)), Members(await BodyAsync(actual)));
+    }
 
     private async Task<Guid> FirstColumnIdAsync(Guid boardId) =>
         await factory.ScalarAsync<Guid>(

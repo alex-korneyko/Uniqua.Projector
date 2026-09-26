@@ -31,7 +31,9 @@ public sealed record BoardChangeOutcome<T>(bool Contended, T? Value, int Attempt
 /// </summary>
 public static class BoardChangeRetry
 {
-    /// <summary>ADR 0015: at most 3 retries before the change fails with a retryable problem.</summary>
+    /// <summary>
+    /// ADR 0015: 3 attempts (2 retries) before the change fails with a retryable problem.
+    /// </summary>
     public const int MaxAttempts = 3;
 
     /// <param name="attempt">The whole cycle, given its 1-based attempt number.</param>

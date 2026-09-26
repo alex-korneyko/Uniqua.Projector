@@ -64,13 +64,18 @@ public sealed class BoardBoundaryTests(ApiFactory factory)
     }
 
     private static IEnumerable<Scenario> Scenarios(
-        Guid _, Guid columnId, Guid cardId, Guid foreignColumnId, Guid foreignCardId)
+        Guid boardId, Guid columnId, Guid cardId, Guid foreignColumnId, Guid foreignCardId)
     {
         // ---- openBoard ------------------------------------------------------------------------------
         yield return new Scenario("openBoard, valid", id => new HttpRequestMessage(
             HttpMethod.Get, $"{Boards}/{id}"));
-        yield return new Scenario("openBoard, non-UUID path is unreachable here; a board-id form is exercised in BoardEndpointTests", id => new HttpRequestMessage(
-            HttpMethod.Get, $"{Boards}/{id}"));
+
+        // Review Q4h: where the non-member would name the real board, this sends a board id that is
+        // not a UUID at all, compared with the never-existed board — the same one refusal either way.
+        yield return new Scenario("openBoard, non-UUID board id", id => new HttpRequestMessage(
+            HttpMethod.Get, id == boardId ? $"{Boards}/not-a-uuid" : $"{Boards}/{id}"));
+        yield return new Scenario("renameBoard, non-UUID board id", id => JsonRequest(
+            HttpMethod.Patch, id == boardId ? $"{Boards}/not-a-uuid" : $"{Boards}/{id}", new { name = "New name" }));
 
         // ---- renameBoard ----------------------------------------------------------------------------
         yield return new Scenario("renameBoard, valid body", id => JsonRequest(
@@ -280,6 +285,158 @@ public sealed class BoardBoundaryTests(ApiFactory factory)
         Assert.Equal(board.Name, (await BodyAsync(stillThere)).GetProperty("name").GetString());
     }
 
+    // ---- AC-21 (review B7d): the board rules refuse a non-owner member exactly as they refuse the owner
+
+    [Theory]
+    [InlineData("column not empty", "boards.column_not_empty")]
+    [InlineData("last column", "boards.last_column")]
+    [InlineData("column limit", "boards.column_limit_reached")]
+    [InlineData("card limit", "boards.card_limit_reached")]
+    [InlineData("stale column rename", "boards.column_renamed")]
+    [InlineData("stale column move", "boards.columns_changed")]
+    [InlineData("stale card edit", "boards.card_changed")]
+    public async Task A_non_owner_member_is_refused_by_each_board_rule_exactly_as_the_owner_is(
+        string rule, string code)
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = rule switch
+        {
+            "column limit" => await factory.ABoardWithColumnsAsync(owner, columnCount: 20, "A full board"),
+            "card limit" => await factory.ABoardWithCardsAsync(owner, cardCount: 1_000, "A board of cards"),
+            _ => await factory.ABoardAsync(owner, "A board with rules"),
+        };
+        await factory.AMemberOfAsync(board.Id, member);
+        var ownerClient = await factory.AWritingClientAsync(owner);
+        var client = await factory.AWritingClientAsync(member);
+        var columnId = await FirstColumnIdAsync(board.Id);
+        var itemId = columnId; // the column, or for the stale card edit the card, the member names
+
+        switch (rule)
+        {
+            case "column not empty":
+                await ACardIdAsync(owner, board.Id, columnId);
+                break;
+            case "last column":
+                foreach (var spare in await OtherColumnIdsAsync(board.Id, columnId))
+                {
+                    var trimmed = await ownerClient.SendAsync(new HttpRequestMessage(
+                        HttpMethod.Delete, $"{Boards}/{board.Id}/columns/{spare}")
+                    {
+                        Content = JsonContent.Create(new { name_version = 1 }),
+                    });
+                    Assert.Equal(HttpStatusCode.OK, trimmed.StatusCode);
+                }
+
+                break;
+            case "stale column rename":
+                Assert.Equal(HttpStatusCode.OK, (await ownerClient.PatchAsJsonAsync(
+                    $"{Boards}/{board.Id}/columns/{columnId}", new { name = "Owner's name", name_version = 1 })).StatusCode);
+                break;
+            case "stale column move":
+                Assert.Equal(HttpStatusCode.Created, (await ownerClient.PostAsJsonAsync(
+                    $"{Boards}/{board.Id}/columns", new { name = "Owner's column" })).StatusCode);
+                break;
+            case "stale card edit":
+                var staleCard = await ACardIdAsync(owner, board.Id, columnId);
+                Assert.Equal(HttpStatusCode.OK, (await ownerClient.PatchAsJsonAsync(
+                    $"{Boards}/{board.Id}/cards/{staleCard}", new { title = "Owner's title", content_version = 1 })).StatusCode);
+                itemId = staleCard;
+                break;
+        }
+
+        var before = await BoardSnapshotAsync(ownerClient, board.Id);
+
+        var response = rule switch
+        {
+            "column not empty" or "last column" => await client.SendAsync(new HttpRequestMessage(
+                HttpMethod.Delete, $"{Boards}/{board.Id}/columns/{itemId}")
+            {
+                Content = JsonContent.Create(new { name_version = 1 }),
+            }),
+            "column limit" => await client.PostAsJsonAsync(
+                $"{Boards}/{board.Id}/columns", new { name = "One too many" }),
+            "card limit" => await client.PostAsJsonAsync(
+                $"{Boards}/{board.Id}/cards", new { column_id = columnId, title = "One too many" }),
+            "stale column rename" => await client.PatchAsJsonAsync(
+                $"{Boards}/{board.Id}/columns/{columnId}", new { name = "Member's name", name_version = 1 }),
+            "stale column move" => await client.PutAsJsonAsync(
+                $"{Boards}/{board.Id}/columns/{columnId}/position", new { position = 1, column_layout_version = 1 }),
+            _ => await client.PatchAsJsonAsync(
+                $"{Boards}/{board.Id}/cards/{itemId}", new { title = "Member's title", content_version = 1 }),
+        };
+
+        Assert.Equal(code, await CodeOfAsync(response));
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(before, await BoardSnapshotAsync(ownerClient, board.Id));
+    }
+
+    // ---- AC-25 (review B7d; sad.md §8 Logging): no board content reaches a log line ----------------
+
+    [Fact]
+    public async Task A_sweep_of_refusals_logs_no_board_name_column_name_card_title_or_description()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+
+        const string BoardName = "Quokkaboard secret plans";
+        const string ColumnName = "Quokkacolumn hidden";
+        const string CardTitle = "Quokkatitle private";
+        const string CardDescription = "Quokkadescription confidential";
+        const string Typed = "Quokkatyped attempt";
+        string[] content = ["Quokka"];
+
+        var board = await factory.ABoardAsync(owner, BoardName);
+        await factory.AMemberOfAsync(board.Id, member);
+        var ownerClient = await factory.AWritingClientAsync(owner);
+        var memberClient = await factory.AWritingClientAsync(member);
+        var strangerClient = await factory.AWritingClientAsync(stranger);
+        var columnId = await FirstColumnIdAsync(board.Id);
+
+        factory.Logs.Clear();
+
+        Assert.Equal(HttpStatusCode.OK, (await ownerClient.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}/columns/{columnId}", new { name = ColumnName, name_version = 1 })).StatusCode);
+        var added = await ownerClient.PostAsJsonAsync(
+            $"{Boards}/{board.Id}/cards", new { column_id = columnId, title = CardTitle, description = CardDescription });
+        var cardId = Guid.Parse((await BodyAsync(added)).GetProperty("id").GetString()!);
+
+        HttpRequestMessage[] Sweep(Guid boardId) =>
+        [
+            JsonRequest(HttpMethod.Delete, $"{Boards}/{boardId}", new { confirm_name = Typed }),
+            JsonRequest(HttpMethod.Patch, $"{Boards}/{boardId}", new { name = Typed + new string('x', 100) }),
+            JsonRequest(HttpMethod.Patch, $"{Boards}/{boardId}/columns/{columnId}", new { name = Typed, name_version = 1 }),
+            JsonRequest(HttpMethod.Put, $"{Boards}/{boardId}/columns/{columnId}/position", new { position = 1, column_layout_version = 0 }),
+            JsonRequest(HttpMethod.Delete, $"{Boards}/{boardId}/columns/{columnId}", new { name_version = 2 }),
+            JsonRequest(HttpMethod.Patch, $"{Boards}/{boardId}/cards/{cardId}", new { title = Typed, content_version = 0 }),
+            JsonRequest(HttpMethod.Patch, $"{Boards}/{boardId}/cards/{cardId}", new { title = new string('q', 151), content_version = 1 }),
+            JsonRequest(HttpMethod.Post, $"{Boards}/{boardId}/cards", new { column_id = columnId, title = Typed, extra = Typed }),
+            new HttpRequestMessage(HttpMethod.Post, $"{Boards}/{boardId}/columns")
+            {
+                Content = new StringContent("{\"name\":\"Quokka \\ud800\"}", Encoding.UTF8, "application/json"),
+            },
+            NotJsonRequest(HttpMethod.Patch, $"{Boards}/{boardId}"),
+        ];
+
+        foreach (var client in new[] { memberClient, strangerClient, ownerClient })
+        {
+            foreach (var request in Sweep(board.Id))
+            {
+                var response = await client.SendAsync(request);
+                Assert.True((int)response.StatusCode is >= 400 and < 500, $"{request.Method} {request.RequestUri} answered {(int)response.StatusCode}");
+            }
+        }
+
+        var leaked = factory.Logs.Entries
+            .Where(entry => content.Any(text => entry.Message.Contains(text, StringComparison.OrdinalIgnoreCase)))
+            .Select(entry => $"{entry.Category} [{entry.Level}]: {entry.Message}")
+            .ToArray();
+
+        Assert.True(leaked.Length == 0, "board content reached the log:\n" + string.Join("\n", leaked));
+        Assert.NotEmpty(factory.Logs.Entries);
+    }
+
     // ---- AC-27: no session — the real board and one that never existed answer identically ----------
 
     [Theory]
@@ -319,6 +476,25 @@ public sealed class BoardBoundaryTests(ApiFactory factory)
     private async Task<Guid> FirstColumnIdAsync(Guid boardId) =>
         await factory.ScalarAsync<Guid>(
             $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}' ORDER BY [Position]");
+
+    private async Task<Guid[]> OtherColumnIdsAsync(Guid boardId, Guid keep)
+    {
+        var ids = new List<Guid>();
+        for (var position = 0; position < 3; position++)
+        {
+            var id = await factory.ScalarAsync<Guid>(
+                $"""
+                SELECT [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}' ORDER BY [Position]
+                OFFSET {position} ROWS FETCH NEXT 1 ROWS ONLY
+                """);
+            if (id != keep)
+            {
+                ids.Add(id);
+            }
+        }
+
+        return [.. ids];
+    }
 
     private async Task<Guid> ACardIdAsync(TestAccount owner, Guid boardId, Guid columnId)
     {

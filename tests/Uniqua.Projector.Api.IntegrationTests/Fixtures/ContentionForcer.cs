@@ -17,7 +17,9 @@ namespace Uniqua.Projector.Api.IntegrationTests.Fixtures;
 /// is. When <see cref="Enabled"/>, every conditional compare-and-set UPDATE the retry loop sends is
 /// let through only after this bumps the row itself, on a separate connection, so the predicate the
 /// application's own UPDATE carries can never still match — the row moved out from under it before
-/// it runs.
+/// it runs. <see cref="BumpsRemaining"/> bounds how many times it does so, and
+/// <see cref="RaceAsync{T}"/> forces two racing board changes to collide by holding the first one's
+/// save until the other has committed.
 /// </remarks>
 public sealed class ContentionForcer : DbCommandInterceptor
 {
@@ -62,12 +64,110 @@ public sealed class ContentionForcer : DbCommandInterceptor
     /// </summary>
     public int InterceptedAttempts { get; private set; }
 
+    private Regex? _oncePattern;
+    private string? _onceSql;
+
+    /// <summary>Whether the statement armed by <see cref="RunOnceBefore"/> has run.</summary>
+    public bool RanOnce { get; private set; }
+
+    /// <summary>
+    /// Arms a one-shot: just before the first command whose text matches <paramref name="pattern"/>,
+    /// runs <paramref name="sql"/> on a separate connection, committed — someone else's change landing
+    /// between a use case's load and its save — then disarms. Works whether or not
+    /// <see cref="Enabled"/> is set.
+    /// </summary>
+    public void RunOnceBefore(string pattern, string sql)
+    {
+        _oncePattern = new Regex(pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+        _onceSql = sql;
+        RanOnce = false;
+    }
+
+    /// <summary>
+    /// How many more effective bumps <see cref="Enabled"/> may make — one that actually moved the
+    /// targeted row — before it lets every write through untouched; <see langword="null"/> (the
+    /// default) is unlimited, which is what a spent-retry-budget test needs. A budget of 1 forces a
+    /// single lost race and then lets the retry through, so the retry has to re-decide rather than be
+    /// bumped into <c>boards.contended</c> like every attempt of both racers was (review Q2a).
+    /// </summary>
+    public int? BumpsRemaining { get; set; }
+
+    /// <summary>Both racers' results, in the order given, and whether they were forced to collide.</summary>
+    public sealed record Race<T>(T First, T Second, bool Collided);
+
+    private TaskCompletionSource? _gate;
+    private int _holdTaken;
+    private int _gatedWrites;
+
+    /// <summary>How long a held write may wait for the other racer before it is let go regardless.</summary>
+    public static readonly TimeSpan HoldTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Runs two racers at once and forces them to collide deterministically (review Q2a, Q6): the
+    /// first board-row write either sends — the conditional UPDATE against Boards, Columns, Cards or
+    /// OwnedBoardCounters — is held back until the other racer has finished, so that other racer's
+    /// change commits between the held racer's load and its save. The held save then always meets a
+    /// row that moved under it and must lose, and its retry must reload and re-decide.
+    /// </summary>
+    /// <returns>
+    /// <see cref="Race{T}.Collided"/> is <see langword="true"/> only when a write was held and the other
+    /// racer wrote and committed while it was held — the collision the race is named for, rather than
+    /// two changes that merely ran side by side.
+    /// </returns>
+    /// <remarks>
+    /// The held write is the first statement its transaction takes a lock on any row the other
+    /// racer touches (an UPDATE is only preceded by inserts of rows of its own), so holding it cannot
+    /// deadlock the other racer; <see cref="HoldTimeout"/> guards against that anyway.
+    /// </remarks>
+    public async Task<Race<T>> RaceAsync<T>(Func<Task<T>> first, Func<Task<T>> second)
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _holdTaken = 0;
+        _gatedWrites = 0;
+        _gate = gate;
+
+        var a = Task.Run(first);
+        var b = Task.Run(second);
+
+        // The held racer cannot finish while held, so the first to finish is the other one.
+        await Task.WhenAny(Task.WhenAny(a, b), Task.Delay(HoldTimeout));
+        var collided = Volatile.Read(ref _holdTaken) == 1
+            && Volatile.Read(ref _gatedWrites) >= 2
+            && (a.IsCompleted || b.IsCompleted);
+
+        _gate = null;
+        gate.TrySetResult();
+
+        await Task.WhenAll(a, b);
+        return new Race<T>(await a, await b, collided);
+    }
+
+    private async Task HoldIfFirstGatedWriteAsync(DbCommand command)
+    {
+        if (_gate is not { } gate || !BoardRowUpdate.IsMatch(command.CommandText))
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _gatedWrites);
+        if (Interlocked.CompareExchange(ref _holdTaken, 1, 0) == 0)
+        {
+            await gate.Task.WaitAsync(HoldTimeout);
+        }
+    }
+
     public void Reset()
     {
         Enabled = false;
         TargetAccountId = Guid.Empty;
         TargetId = Guid.Empty;
         InterceptedAttempts = 0;
+        BumpsRemaining = null;
+        _gate?.TrySetResult();
+        _gate = null;
+        _oncePattern = null;
+        _onceSql = null;
+        RanOnce = false;
     }
 
     public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
@@ -76,6 +176,9 @@ public sealed class ContentionForcer : DbCommandInterceptor
         InterceptionResult<int> result,
         CancellationToken cancellationToken = default)
     {
+        await RunOnceIfMatchedAsync(command, cancellationToken);
+        await HoldIfFirstGatedWriteAsync(command);
+
         if (Enabled && ConditionalUpdate.IsMatch(command.CommandText))
         {
             InterceptedAttempts++;
@@ -109,13 +212,43 @@ public sealed class ContentionForcer : DbCommandInterceptor
         InterceptionResult<DbDataReader> result,
         CancellationToken cancellationToken = default)
     {
+        await RunOnceIfMatchedAsync(command, cancellationToken);
+        await HoldIfFirstGatedWriteAsync(command);
         await BumpBoardRowIfMatchedAsync(command, cancellationToken);
         return await base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+    }
+
+    private async Task RunOnceIfMatchedAsync(DbCommand command, CancellationToken cancellationToken)
+    {
+        if (_oncePattern is not { } pattern || !pattern.IsMatch(command.CommandText))
+        {
+            return;
+        }
+
+        // Disarm before running, so two racing commands cannot both take the one shot.
+        if (Interlocked.Exchange(ref _onceSql, null) is not { } sql)
+        {
+            return;
+        }
+
+        _oncePattern = null;
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var once = connection.CreateCommand();
+        once.CommandText = sql;
+        await once.ExecuteNonQueryAsync(cancellationToken);
+        RanOnce = true;
     }
 
     private async Task BumpBoardRowIfMatchedAsync(DbCommand command, CancellationToken cancellationToken)
     {
         if (!Enabled || BoardRowUpdate.Match(command.CommandText) is not { Success: true } match)
+        {
+            return;
+        }
+
+        if (BumpsRemaining is <= 0)
         {
             return;
         }
@@ -126,7 +259,12 @@ public sealed class ContentionForcer : DbCommandInterceptor
         await connection.OpenAsync(cancellationToken);
         await using var bump = connection.CreateCommand();
         bump.CommandText = BumpSql(match.Groups["table"].Value, TargetId);
-        await bump.ExecuteNonQueryAsync(cancellationToken);
+        var moved = await bump.ExecuteNonQueryAsync(cancellationToken);
+
+        if (moved > 0 && BumpsRemaining is { } remaining)
+        {
+            BumpsRemaining = remaining - 1;
+        }
     }
 
     /// <summary>

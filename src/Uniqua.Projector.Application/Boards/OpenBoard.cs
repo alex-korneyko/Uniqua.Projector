@@ -29,15 +29,35 @@ public sealed class OpenBoard(IBoardStore boards)
     }
 
     /// <summary>
+    /// The same member-scoped load without the card summaries: the board's name, the caller's role
+    /// and its columns — all a refusal needs to answer with (a shape refusal only after membership,
+    /// <c>current_name</c>, <c>current_column</c>, <c>current_layout</c>) without reading up to 1,000
+    /// cards it will not show (review Q4f).
+    /// </summary>
+    public async Task<Result<BoardOutline, BoardError>> OutlineAsync(
+        Guid boardId, Guid accountId, CancellationToken cancellationToken)
+    {
+        var loaded = await boards.LoadForMemberAsync(boardId, accountId, cancellationToken);
+        if (loaded is null)
+        {
+            return Result<BoardOutline, BoardError>.Failure(BoardErrors.NotAvailable);
+        }
+
+        return Result<BoardOutline, BoardError>.Success(new BoardOutline(
+            loaded.Board.Id,
+            loaded.Board.Name,
+            loaded.Role == BoardRole.Owner,
+            loaded.Board.ColumnLayoutVersion,
+            ColumnsOf(loaded.Board)));
+    }
+
+    /// <summary>
     /// The board as the contract shows it: columns in position order, and cards ordered by their
     /// column's position then their own (contracts/openapi.yaml, components.schemas.Board).
     /// </summary>
     internal static BoardView ToView(Board board, bool isOwner, IReadOnlyList<CardSummary> cards)
     {
-        var columns = board.Columns
-            .OrderBy(column => column.Position)
-            .Select(column => new BoardColumnView(column.Id, column.Name, column.Position, column.NameVersion))
-            .ToList();
+        var columns = ColumnsOf(board);
 
         var columnPositions = columns.ToDictionary(column => column.Id, column => column.Position);
         var orderedCards = cards
@@ -47,4 +67,21 @@ public sealed class OpenBoard(IBoardStore boards)
 
         return new BoardView(board.Id, board.Name, isOwner, board.ColumnLayoutVersion, columns, orderedCards);
     }
+
+    private static List<BoardColumnView> ColumnsOf(Board board) =>
+        board.Columns
+            .OrderBy(column => column.Position)
+            .Select(column => new BoardColumnView(column.Id, column.Name, column.Position, column.NameVersion))
+            .ToList();
 }
+
+/// <summary>
+/// A board as a member sees it, without its cards: what <see cref="OpenBoard.OutlineAsync"/> hands a
+/// refusal path. Columns in position order.
+/// </summary>
+public sealed record BoardOutline(
+    Guid Id,
+    string Name,
+    bool IsOwner,
+    int ColumnLayoutVersion,
+    IReadOnlyList<BoardColumnView> Columns);

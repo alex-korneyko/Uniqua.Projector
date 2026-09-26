@@ -71,10 +71,8 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
     public async Task Two_creations_at_forty_nine_owned_boards_forced_to_collide_let_exactly_one_succeed()
     {
         // Edge case table: "Two creations at 49 owned boards, forced to collide" -> exactly one
-        // succeeds, the other OwnedBoardLimitReached after the retry re-decides. Real concurrent
-        // writers against the same OwnedBoardCounters row force the collision (as
-        // RegisterAccountTests' concurrent-duplicate-address test does for accounts), rather than
-        // asserting on timing.
+        // succeeds, the other OwnedBoardLimitReached after the retry re-decides. The collision is
+        // forced by ContentionForcer.RaceAsync rather than hoped for from timing.
         var owner = await factory.AnAccountAsync();
         await SetOwnedBoardCountAsync(owner.Id, OwnedBoardCounter.MaxOwnedBoards - 1);
 
@@ -85,7 +83,11 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
                 .ExecuteAsync(owner.Id, name, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(CreateAsync("Racer A"), CreateAsync("Racer B"));
+        // Forced to collide: the first save is held until the other racer has committed, so the
+        // held one must lose its first attempt and re-decide on reload (review Q2a).
+        var race = await factory.Contention.RaceAsync(() => CreateAsync("Racer A"), () => CreateAsync("Racer B"));
+        Assert.True(race.Collided, "the two creations never collided");
+        var results = new[] { race.First, race.Second };
 
         Assert.Equal(1, results.Count(r => r.IsSuccess));
         var refusal = results.Single(r => !r.IsSuccess);
@@ -200,7 +202,38 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
     // ---- AC-19: the owner renames -------------------------------------------------------------
 
     [Fact]
-    public async Task Owner_renaming_records_the_new_name()
+    public async Task Owner_renaming_records_the_new_name_and_every_member_sees_it_in_their_list()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+
+        using var createScope = factory.Services.CreateScope();
+        var created = await createScope.ServiceProvider.GetRequiredService<CreateBoard>()
+            .ExecuteAsync(owner.Id, "Old name", CancellationToken.None);
+        Assert.True(created.IsSuccess);
+        await factory.AMemberOfAsync(created.Value.Id, member);
+
+        using var scope = factory.Services.CreateScope();
+        var result = await scope.ServiceProvider.GetRequiredService<RenameBoard>()
+            .ExecuteAsync(created.Value.Id, owner.Id, "New name", CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("New name", await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'"));
+
+        // AC-19 "every member sees it in their list of boards": the non-owner member's own list.
+        using var listScope = factory.Services.CreateScope();
+        var memberList = await listScope.ServiceProvider.GetRequiredService<ListMyBoards>()
+            .ExecuteAsync(member.Id, CancellationToken.None);
+        var entry = Assert.Single(memberList, board => board.Id == created.Value.Id);
+        Assert.Equal("New name", entry.Name);
+        Assert.False(entry.IsOwner);
+    }
+
+    // ---- T25 (review Q4g; AC-19): the rename answers with the name the domain stored ----------------
+
+    [Fact]
+    public async Task Renaming_returns_the_name_the_board_now_has_exactly_as_stored()
     {
         var owner = await factory.AnAccountAsync();
 
@@ -211,11 +244,13 @@ public sealed class BoardUseCaseTests(ApiFactory factory)
 
         using var scope = factory.Services.CreateScope();
         var result = await scope.ServiceProvider.GetRequiredService<RenameBoard>()
-            .ExecuteAsync(created.Value.Id, owner.Id, "New name", CancellationToken.None);
+            .ExecuteAsync(created.Value.Id, owner.Id, " \t Padded  new name  ", CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal("New name", await factory.ScalarAsync<string>(
-            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'"));
+        var stored = await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{created.Value.Id}'");
+        Assert.Equal("Padded  new name", stored);
+        Assert.Equal(stored, result.Value);
     }
 
     // ---- AC-22: a Member is refused OwnerOnly before the name is even looked at --------------------

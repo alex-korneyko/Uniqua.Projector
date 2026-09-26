@@ -6,9 +6,30 @@ namespace Uniqua.Projector.Domain.Boards;
 /// contract's <c>boards.*</c> identifier, so the endpoint translates a refusal rather than deciding
 /// what it means.
 /// </summary>
+/// <remarks>
+/// <see cref="Detail"/> is a fixed sentence per refusal and never carries board content — no board
+/// name, column name, card title or description (sad.md § 8 Logging; AC-25) — so no log line or
+/// problem body built from it can leak what a board holds. A stale refusal that has to tell its
+/// caller how things now stand carries that as a typed value instead (<see cref="CurrentName"/>,
+/// <see cref="CurrentColumn"/>, <see cref="CurrentLayout"/>, <see cref="CurrentCard"/>), which only
+/// the endpoint, after the membership check, decides to publish.
+/// </remarks>
 /// <param name="Code">The <c>boards.*</c> code from contracts/openapi.yaml.</param>
-/// <param name="Detail">The sentence shown to whoever made the request.</param>
-public sealed record BoardError(string Code, string Detail);
+/// <param name="Detail">The fixed sentence for this refusal — never an echo of board content.</param>
+public sealed record BoardError(string Code, string Detail)
+{
+    /// <summary>AC-20b: the board's name as it now stands, on <c>boards.confirmation_mismatch</c>.</summary>
+    public string? CurrentName { get; init; }
+
+    /// <summary>AC-06b: the column as it now stands, on <c>boards.column_renamed</c>.</summary>
+    public Column? CurrentColumn { get; init; }
+
+    /// <summary>AC-24: the board's columns in position order, on <c>boards.columns_changed</c>.</summary>
+    public IReadOnlyList<Column>? CurrentLayout { get; init; }
+
+    /// <summary>AC-23: the card as it now stands, on <c>boards.card_changed</c>.</summary>
+    public Card? CurrentCard { get; init; }
+}
 
 /// <summary>
 /// Every way this feature can refuse, named once. They are singletons (or, for
@@ -52,7 +73,10 @@ public static class BoardErrors
     /// </summary>
     public static BoardError ConfirmationMismatch(string currentName) => new(
         "boards.confirmation_mismatch",
-        $"That does not match the board's current name, \"{currentName}\".");
+        "That does not match the board's current name.")
+    {
+        CurrentName = currentName,
+    };
 
     /// <summary>AC-08. The Text rule's bounds on a column name.</summary>
     public static readonly BoardError ColumnNameInvalid = new(
@@ -70,7 +94,10 @@ public static class BoardErrors
     /// </summary>
     public static BoardError ColumnRenamed(Column current) => new(
         "boards.column_renamed",
-        $"That column was renamed to \"{current.Name}\" since you last saw it.");
+        "That column was renamed since you last saw it.")
+    {
+        CurrentColumn = current,
+    };
 
     /// <summary>AC-09. A column that still holds cards cannot be deleted.</summary>
     public static readonly BoardError ColumnNotEmpty = new(
@@ -88,8 +115,11 @@ public static class BoardErrors
     /// </summary>
     public static BoardError ColumnsChanged(IReadOnlyList<Column> currentLayout) => new(
         "boards.columns_changed",
-        $"The columns changed since you last saw them: "
-        + string.Join(", ", currentLayout.OrderBy(c => c.Position).Select(c => c.Name)) + ".");
+        "The columns changed since you last saw them.")
+    {
+        // A snapshot in position order, so a later change to the board cannot rewrite the refusal.
+        CurrentLayout = [.. currentLayout.OrderBy(c => c.Position)],
+    };
 
     /// <summary>AC-24. A move to a position outside 0..n-1.</summary>
     public static readonly BoardError ColumnPositionInvalid = new(
@@ -117,5 +147,8 @@ public static class BoardErrors
     /// </summary>
     public static BoardError CardChanged(Card current) => new(
         "boards.card_changed",
-        $"That card was changed to \"{current.Title}\" since you last saw it.");
+        "That card was changed since you last saw it.")
+    {
+        CurrentCard = current,
+    };
 }

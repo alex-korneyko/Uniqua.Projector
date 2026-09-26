@@ -55,6 +55,41 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
     }
 
+    [Fact]
+    public async Task Creating_a_board_with_a_name_over_a_hundred_characters_is_refused_and_writes_nothing()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        // 101 code points once trimmed — one past the ceiling; the surrounding spaces do not count.
+        var response = await client.PostAsJsonAsync(Boards, new { name = $"  {new string('n', 101)}  " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[BoardMemberships] WHERE [AccountId] = '{owner.Id}'"));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT ISNULL(MAX([OwnedBoardCount]), 0) FROM [dbo].[OwnedBoardCounters] WHERE [AccountId] = '{owner.Id}'"));
+    }
+
+    [Theory]
+    [InlineData("  \t ")]
+    [InlineData("101")]
+    public async Task The_owner_renaming_to_an_unusable_name_is_refused_and_the_name_is_unchanged(string name)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A name worth keeping");
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await client.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}", new { name = name == "101" ? new string('r', 101) : name });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.board_name_invalid", await CodeOfAsync(response));
+        Assert.Equal("A name worth keeping", await factory.ScalarAsync<string>(
+            $"SELECT [Name] FROM [dbo].[Boards] WHERE [Id] = '{board.Id}'"));
+    }
+
     // ---- AC-03: the 50-owned-board ceiling -----------------------------------------------------
 
     [Fact]
@@ -143,6 +178,66 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         var reopened = await client.GetAsync($"{Boards}/{board.Id}");
         Assert.Equal(HttpStatusCode.NotFound, reopened.StatusCode);
         Assert.Equal("boards.not_available", await CodeOfAsync(reopened));
+    }
+
+    [Fact]
+    public async Task After_a_board_is_deleted_its_former_columns_and_cards_answer_as_never_existed()
+    {
+        var owner = await factory.AnAccountAsync();
+        var member = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "Going with everything on it");
+        await factory.AMemberOfAsync(board.Id, member);
+        var client = await factory.AWritingClientAsync(owner);
+
+        var columnId = await factory.ScalarAsync<Guid>(
+            $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{board.Id}' ORDER BY [Position]");
+        var added = await client.PostAsJsonAsync(
+            $"{Boards}/{board.Id}/cards", new { column_id = columnId, title = "Goes with the board" });
+        var cardId = Guid.Parse((await BodyAsync(added)).GetProperty("id").GetString()!);
+
+        var deletion = await client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, $"{Boards}/{board.Id}")
+        {
+            Content = JsonContent.Create(new { confirm_name = board.Name }),
+        });
+        Assert.Equal(HttpStatusCode.NoContent, deletion.StatusCode);
+
+        // Probed as the owner and as the former member, against the ids they last saw.
+        var neverExisted = Guid.CreateVersion7();
+        foreach (var prober in new[] { client, await factory.AWritingClientAsync(member) })
+        {
+            var probes = new (HttpRequestMessage Former, HttpRequestMessage Never)[]
+            {
+                (new(HttpMethod.Get, $"{Boards}/{board.Id}/cards/{cardId}"),
+                 new(HttpMethod.Get, $"{Boards}/{neverExisted}/cards/{cardId}")),
+                (new(HttpMethod.Patch, $"{Boards}/{board.Id}/cards/{cardId}")
+                    { Content = JsonContent.Create(new { title = "Too late", content_version = 1 }) },
+                 new(HttpMethod.Patch, $"{Boards}/{neverExisted}/cards/{cardId}")
+                    { Content = JsonContent.Create(new { title = "Too late", content_version = 1 }) }),
+                (new(HttpMethod.Patch, $"{Boards}/{board.Id}/columns/{columnId}")
+                    { Content = JsonContent.Create(new { name = "Too late", name_version = 1 }) },
+                 new(HttpMethod.Patch, $"{Boards}/{neverExisted}/columns/{columnId}")
+                    { Content = JsonContent.Create(new { name = "Too late", name_version = 1 }) }),
+                (new(HttpMethod.Post, $"{Boards}/{board.Id}/cards")
+                    { Content = JsonContent.Create(new { column_id = columnId, title = "Too late" }) },
+                 new(HttpMethod.Post, $"{Boards}/{neverExisted}/cards")
+                    { Content = JsonContent.Create(new { column_id = columnId, title = "Too late" }) }),
+            };
+
+            foreach (var (former, never) in probes)
+            {
+                var formerResponse = await prober.SendAsync(former);
+                var neverResponse = await prober.SendAsync(never);
+
+                Assert.Equal(HttpStatusCode.NotFound, formerResponse.StatusCode);
+                Assert.Equal("boards.not_available", await CodeOfAsync(formerResponse));
+                await AssertIndistinguishableAsync(formerResponse, neverResponse);
+            }
+        }
+
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [Id] = '{columnId}'"));
+        Assert.Equal(0, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [Id] = '{cardId}'"));
     }
 
     [Fact]
@@ -364,7 +459,197 @@ public sealed class BoardEndpointTests(ApiFactory factory)
         Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
     }
 
+    // ---- T23 (review Q1): a lone-surrogate string is an unusable string, not a server error ----------
+
+    [Fact]
+    public async Task Creating_a_board_whose_name_is_a_lone_surrogate_is_refused_as_request_invalid()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await SendJsonTextAsync(client, HttpMethod.Post, Boards, """{"name":"\ud800"}""");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(response));
+    }
+
+    [Theory]
+    [InlineData("PATCH", """{"name":"\ud800"}""")]
+    [InlineData("DELETE", """{"confirm_name":"\udc00"}""")]
+    public async Task A_lone_surrogate_in_a_board_change_is_request_invalid_for_a_member_and_not_available_for_anyone_else(
+        string method, string json)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board that gets a broken string");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillNamed = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(board.Name, (await BodyAsync(stillNamed)).GetProperty("name").GetString());
+    }
+
+    // ---- T23 (review B6a): a member outside the request schema is request_invalid --------------------
+
+    [Fact]
+    public async Task Creating_a_board_with_an_unknown_member_is_refused_and_creates_nothing()
+    {
+        var owner = await factory.AnAccountAsync();
+        var client = await factory.AWritingClientAsync(owner);
+
+        var response = await SendJsonTextAsync(
+            client, HttpMethod.Post, Boards, """{"name":"A board with extras","extra":1}""");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(response));
+
+        var owned = await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[BoardMemberships] WHERE [AccountId] = '{owner.Id}'");
+        Assert.Equal(0, owned);
+    }
+
+    [Theory]
+    [InlineData("PATCH", """{"name":"Renamed with extras","extra":1}""")]
+    [InlineData("DELETE", """{"confirm_name":"A board with a strict schema","extra":true}""")]
+    public async Task An_unknown_member_in_a_board_change_is_request_invalid_after_membership_and_changes_nothing(
+        string method, string json)
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board with a strict schema");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), new HttpMethod(method), $"{Boards}/{board.Id}", json);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillThere = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+        Assert.Equal(board.Name, (await BodyAsync(stillThere)).GetProperty("name").GetString());
+    }
+
+    // ---- T23 (review Q4d): deleteBoard with no body is judged after membership, like the others ------
+
+    [Fact]
+    public async Task Deleting_a_board_with_no_body_is_request_invalid_after_membership_but_not_available_before_it()
+    {
+        var owner = await factory.AnAccountAsync();
+        var stranger = await factory.AnAccountAsync();
+        var board = await factory.ABoardAsync(owner, "A board for a bodiless delete");
+
+        var ownerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(owner), HttpMethod.Delete, $"{Boards}/{board.Id}", json: null);
+        var strangerResponse = await SendJsonTextAsync(
+            await factory.AWritingClientAsync(stranger), HttpMethod.Delete, $"{Boards}/{board.Id}", json: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, ownerResponse.StatusCode);
+        Assert.Equal("boards.request_invalid", await CodeOfAsync(ownerResponse));
+        Assert.Equal(HttpStatusCode.NotFound, strangerResponse.StatusCode);
+        Assert.Equal("boards.not_available", await CodeOfAsync(strangerResponse));
+
+        var stillThere = await (await factory.AWritingClientAsync(owner)).GetAsync($"{Boards}/{board.Id}");
+        Assert.Equal(HttpStatusCode.OK, stillThere.StatusCode);
+    }
+
+    // ---- T25 (review Q4f): a refusal reads only what it answers with, never the card list -----------
+
+    [Theory]
+    [InlineData("renameBoard, wrong shape", "boards.request_invalid")]
+    [InlineData("addCard, wrong shape", "boards.request_invalid")]
+    [InlineData("deleteBoard, confirmation mismatch", "boards.confirmation_mismatch")]
+    [InlineData("renameColumn, stale name_version", "boards.column_renamed")]
+    [InlineData("moveColumn, stale layout version", "boards.columns_changed")]
+    public async Task A_refusal_reads_no_card_summaries_on_its_way_out(string refusal, string expectedCode)
+    {
+        var owner = await factory.AnAccountAsync();
+        var board = await factory.ABoardWithCardsAsync(owner, cardCount: 5, name: "A board holding cards");
+        var client = await factory.AWritingClientAsync(owner);
+        var columnId = await factory.ScalarAsync<Guid>(
+            $"SELECT TOP 1 [Id] FROM [dbo].[Columns] WHERE [BoardId] = '{board.Id}' ORDER BY [Position]");
+
+        // Make the column's name and the board's layout move on, so the stale requests below are stale.
+        var renamed = await client.PatchAsJsonAsync(
+            $"{Boards}/{board.Id}/columns/{columnId}", new { name = "Renamed first", name_version = 1 });
+        Assert.Equal(HttpStatusCode.OK, renamed.StatusCode);
+        var added = await client.PostAsJsonAsync($"{Boards}/{board.Id}/columns", new { name = "Added first" });
+        Assert.Equal(HttpStatusCode.Created, added.StatusCode);
+
+        var request = refusal switch
+        {
+            "renameBoard, wrong shape" => new HttpRequestMessage(HttpMethod.Patch, $"{Boards}/{board.Id}")
+            {
+                Content = JsonContent.Create(new { name = 5 }),
+            },
+            "addCard, wrong shape" => new HttpRequestMessage(HttpMethod.Post, $"{Boards}/{board.Id}/cards")
+            {
+                Content = JsonContent.Create(new { title = "No column named" }),
+            },
+            "deleteBoard, confirmation mismatch" => new HttpRequestMessage(HttpMethod.Delete, $"{Boards}/{board.Id}")
+            {
+                Content = JsonContent.Create(new { confirm_name = "Not its name" }),
+            },
+            "renameColumn, stale name_version" => new HttpRequestMessage(
+                HttpMethod.Patch, $"{Boards}/{board.Id}/columns/{columnId}")
+            {
+                Content = JsonContent.Create(new { name = "Mine", name_version = 1 }),
+            },
+            _ => new HttpRequestMessage(HttpMethod.Put, $"{Boards}/{board.Id}/columns/{columnId}/position")
+            {
+                Content = JsonContent.Create(new { position = 1, column_layout_version = 1 }),
+            },
+        };
+
+        factory.Commands.Clear();
+        var response = await client.SendAsync(request);
+        var statements = factory.Commands.Statements;
+
+        Assert.Equal(expectedCode, await CodeOfAsync(response));
+        Assert.DoesNotContain(statements, sql => sql.Contains("FROM [Cards]", StringComparison.Ordinal));
+
+        // What the refusal does carry is still the board as it now stands.
+        var body = await BodyAsync(response);
+        switch (expectedCode)
+        {
+            case "boards.confirmation_mismatch":
+                Assert.Equal(board.Name, body.GetProperty("current_name").GetString());
+                break;
+            case "boards.column_renamed":
+                Assert.Equal("Renamed first", body.GetProperty("current_column").GetProperty("name").GetString());
+                Assert.Equal(2, body.GetProperty("current_column").GetProperty("name_version").GetInt32());
+                break;
+            case "boards.columns_changed":
+                var layout = body.GetProperty("current_layout");
+                Assert.Equal(2, layout.GetProperty("column_layout_version").GetInt32());
+                Assert.Equal(4, layout.GetProperty("columns").GetArrayLength());
+                break;
+        }
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Sends <paramref name="json"/> exactly as written — a lone-surrogate escape or an extra member
+    /// cannot be produced by serialising an anonymous object — or no body at all when it is null.
+    /// </summary>
+    private static Task<HttpResponseMessage> SendJsonTextAsync(
+        HttpClient client, HttpMethod method, string url, string? json) =>
+        client.SendAsync(new HttpRequestMessage(method, url)
+        {
+            Content = json is null ? null : new StringContent(json, Encoding.UTF8, "application/json"),
+        });
 
     private static Task<HttpResponseMessage> PatchNotJsonAsync(HttpClient client, Guid boardId) =>
         client.PatchAsync(

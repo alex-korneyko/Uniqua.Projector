@@ -102,7 +102,8 @@ public static partial class BoardEndpoints
         }
 
         // No board is named yet, so there is no membership to establish before judging the shape.
-        if (!new BoardRequestBody(body).TryGetString("name", out var name))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetString("name", out var name) || !request.HasOnly("name"))
         {
             await context.WriteBoardProblemAsync(BoardProblems.RequestInvalid);
             return;
@@ -167,7 +168,8 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!new BoardRequestBody(body).TryGetString("name", out var name))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetString("name", out var name) || !request.HasOnly("name"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -180,9 +182,8 @@ public static partial class BoardEndpoints
             return;
         }
 
-        // The use case stored the name trimmed by the Text rule; that is the name the board now has.
-        await context.Response.WriteAsJsonAsync(
-            new BoardName(id, BoardText.Trim(name)), Json, cancellationToken);
+        // The name the Board stored, trimmed by the Text rule there — never re-derived here.
+        await context.Response.WriteAsJsonAsync(new BoardName(id, result.Value), Json, cancellationToken);
     }
 
     private static async Task DeleteBoardAsync(
@@ -190,7 +191,7 @@ public static partial class BoardEndpoints
         DeleteBoard delete,
         OpenBoard open,
         string boardId,
-        [FromBody] JsonElement body,
+        [FromBody] JsonElement? body,
         CancellationToken cancellationToken)
     {
         if (RecognisedSession.AccountId(context.User) is not { } accountId)
@@ -207,7 +208,11 @@ public static partial class BoardEndpoints
 
         // The confirmation travels in the body only; a confirm_name in the query string is never
         // read, since URLs reach proxy access logs and board names are never logged (sad.md §8).
-        if (!new BoardRequestBody(body).TryGetString("confirm_name", out var typedName))
+        // A DELETE may arrive with no body at all; that is the same incomplete request as one
+        // missing confirm_name, answered only after the membership check, as deleteColumn and
+        // deleteCard answer it (review Q4d).
+        var request = new BoardRequestBody(body ?? default);
+        if (!request.TryGetString("confirm_name", out var typedName) || !request.HasOnly("confirm_name"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -226,9 +231,9 @@ public static partial class BoardEndpoints
             return;
         }
 
-        // AC-20b: shown the board's current name — read through the same member-scoped load, so a
-        // board deleted in the meantime is answered as every absent board is.
-        var current = await open.ExecuteAsync(id, accountId, cancellationToken);
+        // AC-20b: shown the board's current name — read through the same member-scoped load (no
+        // cards: review Q4f), so a board deleted in the meantime is answered as every absent board is.
+        var current = await open.OutlineAsync(id, accountId, cancellationToken);
         if (!current.IsSuccess)
         {
             await context.WriteBoardProblemAsync(current.Error!);
@@ -246,7 +251,8 @@ public static partial class BoardEndpoints
     private static async Task RefuseShapeAsync(
         HttpContext context, OpenBoard open, Guid boardId, Guid accountId, CancellationToken cancellationToken)
     {
-        var member = await open.ExecuteAsync(boardId, accountId, cancellationToken);
+        // Membership is all this needs; the outline reads no card (review Q4f).
+        var member = await open.OutlineAsync(boardId, accountId, cancellationToken);
 
         await context.WriteBoardProblemAsync(
             member.IsSuccess ? BoardProblems.RequestInvalid : member.Error!.Code);

@@ -6,20 +6,27 @@ using Uniqua.Projector.Domain.Boards;
 namespace Uniqua.Projector.Api.IntegrationTests.Quality;
 
 /// <summary>
-/// T14 — spec.md §6 NFR "Board invariants under simultaneous changes" (sad.md §10, QG-2): across
-/// 1,000 randomised pairs of simultaneous changes — column deletes, column adds, card adds and
-/// board creations, including pairs made one short of each ceiling — 0 boards are left with no
-/// column, 0 non-empty columns are deleted, 0 boards exceed 20 columns or 1,000 cards, and 0
-/// accounts own more than 50 boards (AC-03, AC-10b, AC-11, AC-15).
+/// T14 / T26 — spec.md §6 NFR "Board invariants under simultaneous changes" (sad.md §10, QG-2):
+/// across 1,000 randomised pairs of simultaneous changes — column deletes, column adds, card adds,
+/// board creations, and a card add racing the deletion of its own column — 0 boards are left with
+/// no column, 0 non-empty columns are deleted, 0 boards exceed 20 columns or 1,000 cards, and 0
+/// accounts own more than 50 boards (AC-03, AC-09, AC-10b, AC-11, AC-15).
 /// </summary>
 /// <remarks>
-/// Every one-short-of-the-ceiling pair is forced to collide with <see cref="ContentionForcer"/>,
-/// generalised from its original <c>AspNetUsers</c>-only match to the board, column, card and
-/// owned-board-counter rows (data-model.md § Test fixtures) — otherwise a pair that happens to run
-/// one attempt after the other would never actually exercise the race it is named for. Each pair
-/// runs on a fresh board and fresh accounts, inserted directly rather than registered, so the
-/// 120-per-minute change limit and the cost of password hashing never interfere
+/// <para>
+/// Every pair is forced to collide (review Q2a): <see cref="ContentionForcer.RaceAsync{T}"/> holds
+/// whichever racer reaches its save first until the other racer has committed, so the held one's
+/// save always meets a board that moved under it and must reload and re-decide. Each ceiling pair
+/// therefore has exactly one right answer — one change lands, the other is refused with its own
+/// domain refusal — and a pair that ends <c>boards.contended</c>, lands both, or refuses for any other
+/// reason fails the run. A retry that replayed its stale decision instead of reloading would land
+/// both (or end contended) and so cannot pass.
+/// </para>
+/// <para>
+/// Each pair runs on a fresh board and fresh accounts, inserted directly rather than registered, so
+/// the 120-per-minute change limit and the cost of password hashing never interfere
 /// (data-model.md § Test fixtures).
+/// </para>
 /// </remarks>
 [Collection(DatabaseCollection.Name)]
 public sealed class BoardInvariantRaceTests(ApiFactory factory)
@@ -31,7 +38,8 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
         DeleteDelete,
         AddColumnAddColumn,
         AddCardAddCard,
-        AddCardDeleteColumn,
+        AddCardDeleteOtherColumn,
+        AddCardDeleteSameColumn,
         CreateCreate,
     }
 
@@ -40,7 +48,8 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
         PairKind.DeleteDelete,
         PairKind.AddColumnAddColumn,
         PairKind.AddCardAddCard,
-        PairKind.AddCardDeleteColumn,
+        PairKind.AddCardDeleteOtherColumn,
+        PairKind.AddCardDeleteSameColumn,
         PairKind.CreateCreate,
     ];
 
@@ -50,28 +59,30 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
         var seed = Environment.TickCount;
         var random = new Random(seed);
         var violations = new List<string>();
-        var forcedCollisionPairs = 0;
+        var seen = Kinds.ToDictionary(kind => kind, _ => 0);
 
         for (var iteration = 0; iteration < PairCount; iteration++)
         {
             var kind = Kinds[random.Next(Kinds.Length)];
+            seen[kind]++;
 
             try
             {
-                var collided = kind switch
+                await (kind switch
                 {
-                    PairKind.DeleteDelete => await RunDeleteDeleteAsync(iteration, violations),
-                    PairKind.AddColumnAddColumn => await RunAddColumnAddColumnAsync(iteration, violations),
-                    PairKind.AddCardAddCard => await RunAddCardAddCardAsync(iteration, violations),
-                    PairKind.AddCardDeleteColumn => await RunAddCardDeleteColumnAsync(iteration, violations),
-                    PairKind.CreateCreate => await RunCreateCreateAsync(iteration, violations),
+                    PairKind.DeleteDelete => RunDeleteDeleteAsync(iteration, violations),
+                    PairKind.AddColumnAddColumn => RunAddColumnAddColumnAsync(iteration, violations),
+                    PairKind.AddCardAddCard => RunAddCardAddCardAsync(iteration, violations),
+                    PairKind.AddCardDeleteOtherColumn => RunAddCardDeleteOtherColumnAsync(iteration, violations),
+                    PairKind.AddCardDeleteSameColumn => RunAddCardDeleteSameColumnAsync(iteration, violations),
+                    PairKind.CreateCreate => RunCreateCreateAsync(iteration, violations),
                     _ => throw new InvalidOperationException($"Unhandled pair kind {kind}."),
-                };
-
-                if (collided)
-                {
-                    forcedCollisionPairs++;
-                }
+                });
+            }
+            catch (Exception exception)
+            {
+                // A racer that throws is the 500 a member would have been shown.
+                violations.Add($"pair {iteration} ({kind}): threw {exception.GetType().Name}: {exception.Message}");
             }
             finally
             {
@@ -80,21 +91,16 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
         }
 
         Assert.True(
-            forcedCollisionPairs > 0,
-            $"seed {seed}: not one of the {PairCount} pairs recorded a forced collision — "
-            + "ContentionForcer never intercepted a matching UPDATE, so the one-short-of-the-ceiling "
-            + "pairs never actually collided.");
-
-        Assert.True(
             violations.Count == 0,
-            $"seed {seed}: {violations.Count} invariant violation(s) across {PairCount} pairs "
-            + $"(first {Math.Min(20, violations.Count)} shown):\n"
+            $"seed {seed}: {violations.Count} violation(s) across {PairCount} pairs "
+            + $"({string.Join(", ", seen.Select(pair => $"{pair.Key}={pair.Value}"))}; "
+            + $"first {Math.Min(20, violations.Count)} shown):\n"
             + string.Join("\n", violations.Take(20)));
     }
 
     // ---- AC-10b: a board trimmed to exactly two empty columns, both deleted at once ----------------
 
-    private async Task<bool> RunDeleteDeleteAsync(int iteration, List<string> violations)
+    private async Task RunDeleteDeleteAsync(int iteration, List<string> violations)
     {
         var owner = await AFastAccountAsync();
         var boardId = await ACreatedBoardAsync(owner);
@@ -107,12 +113,9 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
             if (!trimmed.IsSuccess)
             {
                 violations.Add($"pair {iteration} (delete-delete): trimming the middle column failed unexpectedly.");
-                return false;
+                return;
             }
         }
-
-        factory.Contention.TargetId = boardId;
-        factory.Contention.Enabled = true;
 
         async Task<Domain.Result<ColumnLayout, BoardError>> DeleteAsync(Guid columnId)
         {
@@ -121,41 +124,27 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner, columnId, seenNameVersion: 1, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(DeleteAsync(firstId), DeleteAsync(lastId));
-        var collided = factory.Contention.InterceptedAttempts > 0;
-        factory.Contention.Enabled = false;
+        var race = await RaceAsync(() => DeleteAsync(firstId), () => DeleteAsync(lastId));
 
-        // Both landing would break the last-column rule (never asserted here — the ceiling check
-        // below catches it); both losing to a spent retry budget is a legal `contended` outcome
-        // (API contract, edge cases table) and is not itself a violation.
-        var successes = results.Count(r => r.IsSuccess);
-        if (successes > 1)
-        {
-            violations.Add(
-                $"pair {iteration} (delete-delete): {successes} of 2 deletes succeeded, at most 1 may.");
-        }
+        AssertOneLandsAndTheOtherIsRefused(race, BoardErrors.LastColumn, iteration, "delete-delete", violations);
 
         var remainingColumns = await factory.ScalarAsync<int>(
             $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}'");
-        if (remainingColumns < 1)
+        if (remainingColumns != 1)
         {
-            violations.Add($"pair {iteration} (delete-delete): board {boardId} left with no column.");
+            violations.Add($"pair {iteration} (delete-delete): board {boardId} holds {remainingColumns} columns, not 1.");
         }
 
         await AssertBoardCountersConsistentAsync(boardId, iteration, violations);
-        return collided;
     }
 
     // ---- AC-11: a board one short of the 20-column ceiling, two adds at once -----------------------
 
-    private async Task<bool> RunAddColumnAddColumnAsync(int iteration, List<string> violations)
+    private async Task RunAddColumnAddColumnAsync(int iteration, List<string> violations)
     {
         var owner = await AFastAccountAsync();
         var boardId = await ACreatedBoardAsync(owner);
         await FillColumnsUpToAsync(boardId, Board.MaxColumns - 1);
-
-        factory.Contention.TargetId = boardId;
-        factory.Contention.Enabled = true;
 
         async Task<Domain.Result<AddedColumn, BoardError>> AddAsync(string name)
         {
@@ -164,34 +153,21 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner, name, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(AddAsync($"Racer A {iteration}"), AddAsync($"Racer B {iteration}"));
-        var collided = factory.Contention.InterceptedAttempts > 0;
-        factory.Contention.Enabled = false;
+        var race = await RaceAsync(() => AddAsync($"Racer A {iteration}"), () => AddAsync($"Racer B {iteration}"));
 
-        // Both landing would push the board past the 20-column ceiling (caught below); both
-        // losing to a spent retry budget is a legal `contended` outcome and not itself a violation.
-        var successes = results.Count(r => r.IsSuccess);
-        if (successes > 1)
-        {
-            violations.Add(
-                $"pair {iteration} (add-column): {successes} of 2 adds succeeded, at most 1 may.");
-        }
-
+        AssertOneLandsAndTheOtherIsRefused(
+            race, BoardErrors.ColumnLimitReached, iteration, "add-column", violations);
         await AssertBoardCountersConsistentAsync(boardId, iteration, violations);
-        return collided;
     }
 
     // ---- AC-15: a board one short of the 1,000-card ceiling, two adds at once -----------------------
 
-    private async Task<bool> RunAddCardAddCardAsync(int iteration, List<string> violations)
+    private async Task RunAddCardAddCardAsync(int iteration, List<string> violations)
     {
         var owner = await AFastAccountAsync();
         var boardId = await ACreatedBoardAsync(owner);
         var columnId = await FirstColumnIdAsync(boardId);
         await FillCardsUpToAsync(boardId, columnId, Board.MaxCards - 1);
-
-        factory.Contention.TargetId = boardId;
-        factory.Contention.Enabled = true;
 
         async Task<Domain.Result<Application.Boards.Ports.CardSummary, BoardError>> AddAsync(string title)
         {
@@ -200,83 +176,119 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
                 .ExecuteAsync(boardId, owner, columnId, title, null, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(AddAsync($"Racer A {iteration}"), AddAsync($"Racer B {iteration}"));
-        var collided = factory.Contention.InterceptedAttempts > 0;
-        factory.Contention.Enabled = false;
+        var race = await RaceAsync(() => AddAsync($"Racer A {iteration}"), () => AddAsync($"Racer B {iteration}"));
 
-        // Both landing would push the board past the 1,000-card ceiling (caught below); both
-        // losing to a spent retry budget is a legal `contended` outcome and not itself a violation.
-        var successes = results.Count(r => r.IsSuccess);
-        if (successes > 1)
-        {
-            violations.Add(
-                $"pair {iteration} (add-card): {successes} of 2 adds succeeded, at most 1 may.");
-        }
-
+        AssertOneLandsAndTheOtherIsRefused(race, BoardErrors.CardLimitReached, iteration, "add-card", violations);
         await AssertBoardCountersConsistentAsync(boardId, iteration, violations);
-        return collided;
     }
 
-    // ---- an add-card and a delete-column on a different, empty column, both legal -------------------
+    // ---- an add-card and a delete-column on a different, empty column: both legal, both land ---------
 
-    private async Task<bool> RunAddCardDeleteColumnAsync(int iteration, List<string> violations)
+    private async Task RunAddCardDeleteOtherColumnAsync(int iteration, List<string> violations)
     {
         var owner = await AFastAccountAsync();
         var boardId = await ACreatedBoardAsync(owner);
         var (firstId, _, lastId) = await ThreeDefaultColumnIdsAsync(boardId);
 
-        var addTask = Task.Run(async () =>
+        async Task<object> AddAsync()
         {
             using var scope = factory.Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<AddCard>()
                 .ExecuteAsync(boardId, owner, firstId, $"Card {iteration}", null, CancellationToken.None);
-        });
-        var deleteTask = Task.Run(async () =>
+        }
+
+        async Task<object> DeleteAsync()
         {
             using var scope = factory.Services.CreateScope();
             return await scope.ServiceProvider.GetRequiredService<DeleteColumn>()
                 .ExecuteAsync(boardId, owner, lastId, seenNameVersion: 1, CancellationToken.None);
-        });
+        }
 
-        await Task.WhenAll(addTask, deleteTask);
-        var addResult = await addTask;
-        var deleteResult = await deleteTask;
+        var race = await RaceAsync(AddAsync, DeleteAsync);
+        AssertForced(race, iteration, "add-card/delete-other-column", violations);
 
-        if (!addResult.IsSuccess)
+        var add = (Domain.Result<Application.Boards.Ports.CardSummary, BoardError>)race.First;
+        var delete = (Domain.Result<ColumnLayout, BoardError>)race.Second;
+
+        if (!add.IsSuccess)
         {
             violations.Add(
-                $"pair {iteration} (add-card/delete-column): the card add was refused ({addResult.Error!.Code}) "
+                $"pair {iteration} (add-card/delete-other-column): the card add was refused ({add.Error!.Code}) "
                 + "although nothing about it conflicts with deleting a different, empty column.");
         }
 
-        if (!deleteResult.IsSuccess)
+        if (!delete.IsSuccess)
         {
             violations.Add(
-                $"pair {iteration} (add-card/delete-column): the column delete was refused "
-                + $"({deleteResult.Error!.Code}) although the column was empty and not the last one.");
+                $"pair {iteration} (add-card/delete-other-column): the column delete was refused "
+                + $"({delete.Error!.Code}) although the column was empty and not the last one.");
         }
 
         await AssertBoardCountersConsistentAsync(boardId, iteration, violations);
+    }
 
-        var remainingColumns = await factory.ScalarAsync<int>(
-            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}'");
-        if (remainingColumns < 1)
+    // ---- AC-09 / AC-18b: an add-card to column X racing the deletion of X itself ---------------------
+
+    private async Task RunAddCardDeleteSameColumnAsync(int iteration, List<string> violations)
+    {
+        var owner = await AFastAccountAsync();
+        var boardId = await ACreatedBoardAsync(owner);
+        var (_, _, contestedId) = await ThreeDefaultColumnIdsAsync(boardId);
+
+        async Task<object> AddAsync()
         {
-            violations.Add($"pair {iteration} (add-card/delete-column): board {boardId} left with no column.");
+            using var scope = factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<AddCard>()
+                .ExecuteAsync(boardId, owner, contestedId, $"Card {iteration}", null, CancellationToken.None);
         }
 
-        return false;
+        async Task<object> DeleteAsync()
+        {
+            using var scope = factory.Services.CreateScope();
+            return await scope.ServiceProvider.GetRequiredService<DeleteColumn>()
+                .ExecuteAsync(boardId, owner, contestedId, seenNameVersion: 1, CancellationToken.None);
+        }
+
+        var race = await RaceAsync(AddAsync, DeleteAsync);
+        AssertForced(race, iteration, "add-card/delete-same-column", violations);
+
+        var add = (Domain.Result<Application.Boards.Ports.CardSummary, BoardError>)race.First;
+        var delete = (Domain.Result<ColumnLayout, BoardError>)race.Second;
+
+        // Exactly one of the two may land, and the other must be refused for the reason the one that
+        // landed gives it: a card in X keeps X (column_not_empty), and X gone takes the add with it
+        // (not_available, as any absent column is).
+        var outcome = (add.IsSuccess, delete.IsSuccess) switch
+        {
+            (true, false) when delete.Error == BoardErrors.ColumnNotEmpty => null,
+            (false, true) when add.Error == BoardErrors.NotAvailable => null,
+            _ => $"add {Describe(add.IsSuccess, add.Error)}, delete {Describe(delete.IsSuccess, delete.Error)}",
+        };
+        if (outcome is not null)
+        {
+            violations.Add(
+                $"pair {iteration} (add-card/delete-same-column): {outcome}; expected exactly one to land "
+                + "and the other refused column_not_empty or not_available.");
+        }
+
+        var columnLeft = await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [Id] = '{contestedId}'");
+        var cardsInIt = await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [ColumnId] = '{contestedId}'");
+        if (columnLeft == 0 && cardsInIt > 0)
+        {
+            violations.Add($"pair {iteration} (add-card/delete-same-column): column deleted holding {cardsInIt} card(s).");
+        }
+
+        await AssertBoardCountersConsistentAsync(boardId, iteration, violations);
     }
 
     // ---- AC-03: one account one short of the 50-owned-board ceiling, two creates at once -------------
 
-    private async Task<bool> RunCreateCreateAsync(int iteration, List<string> violations)
+    private async Task RunCreateCreateAsync(int iteration, List<string> violations)
     {
         var owner = await AFastAccountAsync();
         await SetOwnedBoardCountAsync(owner, OwnedBoardCounter.MaxOwnedBoards - 1);
-
-        factory.Contention.TargetId = owner;
-        factory.Contention.Enabled = true;
 
         async Task<Domain.Result<BoardView, BoardError>> CreateAsync(string name)
         {
@@ -285,30 +297,69 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
                 .ExecuteAsync(owner, name, CancellationToken.None);
         }
 
-        var results = await Task.WhenAll(CreateAsync($"Racer A {iteration}"), CreateAsync($"Racer B {iteration}"));
-        var collided = factory.Contention.InterceptedAttempts > 0;
-        factory.Contention.Enabled = false;
+        var race = await RaceAsync(
+            () => CreateAsync($"Racer A {iteration}"), () => CreateAsync($"Racer B {iteration}"));
 
-        // Both landing would push the account past the 50-owned-board ceiling (caught below); both
-        // losing to a spent retry budget is a legal `contended` outcome and not itself a violation.
-        var successes = results.Count(r => r.IsSuccess);
-        if (successes > 1)
-        {
-            violations.Add(
-                $"pair {iteration} (create-create): {successes} of 2 creates succeeded, at most 1 may.");
-        }
+        AssertOneLandsAndTheOtherIsRefused(
+            race, BoardErrors.OwnedBoardLimitReached, iteration, "create-create", violations);
 
         var ownedCount = await factory.ScalarAsync<int>(
             $"SELECT [OwnedBoardCount] FROM [dbo].[OwnedBoardCounters] WHERE [AccountId] = '{owner}'");
-        if (ownedCount > OwnedBoardCounter.MaxOwnedBoards)
+        if (ownedCount != OwnedBoardCounter.MaxOwnedBoards)
         {
             violations.Add(
                 $"pair {iteration} (create-create): account {owner} ended owning {ownedCount} boards, "
-                + $"over the {OwnedBoardCounter.MaxOwnedBoards} ceiling.");
+                + $"not exactly the {OwnedBoardCounter.MaxOwnedBoards} ceiling.");
         }
-
-        return collided;
     }
+
+    // ---- Racing and the outcome rules ----------------------------------------------------------------
+
+    /// <summary>Runs both racers at once, forced to collide (see the class remarks).</summary>
+    private Task<ContentionForcer.Race<T>> RaceAsync<T>(Func<Task<T>> first, Func<Task<T>> second) =>
+        factory.Contention.RaceAsync(first, second);
+
+    /// <summary>Q2a / Q6: every pair must actually have collided, not merely run side by side.</summary>
+    private static void AssertForced<T>(
+        ContentionForcer.Race<T> race, int iteration, string pair, List<string> violations)
+    {
+        if (!race.Collided)
+        {
+            violations.Add(
+                $"pair {iteration} ({pair}): no forced collision — neither racer's save was held while "
+                + "the other committed, so the pair never exercised the race it is named for.");
+        }
+    }
+
+    /// <summary>
+    /// The ceiling rule: exactly one of the two lands and the other is refused with
+    /// <paramref name="loserRefusal"/> itself. Both landing breaks the invariant; either ending
+    /// <c>boards.contended</c>, or refused for any other reason, means the retry did not re-decide.
+    /// </summary>
+    private static void AssertOneLandsAndTheOtherIsRefused<TValue>(
+        ContentionForcer.Race<Domain.Result<TValue, BoardError>> race,
+        BoardError loserRefusal,
+        int iteration,
+        string pair,
+        List<string> violations)
+    {
+        AssertForced(race, iteration, pair, violations);
+
+        var results = new[] { race.First, race.Second };
+        var successes = results.Count(result => result.IsSuccess);
+        var refusals = results.Where(result => !result.IsSuccess).Select(result => result.Error!).ToArray();
+
+        if (successes != 1 || refusals.Length != 1 || !ReferenceEquals(refusals[0], loserRefusal))
+        {
+            violations.Add(
+                $"pair {iteration} ({pair}): {successes} of 2 landed, refusals "
+                + $"[{string.Join(", ", refusals.Select(error => error.Code))}]; expected exactly one to land "
+                + $"and the other refused {loserRefusal.Code}.");
+        }
+    }
+
+    private static string Describe(bool isSuccess, BoardError? error) =>
+        isSuccess ? "landed" : $"refused {error!.Code}";
 
     // ---- Invariant helper -----------------------------------------------------------------------------
 
@@ -405,27 +456,32 @@ public sealed class BoardInvariantRaceTests(ApiFactory factory)
         }
     }
 
+    /// <summary>
+    /// Fills <paramref name="columnId"/> with <paramref name="total"/> filler cards in one batched
+    /// statement (at most 1,000 rows, SQL Server's VALUES limit) — a round trip per card made every
+    /// add-card pair cost a thousand statements.
+    /// </summary>
     private async Task FillCardsUpToAsync(Guid boardId, Guid columnId, int total)
     {
-        for (var position = 0; position < total; position++)
+        if (total == 0)
         {
-            await factory.ExecuteAsync(
-                $"""
-                INSERT INTO [dbo].[Cards]
-                    ([Id], [BoardId], [ColumnId], [Position], [Title], [Description], [ContentVersion])
-                VALUES ('{Guid.CreateVersion7()}', '{boardId}', '{columnId}', {position}, N'Filler {position}', N'', 1);
-                """);
+            return;
         }
 
-        if (total > 0)
-        {
-            await factory.ExecuteAsync(
-                $"""
-                UPDATE [dbo].[Columns] SET [CardCount] = {total}, [NextCardPosition] = {total}
-                WHERE [Id] = '{columnId}';
-                """);
-            await factory.ExecuteAsync(
-                $"UPDATE [dbo].[Boards] SET [CardCount] = {total} WHERE [Id] = '{boardId}';");
-        }
+        var rows = string.Join(
+            ",\n",
+            Enumerable.Range(0, total).Select(position =>
+                $"('{Guid.CreateVersion7()}', '{boardId}', '{columnId}', {position}, N'Filler {position}', N'', 1)"));
+
+        await factory.ExecuteAsync(
+            $"""
+            INSERT INTO [dbo].[Cards]
+                ([Id], [BoardId], [ColumnId], [Position], [Title], [Description], [ContentVersion])
+            VALUES
+            {rows};
+            UPDATE [dbo].[Columns] SET [CardCount] = {total}, [NextCardPosition] = {total}
+            WHERE [Id] = '{columnId}';
+            UPDATE [dbo].[Boards] SET [CardCount] = {total} WHERE [Id] = '{boardId}';
+            """);
     }
 }

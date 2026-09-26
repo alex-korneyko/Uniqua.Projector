@@ -51,7 +51,8 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!new BoardRequestBody(body).TryGetString("name", out var name))
+        var request = new BoardRequestBody(body);
+        if (!request.TryGetString("name", out var name) || !request.HasOnly("name"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -83,15 +84,18 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(columnId, out var column))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
 
+        var column = BoardRequestBody.ItemId(columnId);
+
         var request = new BoardRequestBody(body);
         if (!request.TryGetString("name", out var name)
-            || !request.TryGetInt32("name_version", out var nameVersion))
+            || !request.TryGetInt32("name_version", out var nameVersion)
+            || !request.HasOnly("name", "name_version"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -122,15 +126,18 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(columnId, out var column))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
 
+        var column = BoardRequestBody.ItemId(columnId);
+
         var request = new BoardRequestBody(body);
         if (!request.TryGetInt32("position", out var position)
-            || !request.TryGetInt32("column_layout_version", out var layoutVersion))
+            || !request.TryGetInt32("column_layout_version", out var layoutVersion)
+            || !request.HasOnly("position", "column_layout_version"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -161,15 +168,18 @@ public static partial class BoardEndpoints
             return;
         }
 
-        if (!Guid.TryParse(boardId, out var id) || !Guid.TryParse(columnId, out var column))
+        if (!Guid.TryParse(boardId, out var id))
         {
             await context.WriteBoardProblemAsync(BoardErrors.NotAvailable);
             return;
         }
 
+        var column = BoardRequestBody.ItemId(columnId);
+
         // A DELETE may arrive with no body at all; that is the same incomplete request as one
         // missing name_version, answered only after the membership check.
-        if (!new BoardRequestBody(body ?? default).TryGetInt32("name_version", out var nameVersion))
+        var request = new BoardRequestBody(body ?? default);
+        if (!request.TryGetInt32("name_version", out var nameVersion) || !request.HasOnly("name_version"))
         {
             await RefuseShapeAsync(context, open, id, accountId, cancellationToken);
             return;
@@ -220,10 +230,11 @@ public static partial class BoardEndpoints
         Guid boardId,
         Guid accountId,
         string code,
-        Func<BoardView, object?> current,
+        Func<BoardOutline, object?> current,
         CancellationToken cancellationToken)
     {
-        var board = await open.ExecuteAsync(boardId, accountId, cancellationToken);
+        // The board's columns as they now stand, without its cards (review Q4f).
+        var board = await open.OutlineAsync(boardId, accountId, cancellationToken);
         if (!board.IsSuccess)
         {
             await context.WriteBoardProblemAsync(board.Error!);

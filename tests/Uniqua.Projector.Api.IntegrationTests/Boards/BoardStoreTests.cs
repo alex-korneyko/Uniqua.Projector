@@ -254,7 +254,92 @@ public sealed class BoardStoreTests(ApiFactory factory)
                 && sql.Contains("[Cards]", StringComparison.Ordinal));
     }
 
+    // ---- T25 (review Q2b; AC-09): a column delete that loses to a card insert is a lost race -------
+
+    [Fact]
+    public async Task A_save_whose_column_delete_hits_the_card_foreign_key_surfaces_as_a_concurrency_conflict()
+    {
+        var owner = Guid.CreateVersion7();
+        await InsertAccountAsync(owner);
+
+        var boardId = Guid.CreateVersion7();
+        var doomedColumnId = Guid.CreateVersion7();
+        await factory.ExecuteAsync(InsertBoardSql(boardId, "A board losing a race", DateTimeOffset.UtcNow));
+        await factory.ExecuteAsync(InsertMembershipSql(boardId, owner, "Owner"));
+        await factory.ExecuteAsync(InsertColumnSql(doomedColumnId, boardId, position: 0));
+        await factory.ExecuteAsync(InsertColumnSql(Guid.CreateVersion7(), boardId, position: 1));
+
+        using var scope = factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IBoardStore>();
+
+        var loaded = await store.LoadForMemberAsync(boardId, owner, CancellationToken.None);
+        Assert.NotNull(loaded);
+        Assert.True(loaded.Board.DeleteColumn(doomedColumnId, seenNameVersion: 1).IsSuccess);
+
+        // Between the load and the save, another member's card lands in that column and commits.
+        await factory.ExecuteAsync(CardLandsInSql(boardId, doomedColumnId));
+
+        await Assert.ThrowsAsync<BoardConcurrencyConflict>(() => store.SaveAsync(CancellationToken.None));
+
+        Assert.Equal(1, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [Id] = '{doomedColumnId}'"));
+        Assert.Equal(1, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [ColumnId] = '{doomedColumnId}'"));
+    }
+
+    [Fact]
+    public async Task A_column_delete_that_a_card_lands_in_before_the_save_is_re_decided_as_column_not_empty()
+    {
+        var owner = Guid.CreateVersion7();
+        await InsertAccountAsync(owner);
+
+        var boardId = Guid.CreateVersion7();
+        var doomedColumnId = Guid.CreateVersion7();
+        await factory.ExecuteAsync(InsertBoardSql(boardId, "A board re-deciding a delete", DateTimeOffset.UtcNow));
+        await factory.ExecuteAsync(InsertMembershipSql(boardId, owner, "Owner"));
+        await factory.ExecuteAsync(InsertColumnSql(doomedColumnId, boardId, position: 0));
+        await factory.ExecuteAsync(InsertColumnSql(Guid.CreateVersion7(), boardId, position: 1));
+
+        factory.Contention.Reset();
+        factory.Contention.RunOnceBefore(@"DELETE FROM \[Columns\]", CardLandsInSql(boardId, doomedColumnId));
+
+        try
+        {
+            using var scope = factory.Services.CreateScope();
+            var result = await scope.ServiceProvider.GetRequiredService<DeleteColumn>()
+                .ExecuteAsync(boardId, owner, doomedColumnId, seenNameVersion: 1, CancellationToken.None);
+
+            Assert.True(factory.Contention.RanOnce, "the card never landed between the load and the save");
+            Assert.False(result.IsSuccess);
+            Assert.Same(BoardErrors.ColumnNotEmpty, result.Error);
+        }
+        finally
+        {
+            factory.Contention.Reset();
+        }
+
+        Assert.Equal(2, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Columns] WHERE [BoardId] = '{boardId}'"));
+        Assert.Equal(1, await factory.ScalarAsync<int>(
+            $"SELECT COUNT(*) FROM [dbo].[Cards] WHERE [ColumnId] = '{doomedColumnId}'"));
+    }
+
     // ---- Helpers ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// What a committed card add leaves in the store for its column: the card row and the column's
+    /// counters. The board row is deliberately left alone, so the losing save's own UPDATE of the
+    /// board still matches and the DELETE of the column is what meets the card — the NO ACTION
+    /// foreign key (SQL error 547), not a row-version miss.
+    /// </summary>
+    private static string CardLandsInSql(Guid boardId, Guid columnId) =>
+        $"""
+        INSERT INTO [dbo].[Cards]
+            ([Id], [BoardId], [ColumnId], [Position], [Title], [Description], [ContentVersion])
+        VALUES ('{Guid.CreateVersion7()}', '{boardId}', '{columnId}', 0, N'Landed first', N'', 1);
+        UPDATE [dbo].[Columns] SET [CardCount] = [CardCount] + 1, [NextCardPosition] = [NextCardPosition] + 1
+        WHERE [Id] = '{columnId}';
+        """;
 
     private Task InsertAccountAsync(Guid accountId) =>
         factory.ExecuteAsync(SchemaQueries.InsertAccountSql(
